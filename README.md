@@ -1,98 +1,226 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# KicKR Backend
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+REST API + real-time WebSocket backend for the KicKR football event and tournament management platform.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+Built with **NestJS**, **MongoDB** (Mongoose), **Socket.io**, **JWT**, and **Nodemailer**.
 
-## Description
+---
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## Features (Phase 1)
 
-## Project setup
+- **Auth** — Sign up with email confirmation, login, forgot/reset password, social auth stubs
+- **User profiles** — Edit profile fields, avatar upload
+- **Groups** — Create/update groups, wallpaper upload, member management
+- **Group Invitations** — Join by name search or QR invite code, approval flow
+- **Group Chat** — Real-time Socket.io messaging + REST history
+- **Events** — Create, join, leave, list players (owner/admin gated for group events)
+- **Tournaments** — Create knockout/league tournaments, register teams, update match scores
+- **Player Shuffle** — Fisher-Yates shuffle into sub-groups of 6 with notifications
+- **Notifications** — In-app notification store (read/unread)
 
-```bash
-$ npm install
-```
+---
 
-## Compile and run the project
+## Tech Stack
 
-```bash
-# development
-$ npm run start
+| Layer | Technology |
+|---|---|
+| Framework | NestJS ^10 |
+| Database | MongoDB via Mongoose ^8 |
+| Auth | JWT (passport-jwt) + bcrypt |
+| Email | Nodemailer |
+| Real-time | Socket.io (@nestjs/websockets) |
+| File uploads | Multer (local disk) |
+| Validation | class-validator + class-transformer |
+| API Docs | Swagger (@nestjs/swagger) |
 
-# watch mode
-$ npm run start:dev
+---
 
-# production mode
-$ npm run start:prod
-```
+## Prerequisites
 
-## Run tests
+- Node.js 20+
+- MongoDB 6+ running locally or a MongoDB Atlas URI
+- (Optional) An SMTP account for email (Gmail, SendGrid, etc.)
 
-```bash
-# unit tests
-$ npm run test
+---
 
-# e2e tests
-$ npm run test:e2e
+## Getting Started
 
-# test coverage
-$ npm run test:cov
-```
-
-## Deployment
-
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
-
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+### 1. Install dependencies
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+npm install
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+### 2. Configure environment
 
-## Resources
+```bash
+cp .env.example .env
+```
 
-Check out a few resources that may come in handy when working with NestJS:
+Edit `.env` and fill in at minimum:
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+```env
+MONGODB_URI=mongodb://localhost:27017/kickr
+JWT_SECRET=your_random_256bit_secret
+MAIL_HOST=smtp.gmail.com
+MAIL_USER=your@gmail.com
+MAIL_PASS=your_app_password
+APP_BASE_URL=http://localhost:3000
+```
 
-## Support
+### 3. Run in development
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+```bash
+npm run start:dev
+```
 
-## Stay in touch
+| URL | Description |
+|---|---|
+| `http://localhost:3000` | REST API |
+| `http://localhost:3000/api` | Swagger UI |
+| `http://localhost:3000/uploads/*` | Static file uploads |
+| `ws://localhost:3000/chat?token=<jwt>` | WebSocket (group chat) |
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+---
+
+## Docker
+
+### Run with Docker Compose (API + MongoDB)
+
+```bash
+docker compose up --build
+```
+
+This starts:
+- `kickr-backend` on port `3000`
+- `mongodb` on port `27017`
+
+### Build image only
+
+```bash
+docker build -t kickr-backend .
+```
+
+---
+
+## Scripts
+
+```bash
+npm run start:dev      # watch mode
+npm run start:prod     # production (build first)
+npm run build          # compile TypeScript
+npm run test           # unit tests
+npm run test:e2e       # e2e tests (uses kickr_test DB)
+npm run test:cov       # test coverage report
+npm run lint           # ESLint
+```
+
+---
+
+## API Documentation
+
+Interactive Swagger UI: **`http://localhost:3000/api`**
+
+All endpoints are documented with request/response schemas and JWT bearer auth.
+
+### Response shape
+
+```json
+{ "success": true,  "data": { ... } }
+{ "success": false, "statusCode": 400, "message": "..." }
+```
+
+### Authentication
+
+Login via `POST /auth/login` to receive a JWT. Pass it on all protected routes:
+
+```
+Authorization: Bearer <token>
+```
+
+### Endpoints
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/auth/signup` | — | Register + send confirmation email |
+| GET | `/auth/confirm-email?token=` | — | Verify email address |
+| POST | `/auth/login` | — | Login → JWT |
+| POST | `/auth/forgot-password` | — | Send password reset link |
+| POST | `/auth/reset-password` | — | Submit new password with reset token |
+| GET | `/auth/google` | — | Google OAuth (stub, returns 501) |
+| GET | `/auth/facebook` | — | Facebook OAuth (stub, returns 501) |
+| GET | `/users/me` | ✓ | Get own profile |
+| PATCH | `/users/me` | ✓ | Update profile fields |
+| POST | `/users/me/avatar` | ✓ | Upload profile image (multipart) |
+| POST | `/groups` | ✓ | Create group |
+| GET | `/groups/:id` | ✓ | Get group details |
+| PATCH | `/groups/:id` | ✓ owner/admin | Update group name/description |
+| POST | `/groups/:id/wallpaper` | ✓ owner/admin | Upload wallpaper (multipart) |
+| GET | `/groups/:id/members` | ✓ | List approved members |
+| DELETE | `/groups/:id/members/:userId` | ✓ owner/admin | Remove a member |
+| GET | `/groups/:id/invite-code` | ✓ owner/admin | Generate QR invite token (24h) |
+| POST | `/groups/:id/invitations` | ✓ | Request to join group |
+| GET | `/groups/:id/invitations` | ✓ owner/admin | List pending join requests |
+| PATCH | `/groups/:id/invitations/:invId` | ✓ owner/admin | Approve or reject request |
+| POST | `/groups/join-by-code` | ✓ | Join group via QR invite code |
+| GET | `/groups/:id/messages` | ✓ member | Paginated chat history |
+| GET | `/events` | ✓ | List public events |
+| POST | `/events` | ✓ | Create event |
+| GET | `/events/:id` | ✓ | Get event details |
+| POST | `/events/:id/join` | ✓ | Join event |
+| DELETE | `/events/:id/join` | ✓ | Leave event |
+| GET | `/events/:id/players` | ✓ | List joined players |
+| POST | `/events/:id/shuffle` | ✓ owner/admin | Shuffle players into groups of 6 |
+| POST | `/tournaments` | ✓ | Create tournament |
+| GET | `/tournaments/:id` | ✓ | Get tournament + teams + bracket |
+| POST | `/tournaments/:id/teams` | ✓ | Register a team |
+| PATCH | `/tournaments/:id/matches/:matchId` | ✓ creator | Update match score/winner |
+| GET | `/notifications` | ✓ | List notifications (unread first) |
+| PATCH | `/notifications/:id/read` | ✓ | Mark one notification as read |
+| PATCH | `/notifications/read-all` | ✓ | Mark all notifications as read |
+
+### WebSocket — Group Chat
+
+Connect: `ws://localhost:3000/chat?token=<jwt>`
+
+**Emit:**
+
+| Event | Payload | Description |
+|---|---|---|
+| `joinRoom` | `{ groupId: string }` | Join a group's chat room |
+| `sendMessage` | `{ groupId: string, text: string }` | Send a message |
+
+**Listen:**
+
+| Event | Payload | Description |
+|---|---|---|
+| `newMessage` | `{ messageId, senderId, text, createdAt }` | Broadcast to room members |
+
+---
+
+## Project Structure
+
+```
+src/
+├── auth/           # Signup, login, email confirm, forgot/reset password
+├── users/          # Profile CRUD, avatar upload
+├── groups/         # Group management, wallpaper, invite codes
+├── invitations/    # Join requests, QR join, approval flow
+├── chat/           # Socket.io gateway + message history
+├── events/         # Event CRUD, join/leave, player list
+├── tournaments/    # Tournament, teams, match bracket
+├── shuffle/        # Fisher-Yates player shuffle (6 per sub-group)
+├── notifications/  # In-app notification store
+└── common/
+    ├── filters/        # Global HTTP exception filter
+    ├── interceptors/   # Response transform interceptor
+    ├── guards/         # JWT auth guard
+    ├── decorators/     # @CurrentUser decorator
+    └── upload/         # Multer disk storage config
+```
+
+---
 
 ## License
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+MIT
