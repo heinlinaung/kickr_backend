@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, Query, HttpCode, HttpStatus, HttpException } from '@nestjs/common';
+import { Controller, Post, Body, Get, HttpCode, HttpStatus, HttpException } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { SignupDto } from './dto/signup.dto';
 import { LoginDto } from './dto/login.dto';
@@ -14,8 +14,9 @@ export class AuthController {
     return this.authService.signup(dto);
   }
 
-  @Get('confirm-email')
-  confirmEmail(@Query('token') token: string) {
+  @Post('confirm-email')
+  @HttpCode(HttpStatus.OK)
+  confirmEmail(@Body('token') token: string) {
     return this.authService.confirmEmail(token);
   }
 

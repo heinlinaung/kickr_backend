@@ -14,6 +14,15 @@ import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;');
+}
+
 @Injectable()
 export class AuthService {
   private transporter: nodemailer.Transporter;
@@ -34,6 +43,10 @@ export class AuthService {
   }
 
   async signup(dto: SignupDto) {
+    // Fast-fail before expensive bcrypt
+    const existing = await this.userModel.findOne({ email: dto.email.toLowerCase() });
+    if (existing) throw new BadRequestException('Email already registered');
+
     const passwordHash = await bcrypt.hash(dto.password, 10);
     const emailVerificationToken = uuidv4();
 
@@ -59,9 +72,9 @@ export class AuthService {
         from: this.config.get('MAIL_FROM'),
         to: user.email,
         subject: 'Confirm your KicKR account',
-        html: `<p>Hi ${user.name},</p>
+        html: `<p>Hi ${escapeHtml(user.name)},</p>
                <p>Click the link to confirm your email:</p>
-               <a href="${baseUrl}/auth/confirm-email?token=${emailVerificationToken}">Confirm Email</a>`,
+               <a href="${baseUrl}/confirm-email?token=${emailVerificationToken}">Confirm Email</a>`,
       });
     } catch (err) {
       await this.userModel.findByIdAndDelete(user._id);
@@ -72,6 +85,8 @@ export class AuthService {
   }
 
   async confirmEmail(token: string) {
+    if (!token) throw new BadRequestException('token is required');
+
     const user = await this.userModel.findOne({ emailVerificationToken: token });
     if (!user) throw new BadRequestException('Invalid or expired confirmation token');
 
@@ -83,16 +98,19 @@ export class AuthService {
   }
 
   async login(dto: LoginDto) {
-    const user = await this.userModel.findOne({ email: dto.email.toLowerCase() });
-    if (!user) throw new UnauthorizedException('Invalid credentials');
+    const user = await this.userModel
+      .findOne({ email: dto.email.toLowerCase() })
+      .select('-emailVerificationToken -passwordResetToken -passwordResetExpiry');
 
+    if (!user) throw new UnauthorizedException('Invalid credentials');
     if (!user.emailVerified) throw new UnauthorizedException('Invalid credentials');
 
     const match = await bcrypt.compare(dto.password, user.passwordHash);
     if (!match) throw new UnauthorizedException('Invalid credentials');
 
     const token = this.jwtService.sign({ sub: (user._id as any).toString() });
-    return { token, user };
+    // Use toJSON() to strip passwordHash for the returned user
+    return { token, user: (user as any).toJSON() };
   }
 
   async forgotPassword(dto: ForgotPasswordDto) {
@@ -114,7 +132,11 @@ export class AuthService {
                <a href="${baseUrl}/auth/reset-password?token=${resetToken}">Reset Password</a>`,
       });
     } catch (err) {
-      console.error('Mail send failed:', (err as Error).message);
+      // Clear the token so the DB isn't left with an inaccessible reset token
+      user.set('passwordResetToken', undefined);
+      user.set('passwordResetExpiry', undefined);
+      await user.save();
+      throw new ServiceUnavailableException('Failed to send reset email. Please try again later.');
     }
 
     return { message: 'If that email exists, a reset link has been sent.' };
