@@ -30,6 +30,9 @@ export class TournamentMatch {
   @Prop({ type: Types.ObjectId, ref: 'TournamentTeam', default: null })
   winnerId: Types.ObjectId | null;
 
+  @Prop({ default: 'scheduled', enum: ['scheduled', 'in_progress', 'completed', 'walkover'] })
+  status: string;
+
   @Prop({ type: Types.ObjectId, ref: 'TournamentMatch', default: null })
   nextMatchId: Types.ObjectId | null;
 
@@ -38,3 +41,4 @@ export class TournamentMatch {
 }
 
 export const TournamentMatchSchema = SchemaFactory.createForClass(TournamentMatch);
+TournamentMatchSchema.index({ tournamentId: 1, round: 1 });

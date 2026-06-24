@@ -12,7 +12,7 @@ export class EventPlayer {
   @Prop({ required: true, type: Types.ObjectId, ref: 'User' })
   userId: Types.ObjectId;
 
-  @Prop()
+  @Prop({ sparse: true })
   joinedAt: Date;
 
   @Prop({ default: null })

@@ -41,3 +41,4 @@ export class Group {
 }
 
 export const GroupSchema = SchemaFactory.createForClass(Group);
+GroupSchema.index({ inviteCode: 1 }, { unique: true, sparse: true });

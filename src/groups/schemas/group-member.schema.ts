@@ -18,7 +18,7 @@ export class GroupMember {
   @Prop({ default: 'pending', enum: ['pending', 'approved'] })
   status: string;
 
-  @Prop()
+  @Prop({ sparse: true })
   joinedAt: Date;
 }
 

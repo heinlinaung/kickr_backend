@@ -53,3 +53,6 @@ export class Event {
 }
 
 export const EventSchema = SchemaFactory.createForClass(Event);
+EventSchema.index({ groupId: 1, date: 1 });
+EventSchema.index({ isPublic: 1, date: 1 });
+EventSchema.index({ createdBy: 1, date: -1 });

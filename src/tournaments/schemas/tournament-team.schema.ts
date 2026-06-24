@@ -12,7 +12,7 @@ export class TournamentTeam {
   @Prop({ required: true })
   name: string;
 
-  @Prop({ type: [Types.ObjectId], ref: 'User', default: [] })
+  @Prop({ type: [{ type: Types.ObjectId, ref: 'User' }], default: [] })
   players: Types.ObjectId[];
 
   @Prop({ type: Types.ObjectId, ref: 'User' })
@@ -20,3 +20,4 @@ export class TournamentTeam {
 }
 
 export const TournamentTeamSchema = SchemaFactory.createForClass(TournamentTeam);
+TournamentTeamSchema.index({ tournamentId: 1 });

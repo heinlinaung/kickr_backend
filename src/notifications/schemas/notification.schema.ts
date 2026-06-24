@@ -18,7 +18,7 @@ export class Notification {
   @Prop({ required: true, enum: ['event', 'group'] })
   type: string;
 
-  @Prop()
+  @Prop({ type: String })
   refId: string;
 
   @Prop({ default: false })
@@ -26,4 +26,4 @@ export class Notification {
 }
 
 export const NotificationSchema = SchemaFactory.createForClass(Notification);
-NotificationSchema.index({ userId: 1, createdAt: -1 });
+NotificationSchema.index({ userId: 1, isRead: 1, createdAt: -1 });
