@@ -4,6 +4,7 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
 import { AuthModule } from './auth/auth.module';
+import { UsersModule } from './users/users.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { AuthModule } from './auth/auth.module';
       serveRoot: '/uploads',
     }),
     AuthModule,
+    UsersModule,
   ],
 })
 export class AppModule {}

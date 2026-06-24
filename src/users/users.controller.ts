@@ -1,0 +1,35 @@
+import {
+  Controller, Get, Patch, Post, Body, UseGuards,
+  UseInterceptors, UploadedFile,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { UsersService } from './users.service';
+import { UpdateProfileDto } from './dto/update-profile.dto';
+import { multerDiskOptions } from '../common/upload/multer.config';
+
+@Controller('users')
+@UseGuards(JwtAuthGuard)
+export class UsersController {
+  constructor(private usersService: UsersService) {}
+
+  @Get('me')
+  getMe(@CurrentUser() user: any) {
+    return this.usersService.findById(user._id.toString());
+  }
+
+  @Patch('me')
+  updateProfile(@CurrentUser() user: any, @Body() dto: UpdateProfileDto) {
+    return this.usersService.updateProfile(user._id.toString(), dto);
+  }
+
+  @Post('me/avatar')
+  @UseInterceptors(FileInterceptor('file', multerDiskOptions('profiles')))
+  uploadAvatar(
+    @CurrentUser() user: any,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    return this.usersService.updateAvatar(user._id.toString(), file.filename);
+  }
+}
