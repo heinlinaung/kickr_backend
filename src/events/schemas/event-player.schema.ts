@@ -15,7 +15,7 @@ export class EventPlayer {
   @Prop({ sparse: true })
   joinedAt: Date;
 
-  @Prop({ default: null })
+  @Prop({ type: String, default: null })
   team: string | null;
 
   @Prop()
