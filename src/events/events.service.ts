@@ -97,15 +97,24 @@ export class EventsService {
     player.status = 'cancelled';
     await player.save();
 
-    // Only reopen if event was 'full' — don't overwrite 'done' or other statuses
+    // Use a single update: decrement and conditionally reopen if was 'full'
     await this.eventModel.findOneAndUpdate(
-      { _id: eventId, status: 'full' },
-      { $inc: { joinedCount: -1 }, $set: { status: 'open' } },
-    );
-    // Also decrement count for 'open' events without changing status
-    await this.eventModel.findOneAndUpdate(
-      { _id: eventId, status: 'open' },
-      { $inc: { joinedCount: -1 } },
+      { _id: eventId, status: { $in: ['open', 'full'] } },
+      [
+        {
+          $set: {
+            joinedCount: { $subtract: ['$joinedCount', 1] },
+            status: {
+              $cond: {
+                if: { $eq: ['$status', 'full'] },
+                then: 'open',
+                else: '$status',
+              },
+            },
+          },
+        },
+      ],
+      { updatePipeline: true } as any,
     );
 
     return { message: 'Left event successfully' };

@@ -20,6 +20,7 @@ export class ChatController {
   ) {
     const role = await this.groupsService.getMemberRole(groupId, user._id.toString());
     if (!role) throw new ForbiddenException('Not a member of this group');
-    return this.chatService.getHistory(groupId, limit ? parseInt(limit, 10) : 50);
+    const parsedLimit = limit ? Math.min(parseInt(limit, 10), 200) : 50;
+    return this.chatService.getHistory(groupId, parsedLimit);
   }
 }

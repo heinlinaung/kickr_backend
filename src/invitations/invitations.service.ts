@@ -55,6 +55,18 @@ export class InvitationsService {
     if (!invitation) throw new NotFoundException('Invitation not found');
 
     if (dto.action === 'approved') {
+      // Check group capacity before approving
+      const group = await this.groupModel.findById(groupId).lean();
+      if (group) {
+        const approvedCount = await this.memberModel.countDocuments({
+          groupId: new Types.ObjectId(groupId),
+          status: 'approved',
+        });
+        if (approvedCount >= group.maxPlayers) {
+          throw new BadRequestException('Group is full');
+        }
+      }
+
       invitation.status = 'approved';
       invitation.joinedAt = new Date();
       await invitation.save();

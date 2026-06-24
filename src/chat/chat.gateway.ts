@@ -20,7 +20,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   handleConnection(client: Socket) {
     try {
-      const token = client.handshake.query.token as string;
+      const token = (client.handshake.auth?.token || client.handshake.query.token) as string;
       const payload = this.jwtService.verify(token);
       (client as any).userId = payload.sub;
     } catch {

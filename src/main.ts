@@ -11,7 +11,7 @@ async function bootstrap() {
     origin: process.env.APP_BASE_URL ?? 'http://localhost:3000',
     credentials: true,
   });
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
+  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }));
   app.useGlobalFilters(new HttpExceptionFilter());
   app.useGlobalInterceptors(new TransformInterceptor());
 
@@ -23,6 +23,8 @@ async function bootstrap() {
     .build();
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api-docs', app, document);
+
+  app.enableShutdownHooks();
 
   const port = parseInt(process.env.PORT ?? '3000', 10);
   await app.listen(port);

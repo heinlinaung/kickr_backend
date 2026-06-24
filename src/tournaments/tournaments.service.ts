@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException, ConflictException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Tournament, TournamentDocument } from './schemas/tournament.schema';
@@ -61,6 +61,17 @@ export class TournamentsService {
       throw new BadRequestException(
         t.status !== 'registering' ? 'Tournament is not accepting registrations' : 'Tournament is full',
       );
+    }
+
+    // Check for duplicate captainId (same user can't register twice)
+    const duplicateTeam = await this.teamModel.findOne({
+      tournamentId: new Types.ObjectId(tournamentId),
+      captainId: dto.captainId ? new Types.ObjectId(dto.captainId) : new Types.ObjectId(userId),
+    });
+    if (duplicateTeam) {
+      // Roll back the slot increment
+      await this.tournamentModel.findByIdAndUpdate(tournamentId, { $inc: { currentTeams: -1 } });
+      throw new ConflictException('You have already registered a team in this tournament');
     }
 
     const team = await this.teamModel.create({
