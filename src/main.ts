@@ -22,11 +22,11 @@ async function bootstrap() {
     .addBearerAuth()
     .build();
   const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api', app, document);
+  SwaggerModule.setup('api-docs', app, document);
 
   const port = parseInt(process.env.PORT ?? '3000', 10);
   await app.listen(port);
   console.log(`KicKR API running on port ${port}`);
-  console.log(`Swagger docs at http://localhost:${port}/api`);
+  console.log(`Swagger docs at http://localhost:${port}/api-docs`);
 }
 bootstrap();
