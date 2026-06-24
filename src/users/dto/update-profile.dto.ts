@@ -9,6 +9,7 @@ export class UpdateProfileDto {
 
   @IsOptional()
   @IsString()
+  @MinLength(3)
   username?: string;
 
   @IsOptional()

@@ -4,7 +4,7 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { User, UserDocument } from '../../users/schemas/user.schema';
+import { User, UserDocument, USER_SENSITIVE_PROJECTION } from '../../users/schemas/user.schema';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -21,7 +21,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   async validate(payload: { sub: string }) {
     const user = await this.userModel
       .findById(payload.sub)
-      .select('-passwordHash -emailVerificationToken -passwordResetToken -passwordResetExpiry')
+      .select(USER_SENSITIVE_PROJECTION)
       .lean();
     if (!user) throw new UnauthorizedException();
     return user;

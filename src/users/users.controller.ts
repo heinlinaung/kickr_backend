@@ -1,6 +1,6 @@
 import {
   Controller, Get, Patch, Post, Body, UseGuards,
-  UseInterceptors, UploadedFile,
+  UseInterceptors, UploadedFile, BadRequestException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -30,6 +30,9 @@ export class UsersController {
     @CurrentUser() user: any,
     @UploadedFile() file: Express.Multer.File,
   ) {
+    if (!file) {
+      throw new BadRequestException('File is required');
+    }
     return this.usersService.updateAvatar(user._id.toString(), file.filename);
   }
 }
