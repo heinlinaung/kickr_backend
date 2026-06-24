@@ -39,7 +39,7 @@ describe('Events (e2e)', () => {
   afterAll(async () => {
     await userModel.deleteMany({ email: /@test-e2e\.com$/ });
     await eventModel.deleteMany({ title: /E2E/ });
-    await playerModel.deleteMany({});
+    await playerModel.deleteMany({ eventId });
     await app.close();
   });
 

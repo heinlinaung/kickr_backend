@@ -39,7 +39,7 @@ describe('Groups (e2e)', () => {
   afterAll(async () => {
     await userModel.deleteMany({ email: /@test-e2e\.com$/ });
     await groupModel.deleteMany({ name: /E2E/ });
-    await memberModel.deleteMany({});
+    await memberModel.deleteMany({ groupId });
     await app.close();
   });
 
