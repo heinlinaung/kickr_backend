@@ -9,6 +9,9 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { GroupsModule } from './groups/groups.module';
 import { InvitationsModule } from './invitations/invitations.module';
 import { ChatModule } from './chat/chat.module';
+import { EventsModule } from './events/events.module';
+import { TournamentsModule } from './tournaments/tournaments.module';
+import { ShuffleModule } from './shuffle/shuffle.module';
 
 @Module({
   imports: [
@@ -27,6 +30,9 @@ import { ChatModule } from './chat/chat.module';
     UsersModule,
     NotificationsModule,
     GroupsModule,
+    EventsModule,
+    TournamentsModule,
+    ShuffleModule,
     InvitationsModule,
     ChatModule,
   ],
