@@ -1,9 +1,12 @@
 import { Controller, Get, Post, Delete, Body, Param, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { EventsService } from './events.service';
 import { CreateEventDto } from './dto/create-event.dto';
 
+@ApiTags('Events')
+@ApiBearerAuth()
 @Controller('events')
 @UseGuards(JwtAuthGuard)
 export class EventsController {

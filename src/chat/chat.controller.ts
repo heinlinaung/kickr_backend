@@ -1,9 +1,12 @@
 import { Controller, Get, Param, Query, UseGuards, ForbiddenException } from '@nestjs/common';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ChatService } from './chat.service';
 import { GroupsService } from '../groups/groups.service';
 
+@ApiTags('Chat')
+@ApiBearerAuth()
 @Controller('groups/:id/messages')
 @UseGuards(JwtAuthGuard)
 export class ChatController {

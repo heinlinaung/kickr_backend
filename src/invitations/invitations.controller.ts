@@ -1,9 +1,12 @@
 import { Controller, Post, Get, Patch, Body, Param, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { InvitationsService } from './invitations.service';
 import { RespondInvitationDto } from './dto/respond-invitation.dto';
 
+@ApiTags('Invitations')
+@ApiBearerAuth()
 @Controller()
 @UseGuards(JwtAuthGuard)
 export class InvitationsController {

@@ -2,6 +2,7 @@ import {
   Controller, Post, Get, Patch, Delete, Body, Param, UseGuards,
   UseInterceptors, UploadedFile, BadRequestException,
 } from '@nestjs/common';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -10,6 +11,8 @@ import { CreateGroupDto } from './dto/create-group.dto';
 import { UpdateGroupDto } from './dto/update-group.dto';
 import { multerDiskOptions } from '../common/upload/multer.config';
 
+@ApiTags('Groups')
+@ApiBearerAuth()
 @Controller('groups')
 @UseGuards(JwtAuthGuard)
 export class GroupsController {
