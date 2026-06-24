@@ -4,6 +4,7 @@ import { createTestApp } from './test-app.helper';
 import { getModelToken } from '@nestjs/mongoose';
 import { User } from '../src/users/schemas/user.schema';
 import { Model } from 'mongoose';
+import * as bcrypt from 'bcrypt';
 
 describe('Auth (e2e)', () => {
   let app: INestApplication;
@@ -41,11 +42,10 @@ describe('Auth (e2e)', () => {
     expect([201, 503]).toContain(res.status);
     if (res.status === 503) {
       // Manually create user for subsequent tests since SMTP failed
-      const bcrypt = require('bcrypt');
       await userModel.create({
         name: 'E2E User',
         email: 'user@test-e2e.com',
-        passwordHash: await bcrypt.hash('password123', 10),
+        passwordHash: await bcrypt.hash('password123', 4),
         emailVerified: false,
       });
     }
@@ -55,7 +55,7 @@ describe('Auth (e2e)', () => {
     const res = await request(app.getHttpServer())
       .post('/auth/signup')
       .send({ name: 'E2E User', email: 'user@test-e2e.com', password: 'password123' });
-    expect([400, 503]).toContain(res.status);
+    expect(res.status).toBe(400);
   });
 
   it('POST /auth/login — rejects unverified user', async () => {

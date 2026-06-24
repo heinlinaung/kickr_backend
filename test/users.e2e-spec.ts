@@ -19,13 +19,14 @@ describe('Users (e2e)', () => {
     await userModel.create({
       name: 'Profile User',
       email: 'profile@test-e2e.com',
-      passwordHash: await bcrypt.hash('password123', 10),
+      passwordHash: await bcrypt.hash('password123', 4),
       emailVerified: true,
     });
 
     const loginRes = await request(app.getHttpServer())
       .post('/auth/login')
       .send({ email: 'profile@test-e2e.com', password: 'password123' });
+    expect(loginRes.status).toBe(200);
     token = loginRes.body.data.token;
   });
 
@@ -68,12 +69,13 @@ describe('Users (e2e)', () => {
     await userModel.create({
       name: 'Other User',
       email: 'other@test-e2e.com',
-      passwordHash: await bcrypt.hash('password123', 10),
+      passwordHash: await bcrypt.hash('password123', 4),
       emailVerified: true,
     });
     const otherLogin = await request(app.getHttpServer())
       .post('/auth/login')
       .send({ email: 'other@test-e2e.com', password: 'password123' });
+    expect(otherLogin.status).toBe(200);
     const otherToken = otherLogin.body.data.token;
 
     const res = await request(app.getHttpServer())
