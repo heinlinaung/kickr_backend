@@ -4,6 +4,7 @@ import { Model, Types } from 'mongoose';
 import { Tournament, TournamentDocument } from './schemas/tournament.schema';
 import { TournamentTeam, TournamentTeamDocument } from './schemas/tournament-team.schema';
 import { TournamentMatch, TournamentMatchDocument } from './schemas/tournament-match.schema';
+import { GroupMember, GroupMemberDocument } from '../groups/schemas/group-member.schema';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { RegisterTeamDto } from './dto/register-team.dto';
 import { UpdateMatchDto } from './dto/update-match.dto';
@@ -14,9 +15,19 @@ export class TournamentsService {
     @InjectModel(Tournament.name) private tournamentModel: Model<TournamentDocument>,
     @InjectModel(TournamentTeam.name) private teamModel: Model<TournamentTeamDocument>,
     @InjectModel(TournamentMatch.name) private matchModel: Model<TournamentMatchDocument>,
+    @InjectModel(GroupMember.name) private memberModel: Model<GroupMemberDocument>,
   ) {}
 
   async create(userId: string, dto: CreateTournamentDto): Promise<TournamentDocument> {
+    if (dto.groupId) {
+      const member = await this.memberModel.findOne({
+        groupId: new Types.ObjectId(dto.groupId),
+        userId: new Types.ObjectId(userId),
+        status: 'approved',
+        role: { $in: ['owner', 'admin'] },
+      });
+      if (!member) throw new ForbiddenException('Only group owner or admin can create tournaments');
+    }
     return this.tournamentModel.create({
       ...dto,
       startDate: dto.startDate ? new Date(dto.startDate) : undefined,
@@ -34,10 +45,23 @@ export class TournamentsService {
   }
 
   async registerTeam(tournamentId: string, userId: string, dto: RegisterTeamDto) {
-    const tournament = await this.tournamentModel.findById(tournamentId);
-    if (!tournament) throw new NotFoundException('Tournament not found');
-    if (tournament.status !== 'registering') throw new BadRequestException('Tournament is not accepting registrations');
-    if (tournament.currentTeams >= tournament.maxTeams) throw new BadRequestException('Tournament is full');
+    // Atomic: only increment if status='registering' and currentTeams < maxTeams
+    const updated = await this.tournamentModel.findOneAndUpdate(
+      {
+        _id: tournamentId,
+        status: 'registering',
+        $expr: { $lt: ['$currentTeams', '$maxTeams'] },
+      },
+      { $inc: { currentTeams: 1 } },
+      { new: false }, // return old doc to check
+    );
+    if (!updated) {
+      const t = await this.tournamentModel.findById(tournamentId).lean();
+      if (!t) throw new NotFoundException('Tournament not found');
+      throw new BadRequestException(
+        t.status !== 'registering' ? 'Tournament is not accepting registrations' : 'Tournament is full',
+      );
+    }
 
     const team = await this.teamModel.create({
       tournamentId: new Types.ObjectId(tournamentId),
@@ -46,7 +70,6 @@ export class TournamentsService {
       captainId: dto.captainId ? new Types.ObjectId(dto.captainId) : new Types.ObjectId(userId),
     });
 
-    await this.tournamentModel.findByIdAndUpdate(tournamentId, { $inc: { currentTeams: 1 } });
     return team;
   }
 
@@ -57,13 +80,17 @@ export class TournamentsService {
       throw new ForbiddenException('Only tournament creator can update match scores');
     }
 
-    return this.matchModel.findByIdAndUpdate(
-      matchId,
+    return this.matchModel.findOneAndUpdate(
+      {
+        _id: matchId,
+        tournamentId: new Types.ObjectId(tournamentId),
+      },
       {
         $set: {
           scoreA: dto.scoreA,
           scoreB: dto.scoreB,
           winnerId: dto.winnerId ? new Types.ObjectId(dto.winnerId) : null,
+          status: 'completed',
         },
       },
       { new: true },

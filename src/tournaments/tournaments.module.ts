@@ -5,6 +5,7 @@ import { TournamentsService } from './tournaments.service';
 import { Tournament, TournamentSchema } from './schemas/tournament.schema';
 import { TournamentTeam, TournamentTeamSchema } from './schemas/tournament-team.schema';
 import { TournamentMatch, TournamentMatchSchema } from './schemas/tournament-match.schema';
+import { GroupMember, GroupMemberSchema } from '../groups/schemas/group-member.schema';
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { TournamentMatch, TournamentMatchSchema } from './schemas/tournament-mat
       { name: Tournament.name, schema: TournamentSchema },
       { name: TournamentTeam.name, schema: TournamentTeamSchema },
       { name: TournamentMatch.name, schema: TournamentMatchSchema },
+      { name: GroupMember.name, schema: GroupMemberSchema },
     ]),
   ],
   controllers: [TournamentsController],

@@ -45,16 +45,26 @@ export class EventsService {
   }
 
   async join(eventId: string, userId: string) {
-    const event = await this.eventModel.findById(eventId);
-    if (!event) throw new NotFoundException('Event not found');
-    if (event.status !== 'open') throw new BadRequestException('Event is not open for joining');
-    if (event.joinedCount >= event.maxPlayers) throw new BadRequestException('Event is full');
-
+    // Check existing player record first
     const existing = await this.playerModel.findOne({
       eventId: new Types.ObjectId(eventId),
       userId: new Types.ObjectId(userId),
     });
     if (existing && existing.status === 'joined') throw new ConflictException('Already joined');
+
+    // Atomic capacity check: only increment if joinedCount < maxPlayers and status is open
+    const updatedEvent = await this.eventModel.findOneAndUpdate(
+      { _id: eventId, status: 'open', $expr: { $lt: ['$joinedCount', '$maxPlayers'] } },
+      { $inc: { joinedCount: 1 } },
+      { new: true },
+    );
+    if (!updatedEvent) {
+      const event = await this.eventModel.findById(eventId).lean();
+      if (!event) throw new NotFoundException('Event not found');
+      throw new BadRequestException(event.status !== 'open' ? 'Event is not open for joining' : 'Event is full');
+    }
+
+    // Create or reactivate player record
     if (existing && existing.status === 'cancelled') {
       existing.status = 'joined';
       existing.joinedAt = new Date();
@@ -68,8 +78,8 @@ export class EventsService {
       });
     }
 
-    await this.eventModel.findByIdAndUpdate(eventId, { $inc: { joinedCount: 1 } });
-    if (event.joinedCount + 1 >= event.maxPlayers) {
+    // Update status to 'full' if at capacity
+    if (updatedEvent.joinedCount >= updatedEvent.maxPlayers) {
       await this.eventModel.findByIdAndUpdate(eventId, { $set: { status: 'full' } });
     }
 
@@ -86,10 +96,17 @@ export class EventsService {
 
     player.status = 'cancelled';
     await player.save();
-    await this.eventModel.findByIdAndUpdate(eventId, {
-      $inc: { joinedCount: -1 },
-      $set: { status: 'open' },
-    });
+
+    // Only reopen if event was 'full' — don't overwrite 'done' or other statuses
+    await this.eventModel.findOneAndUpdate(
+      { _id: eventId, status: 'full' },
+      { $inc: { joinedCount: -1 }, $set: { status: 'open' } },
+    );
+    // Also decrement count for 'open' events without changing status
+    await this.eventModel.findOneAndUpdate(
+      { _id: eventId, status: 'open' },
+      { $inc: { joinedCount: -1 } },
+    );
 
     return { message: 'Left event successfully' };
   }
