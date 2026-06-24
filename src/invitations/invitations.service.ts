@@ -1,17 +1,19 @@
 import {
-  Injectable, NotFoundException, ConflictException, ForbiddenException, BadRequestException,
+  Injectable, NotFoundException, ConflictException, BadRequestException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Group, GroupDocument } from '../groups/schemas/group.schema';
 import { GroupMember, GroupMemberDocument } from '../groups/schemas/group-member.schema';
 import { RespondInvitationDto } from './dto/respond-invitation.dto';
+import { GroupsService } from '../groups/groups.service';
 
 @Injectable()
 export class InvitationsService {
   constructor(
     @InjectModel(Group.name) private groupModel: Model<GroupDocument>,
     @InjectModel(GroupMember.name) private memberModel: Model<GroupMemberDocument>,
+    private groupsService: GroupsService,
   ) {}
 
   async requestToJoin(groupId: string, userId: string) {
@@ -35,7 +37,7 @@ export class InvitationsService {
   }
 
   async listPending(groupId: string, requesterId: string) {
-    await this.assertOwnerOrAdmin(groupId, requesterId);
+    await this.groupsService.assertOwnerOrAdmin(groupId, requesterId);
     return this.memberModel
       .find({ groupId: new Types.ObjectId(groupId), status: 'pending' })
       .populate('userId', 'name email profileImage')
@@ -43,7 +45,7 @@ export class InvitationsService {
   }
 
   async respond(groupId: string, invitationId: string, requesterId: string, dto: RespondInvitationDto) {
-    await this.assertOwnerOrAdmin(groupId, requesterId);
+    await this.groupsService.assertOwnerOrAdmin(groupId, requesterId);
 
     const invitation = await this.memberModel.findOne({
       _id: invitationId,
@@ -76,6 +78,12 @@ export class InvitationsService {
     });
     if (existing) throw new ConflictException('Already a member or request pending');
 
+    const memberCount = await this.memberModel.countDocuments({
+      groupId: group._id,
+      status: 'approved',
+    });
+    if (memberCount >= group.maxPlayers) throw new BadRequestException('Group is full');
+
     await this.memberModel.create({
       groupId: group._id,
       userId: new Types.ObjectId(userId),
@@ -85,15 +93,5 @@ export class InvitationsService {
     });
 
     return { message: 'Joined group successfully', groupId: group._id };
-  }
-
-  private async assertOwnerOrAdmin(groupId: string, userId: string) {
-    const member = await this.memberModel.findOne({
-      groupId: new Types.ObjectId(groupId),
-      userId: new Types.ObjectId(userId),
-      status: 'approved',
-      role: { $in: ['owner', 'admin'] },
-    });
-    if (!member) throw new ForbiddenException('Only group owner or admin can perform this action');
   }
 }

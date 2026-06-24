@@ -5,11 +5,13 @@ import { ChatGateway } from './chat.gateway';
 import { ChatService } from './chat.service';
 import { Message, MessageSchema } from './schemas/message.schema';
 import { AuthModule } from '../auth/auth.module';
+import { GroupsModule } from '../groups/groups.module';
 
 @Module({
   imports: [
     MongooseModule.forFeature([{ name: Message.name, schema: MessageSchema }]),
     AuthModule,
+    GroupsModule,
   ],
   controllers: [ChatController],
   providers: [ChatGateway, ChatService],

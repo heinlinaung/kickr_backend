@@ -5,6 +5,7 @@ import {
 import { Server, Socket } from 'socket.io';
 import { JwtService } from '@nestjs/jwt';
 import { ChatService } from './chat.service';
+import { GroupsService } from '../groups/groups.service';
 
 @WebSocketGateway({ cors: true, namespace: '/chat' })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -14,6 +15,7 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   constructor(
     private chatService: ChatService,
     private jwtService: JwtService,
+    private groupsService: GroupsService,
   ) {}
 
   handleConnection(client: Socket) {
@@ -29,10 +31,18 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   handleDisconnect(_client: Socket) {}
 
   @SubscribeMessage('joinRoom')
-  handleJoinRoom(
+  async handleJoinRoom(
     @MessageBody() data: { groupId: string },
     @ConnectedSocket() client: Socket,
   ) {
+    const userId = (client as any).userId;
+    if (!userId) return;
+
+    const role = await this.groupsService.getMemberRole(data.groupId, userId);
+    if (!role) {
+      client.emit('error', { message: 'Not a member of this group' });
+      return;
+    }
     client.join(data.groupId);
   }
 
@@ -43,6 +53,9 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   ) {
     const userId = (client as any).userId;
     if (!userId) return;
+
+    const role = await this.groupsService.getMemberRole(data.groupId, userId);
+    if (!role) return;
 
     const message = await this.chatService.saveMessage(data.groupId, userId, data.text);
     this.server.to(data.groupId).emit('newMessage', {

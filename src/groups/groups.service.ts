@@ -68,6 +68,15 @@ export class GroupsService {
 
   async removeMember(groupId: string, requesterId: string, targetUserId: string) {
     await this.assertOwnerOrAdmin(groupId, requesterId);
+
+    const targetMember = await this.memberModel.findOne({
+      groupId: new Types.ObjectId(groupId),
+      userId: new Types.ObjectId(targetUserId),
+    });
+    if (targetMember?.role === 'owner') {
+      throw new ForbiddenException('Cannot remove the group owner');
+    }
+
     await this.memberModel.deleteOne({
       groupId: new Types.ObjectId(groupId),
       userId: new Types.ObjectId(targetUserId),
