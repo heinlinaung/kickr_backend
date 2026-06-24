@@ -1,5 +1,5 @@
 import {
-  Injectable, BadRequestException, UnauthorizedException,
+  Injectable, BadRequestException, UnauthorizedException, ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -34,19 +34,24 @@ export class AuthService {
   }
 
   async signup(dto: SignupDto) {
-    const existing = await this.userModel.findOne({ email: dto.email.toLowerCase() });
-    if (existing) throw new BadRequestException('Email already registered');
-
     const passwordHash = await bcrypt.hash(dto.password, 10);
     const emailVerificationToken = uuidv4();
 
-    const user = await this.userModel.create({
-      name: dto.name,
-      email: dto.email.toLowerCase(),
-      passwordHash,
-      emailVerificationToken,
-      emailVerified: false,
-    });
+    let user;
+    try {
+      user = await this.userModel.create({
+        name: dto.name,
+        email: dto.email.toLowerCase(),
+        passwordHash,
+        emailVerificationToken,
+        emailVerified: false,
+      });
+    } catch (err: any) {
+      if (err?.code === 11000) {
+        throw new BadRequestException('Email already registered');
+      }
+      throw err;
+    }
 
     const baseUrl = this.config.get('APP_BASE_URL');
     try {
@@ -59,7 +64,8 @@ export class AuthService {
                <a href="${baseUrl}/auth/confirm-email?token=${emailVerificationToken}">Confirm Email</a>`,
       });
     } catch (err) {
-      console.error('Mail send failed:', (err as Error).message);
+      await this.userModel.findByIdAndDelete(user._id);
+      throw new ServiceUnavailableException('Failed to send confirmation email. Please try again later.');
     }
 
     return { message: 'Signup successful. Check your email to confirm your account.' };
@@ -80,10 +86,10 @@ export class AuthService {
     const user = await this.userModel.findOne({ email: dto.email.toLowerCase() });
     if (!user) throw new UnauthorizedException('Invalid credentials');
 
+    if (!user.emailVerified) throw new UnauthorizedException('Invalid credentials');
+
     const match = await bcrypt.compare(dto.password, user.passwordHash);
     if (!match) throw new UnauthorizedException('Invalid credentials');
-
-    if (!user.emailVerified) throw new UnauthorizedException('Please confirm your email first');
 
     const token = this.jwtService.sign({ sub: (user._id as any).toString() });
     return { token, user };
