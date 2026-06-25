@@ -16,6 +16,18 @@ export class GroupsService {
     @InjectModel(GroupMember.name) private memberModel: Model<GroupMemberDocument>,
   ) {}
 
+  async getMyGroups(userId: string) {
+    const memberships = await this.memberModel
+      .find({ userId: new Types.ObjectId(userId), status: 'approved' })
+      .lean();
+    const groupIds = memberships.map((m) => m.groupId);
+    const groups = await this.groupModel.find({ _id: { $in: groupIds } }).lean();
+    return groups.map((group) => ({
+      ...group,
+      myRole: memberships.find((m) => m.groupId.toString() === (group._id as any).toString())?.role,
+    }));
+  }
+
   async create(ownerId: string, dto: CreateGroupDto): Promise<GroupDocument> {
     const group = await this.groupModel.create({
       ...dto,

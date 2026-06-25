@@ -18,6 +18,11 @@ import { multerDiskOptions } from '../common/upload/multer.config';
 export class GroupsController {
   constructor(private groupsService: GroupsService) {}
 
+  @Get()
+  getMyGroups(@CurrentUser() user: any) {
+    return this.groupsService.getMyGroups(user._id.toString());
+  }
+
   @Post()
   create(@CurrentUser() user: any, @Body() dto: CreateGroupDto) {
     return this.groupsService.create(user._id.toString(), dto);
