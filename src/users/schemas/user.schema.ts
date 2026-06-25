@@ -32,9 +32,6 @@ export class User {
   @Prop()
   profileImage: string;
 
-  @Prop({ default: 'player', enum: ['player', 'owner'] })
-  role: string;
-
   @Prop({ type: [String], default: [] })
   joinedGroups: string[];
 
