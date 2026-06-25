@@ -14,15 +14,6 @@ import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#x27;');
-}
-
 @Injectable()
 export class AuthService {
   private transporter: nodemailer.Transporter;
@@ -43,21 +34,17 @@ export class AuthService {
   }
 
   async signup(dto: SignupDto) {
-    // Fast-fail before expensive bcrypt
     const existing = await this.userModel.findOne({ email: dto.email.toLowerCase() });
     if (existing) throw new BadRequestException('Email already registered');
 
     const passwordHash = await bcrypt.hash(dto.password, 10);
-    const emailVerificationToken = uuidv4();
 
-    let user;
     try {
-      user = await this.userModel.create({
+      await this.userModel.create({
         name: dto.name,
         email: dto.email.toLowerCase(),
         passwordHash,
-        emailVerificationToken,
-        emailVerified: false,
+        emailVerified: true,
       });
     } catch (err: any) {
       if (err?.code === 11000) {
@@ -66,22 +53,7 @@ export class AuthService {
       throw err;
     }
 
-    const baseUrl = this.config.get('APP_BASE_URL');
-    try {
-      await this.transporter.sendMail({
-        from: this.config.get('MAIL_FROM'),
-        to: user.email,
-        subject: 'Confirm your KicKR account',
-        html: `<p>Hi ${escapeHtml(user.name)},</p>
-               <p>Click the link to confirm your email:</p>
-               <a href="${baseUrl}/confirm-email?token=${emailVerificationToken}">Confirm Email</a>`,
-      });
-    } catch (err) {
-      await this.userModel.findByIdAndDelete(user._id);
-      throw new ServiceUnavailableException('Failed to send confirmation email. Please try again later.');
-    }
-
-    return { message: 'Signup successful. Check your email to confirm your account.' };
+    return { message: 'Signup successful.' };
   }
 
   async confirmEmail(token: string) {
@@ -103,7 +75,6 @@ export class AuthService {
       .select('-emailVerificationToken -passwordResetToken -passwordResetExpiry');
 
     if (!user) throw new UnauthorizedException('Invalid credentials');
-    if (!user.emailVerified) throw new UnauthorizedException('Invalid credentials');
 
     const match = await bcrypt.compare(dto.password, user.passwordHash);
     if (!match) throw new UnauthorizedException('Invalid credentials');
