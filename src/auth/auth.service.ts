@@ -96,26 +96,25 @@ export class AuthService {
   }
 
   async refreshTokens(dto: RefreshTokenDto) {
-    let payload: { sub: string; ver: number };
     try {
-      payload = this.jwtService.verify(dto.refreshToken, {
-        secret: this.config.get<string>('JWT_REFRESH_SECRET'),
-      });
+      const payload: { sub: string; ver: number } = this.jwtService.verify(
+        dto.refreshToken,
+        {
+          secret: this.config.get<string>('JWT_REFRESH_SECRET'),
+        },
+      );
+
+      const user = await this.userModel.findOneAndUpdate(
+        { _id: payload.sub, refreshTokenVersion: payload.ver },
+        { $inc: { refreshTokenVersion: 1 } },
+        { new: true },
+      );
+      if (!user) throw new UnauthorizedException('Invalid refresh token');
+
+      return this.issueTokens(user);
     } catch {
       throw new UnauthorizedException('Invalid refresh token');
     }
-
-    const user = await this.userModel.findById(payload.sub);
-    if (!user) throw new UnauthorizedException('Invalid refresh token');
-
-    if (user.refreshTokenVersion !== payload.ver) {
-      throw new UnauthorizedException('Invalid refresh token');
-    }
-
-    user.refreshTokenVersion += 1;
-    await user.save();
-
-    return this.issueTokens(user);
   }
 
   private issueTokens(user: UserDocument) {
