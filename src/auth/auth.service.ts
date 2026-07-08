@@ -79,9 +79,25 @@ export class AuthService {
     const match = await bcrypt.compare(dto.password, user.passwordHash);
     if (!match) throw new UnauthorizedException('Invalid credentials');
 
-    const token = this.jwtService.sign({ sub: (user._id as any).toString() });
+    const { token, refreshToken } = this.issueTokens(user);
     // Use toJSON() to strip passwordHash for the returned user
-    return { token, user: (user as any).toJSON() };
+    return { token, refreshToken, user: (user as any).toJSON() };
+  }
+
+  private issueTokens(user: UserDocument) {
+    const userId = (user._id as any).toString();
+    const token = this.jwtService.sign(
+      { sub: userId },
+      { expiresIn: this.config.get('JWT_EXPIRES_IN') },
+    );
+    const refreshToken = this.jwtService.sign(
+      { sub: userId, ver: user.refreshTokenVersion },
+      {
+        secret: this.config.get<string>('JWT_REFRESH_SECRET'),
+        expiresIn: this.config.get('JWT_REFRESH_EXPIRES_IN'),
+      },
+    );
+    return { token, refreshToken };
   }
 
   async forgotPassword(dto: ForgotPasswordDto) {
