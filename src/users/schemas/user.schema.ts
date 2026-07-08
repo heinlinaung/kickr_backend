@@ -32,9 +32,6 @@ export class User {
   @Prop()
   profileImage: string;
 
-  @Prop({ type: [String], default: [] })
-  joinedGroups: string[];
-
   @Prop({ default: false })
   emailVerified: boolean;
 
