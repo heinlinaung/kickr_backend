@@ -46,6 +46,9 @@ export class User {
 
   @Prop()
   passwordResetExpiry: Date;
+
+  @Prop({ default: 0 })
+  refreshTokenVersion: number;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
@@ -60,6 +63,7 @@ UserSchema.set('toJSON', {
     delete record['emailVerificationToken'];
     delete record['passwordResetToken'];
     delete record['passwordResetExpiry'];
+    delete record['refreshTokenVersion'];
     return record;
   },
 });
