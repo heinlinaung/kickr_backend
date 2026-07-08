@@ -18,7 +18,9 @@ describe('AuthService', () => {
     passwordHash: '',
     refreshTokenVersion: 0,
     save: jest.fn(),
-    toJSON: jest.fn().mockReturnValue({ _id: 'user-id-123', email: 'test@example.com' }),
+    toJSON: jest
+      .fn()
+      .mockReturnValue({ _id: 'user-id-123', email: 'test@example.com' }),
   };
 
   beforeEach(async () => {
@@ -64,7 +66,10 @@ describe('AuthService', () => {
         select: jest.fn().mockResolvedValue(mockUser),
       });
 
-      const result = await service.login({ email: 'test@example.com', password: 'correct-password' });
+      const result = await service.login({
+        email: 'test@example.com',
+        password: 'correct-password',
+      });
 
       expect(result.token).toBe('fake-token');
       expect(result.refreshToken).toBe('fake-token');
@@ -84,7 +89,70 @@ describe('AuthService', () => {
       });
 
       await expect(
-        service.login({ email: 'test@example.com', password: 'wrong-password' }),
+        service.login({
+          email: 'test@example.com',
+          password: 'wrong-password',
+        }),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+  });
+
+  describe('refreshTokens', () => {
+    const validPayload = { sub: 'user-id-123', ver: 0 };
+
+    it('rotates a valid refresh token and bumps the stored version', async () => {
+      (jwtService.verify as jest.Mock).mockReturnValue(validPayload);
+      const userForRefresh = {
+        ...mockUser,
+        refreshTokenVersion: 0,
+        save: jest.fn(),
+      };
+      userModel.findById.mockResolvedValue(userForRefresh);
+
+      const result = await service.refreshTokens({
+        refreshToken: 'old-refresh-token',
+      });
+
+      expect(jwtService.verify).toHaveBeenCalledWith('old-refresh-token', {
+        secret: 'refresh-secret',
+      });
+      expect(userForRefresh.refreshTokenVersion).toBe(1);
+      expect(userForRefresh.save).toHaveBeenCalled();
+      expect(result.token).toBe('fake-token');
+      expect(result.refreshToken).toBe('fake-token');
+    });
+
+    it('rejects a replayed refresh token whose version no longer matches', async () => {
+      (jwtService.verify as jest.Mock).mockReturnValue(validPayload);
+      const userForRefresh = {
+        ...mockUser,
+        refreshTokenVersion: 1,
+        save: jest.fn(),
+      };
+      userModel.findById.mockResolvedValue(userForRefresh);
+
+      await expect(
+        service.refreshTokens({ refreshToken: 'replayed-refresh-token' }),
+      ).rejects.toThrow(UnauthorizedException);
+      expect(userForRefresh.save).not.toHaveBeenCalled();
+    });
+
+    it('rejects an expired or invalid refresh token', async () => {
+      (jwtService.verify as jest.Mock).mockImplementation(() => {
+        throw new Error('jwt expired');
+      });
+
+      await expect(
+        service.refreshTokens({ refreshToken: 'expired-refresh-token' }),
+      ).rejects.toThrow(UnauthorizedException);
+    });
+
+    it('rejects a refresh token for a user that no longer exists', async () => {
+      (jwtService.verify as jest.Mock).mockReturnValue(validPayload);
+      userModel.findById.mockResolvedValue(null);
+
+      await expect(
+        service.refreshTokens({ refreshToken: 'orphaned-refresh-token' }),
       ).rejects.toThrow(UnauthorizedException);
     });
   });
