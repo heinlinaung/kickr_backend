@@ -1,5 +1,8 @@
 import {
-  Injectable, BadRequestException, UnauthorizedException, ServiceUnavailableException,
+  Injectable,
+  BadRequestException,
+  UnauthorizedException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -13,6 +16,7 @@ import { SignupDto } from './dto/signup.dto';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 
 @Injectable()
 export class AuthService {
@@ -34,7 +38,9 @@ export class AuthService {
   }
 
   async signup(dto: SignupDto) {
-    const existing = await this.userModel.findOne({ email: dto.email.toLowerCase() });
+    const existing = await this.userModel.findOne({
+      email: dto.email.toLowerCase(),
+    });
     if (existing) throw new BadRequestException('Email already registered');
 
     const passwordHash = await bcrypt.hash(dto.password, 10);
@@ -59,8 +65,11 @@ export class AuthService {
   async confirmEmail(token: string) {
     if (!token) throw new BadRequestException('token is required');
 
-    const user = await this.userModel.findOne({ emailVerificationToken: token });
-    if (!user) throw new BadRequestException('Invalid or expired confirmation token');
+    const user = await this.userModel.findOne({
+      emailVerificationToken: token,
+    });
+    if (!user)
+      throw new BadRequestException('Invalid or expired confirmation token');
 
     user.emailVerified = true;
     user.set('emailVerificationToken', undefined);
@@ -72,21 +81,64 @@ export class AuthService {
   async login(dto: LoginDto) {
     const user = await this.userModel
       .findOne({ email: dto.email.toLowerCase() })
-      .select('-emailVerificationToken -passwordResetToken -passwordResetExpiry');
+      .select(
+        '-emailVerificationToken -passwordResetToken -passwordResetExpiry',
+      );
 
     if (!user) throw new UnauthorizedException('Invalid credentials');
 
     const match = await bcrypt.compare(dto.password, user.passwordHash);
     if (!match) throw new UnauthorizedException('Invalid credentials');
 
-    const token = this.jwtService.sign({ sub: (user._id as any).toString() });
+    const { token, refreshToken } = this.issueTokens(user);
     // Use toJSON() to strip passwordHash for the returned user
-    return { token, user: (user as any).toJSON() };
+    return { token, refreshToken, user: (user as any).toJSON() };
+  }
+
+  async refreshTokens(dto: RefreshTokenDto) {
+    try {
+      const payload: { sub: string; ver: number } = this.jwtService.verify(
+        dto.refreshToken,
+        {
+          secret: this.config.get<string>('JWT_REFRESH_SECRET'),
+        },
+      );
+
+      const user = await this.userModel.findOneAndUpdate(
+        { _id: payload.sub, refreshTokenVersion: payload.ver },
+        { $inc: { refreshTokenVersion: 1 } },
+        { new: true },
+      );
+      if (!user) throw new UnauthorizedException('Invalid refresh token');
+
+      return this.issueTokens(user);
+    } catch {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+  }
+
+  private issueTokens(user: UserDocument) {
+    const userId = (user._id as any).toString();
+    const token = this.jwtService.sign(
+      { sub: userId },
+      { expiresIn: this.config.get('JWT_EXPIRES_IN') },
+    );
+    const refreshToken = this.jwtService.sign(
+      { sub: userId, ver: user.refreshTokenVersion },
+      {
+        secret: this.config.get<string>('JWT_REFRESH_SECRET'),
+        expiresIn: this.config.get('JWT_REFRESH_EXPIRES_IN'),
+      },
+    );
+    return { token, refreshToken };
   }
 
   async forgotPassword(dto: ForgotPasswordDto) {
-    const user = await this.userModel.findOne({ email: dto.email.toLowerCase() });
-    if (!user) return { message: 'If that email exists, a reset link has been sent.' };
+    const user = await this.userModel.findOne({
+      email: dto.email.toLowerCase(),
+    });
+    if (!user)
+      return { message: 'If that email exists, a reset link has been sent.' };
 
     const resetToken = uuidv4();
     user.passwordResetToken = resetToken;
@@ -107,7 +159,9 @@ export class AuthService {
       user.set('passwordResetToken', undefined);
       user.set('passwordResetExpiry', undefined);
       await user.save();
-      throw new ServiceUnavailableException('Failed to send reset email. Please try again later.');
+      throw new ServiceUnavailableException(
+        'Failed to send reset email. Please try again later.',
+      );
     }
 
     return { message: 'If that email exists, a reset link has been sent.' };

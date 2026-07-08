@@ -62,6 +62,7 @@ Edit `.env` and fill in at minimum:
 ```env
 MONGODB_URI=mongodb://localhost:27017/kickr
 JWT_SECRET=your_random_256bit_secret
+JWT_REFRESH_SECRET=a_different_random_256bit_secret
 MAIL_HOST=smtp.gmail.com
 MAIL_USER=your@gmail.com
 MAIL_PASS=your_app_password

@@ -32,9 +32,6 @@ export class User {
   @Prop()
   profileImage: string;
 
-  @Prop({ type: [String], default: [] })
-  joinedGroups: string[];
-
   @Prop({ default: false })
   emailVerified: boolean;
 
@@ -46,11 +43,14 @@ export class User {
 
   @Prop()
   passwordResetExpiry: Date;
+
+  @Prop({ default: 0 })
+  refreshTokenVersion: number;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
 
-export const USER_SENSITIVE_PROJECTION = '-passwordHash -emailVerificationToken -passwordResetToken -passwordResetExpiry';
+export const USER_SENSITIVE_PROJECTION = '-passwordHash -emailVerificationToken -passwordResetToken -passwordResetExpiry -refreshTokenVersion';
 
 UserSchema.set('toJSON', {
   versionKey: false,
@@ -60,6 +60,7 @@ UserSchema.set('toJSON', {
     delete record['emailVerificationToken'];
     delete record['passwordResetToken'];
     delete record['passwordResetExpiry'];
+    delete record['refreshTokenVersion'];
     return record;
   },
 });
