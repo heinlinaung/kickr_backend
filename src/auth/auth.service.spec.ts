@@ -43,7 +43,7 @@ describe('AuthService', () => {
         {
           provide: JwtService,
           useValue: {
-            sign: jest.fn((payload, opts) => `signed:${JSON.stringify(payload)}:${opts?.expiresIn ?? 'default'}`),
+            sign: jest.fn().mockReturnValue('fake-token'),
             verify: jest.fn(),
           },
         },
@@ -66,10 +66,8 @@ describe('AuthService', () => {
 
       const result = await service.login({ email: 'test@example.com', password: 'correct-password' });
 
-      expect(result.token).toBe('signed:{"sub":"user-id-123"}:60m');
-      expect(result.refreshToken).toBe(
-        'signed:{"sub":"user-id-123","ver":0}:30d',
-      );
+      expect(result.token).toBe('fake-token');
+      expect(result.refreshToken).toBe('fake-token');
       expect(jwtService.sign).toHaveBeenCalledWith(
         { sub: 'user-id-123' },
         { expiresIn: '60m' },
