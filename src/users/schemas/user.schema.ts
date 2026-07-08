@@ -53,7 +53,7 @@ export class User {
 
 export const UserSchema = SchemaFactory.createForClass(User);
 
-export const USER_SENSITIVE_PROJECTION = '-passwordHash -emailVerificationToken -passwordResetToken -passwordResetExpiry';
+export const USER_SENSITIVE_PROJECTION = '-passwordHash -emailVerificationToken -passwordResetToken -passwordResetExpiry -refreshTokenVersion';
 
 UserSchema.set('toJSON', {
   versionKey: false,

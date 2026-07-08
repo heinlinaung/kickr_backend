@@ -126,7 +126,7 @@ describe('AuthService', () => {
       expect(result.refreshToken).toBe('fake-token');
     });
 
-    it('rejects a replayed refresh token whose version no longer matches', async () => {
+    it('rejects a replayed refresh token whose version no longer matches (also covers a missing/deleted user, since both cases yield no match from the atomic update)', async () => {
       (jwtService.verify as jest.Mock).mockReturnValue(validPayload);
       userModel.findOneAndUpdate.mockResolvedValue(null);
 
@@ -142,15 +142,6 @@ describe('AuthService', () => {
 
       await expect(
         service.refreshTokens({ refreshToken: 'expired-refresh-token' }),
-      ).rejects.toThrow(UnauthorizedException);
-    });
-
-    it('rejects a refresh token for a user that no longer exists', async () => {
-      (jwtService.verify as jest.Mock).mockReturnValue(validPayload);
-      userModel.findOneAndUpdate.mockResolvedValue(null);
-
-      await expect(
-        service.refreshTokens({ refreshToken: 'orphaned-refresh-token' }),
       ).rejects.toThrow(UnauthorizedException);
     });
 
