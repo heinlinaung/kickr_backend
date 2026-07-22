@@ -1,184 +1,66 @@
-import {
-  Injectable,
-  BadRequestException,
-  UnauthorizedException,
-  ServiceUnavailableException,
-} from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { JwtService } from '@nestjs/jwt';
-import { ConfigService } from '@nestjs/config';
-import * as bcrypt from 'bcrypt';
-import * as nodemailer from 'nodemailer';
-import { v4 as uuidv4 } from 'uuid';
 import { User, UserDocument } from '../users/schemas/user.schema';
+import { CognitoService } from './cognito/cognito.service';
 import { SignupDto } from './dto/signup.dto';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { ConfirmSignupDto } from './dto/confirm-signup.dto';
+import { ResendConfirmationDto } from './dto/resend-confirmation.dto';
 
 @Injectable()
 export class AuthService {
-  private transporter: nodemailer.Transporter;
-
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
-    private jwtService: JwtService,
-    private config: ConfigService,
-  ) {
-    this.transporter = nodemailer.createTransport({
-      host: this.config.get('MAIL_HOST'),
-      port: this.config.get<number>('MAIL_PORT'),
-      auth: {
-        user: this.config.get('MAIL_USER'),
-        pass: this.config.get('MAIL_PASS'),
-      },
-    });
-  }
+    private cognito: CognitoService,
+  ) {}
 
   async signup(dto: SignupDto) {
-    const existing = await this.userModel.findOne({
-      email: dto.email.toLowerCase(),
+    const email = dto.email.toLowerCase();
+    const sub = await this.cognito.signUp(dto.username, dto.password, email);
+    // Dual-write: Cognito owns the identity, Mongo the profile. If this create()
+    // fails after Cognito succeeds (e.g. duplicate username), the Cognito user is
+    // left without a profile. Recovery is an idempotent re-signup / retry — we do
+    // not compensate with AdminDeleteUser here (own failure modes). See Task 7.
+    await this.userModel.create({
+      cognitoSub: sub,
+      username: dto.username,
+      name: dto.name,
+      email,
     });
-    if (existing) throw new BadRequestException('Email already registered');
-
-    const passwordHash = await bcrypt.hash(dto.password, 10);
-
-    try {
-      await this.userModel.create({
-        name: dto.name,
-        email: dto.email.toLowerCase(),
-        passwordHash,
-        emailVerified: true,
-      });
-    } catch (err: any) {
-      if (err?.code === 11000) {
-        throw new BadRequestException('Email already registered');
-      }
-      throw err;
-    }
-
-    return { message: 'Signup successful.' };
+    return { message: 'Signup successful. Check your email to confirm your account.' };
   }
 
-  async confirmEmail(token: string) {
-    if (!token) throw new BadRequestException('token is required');
+  async confirmSignup(dto: ConfirmSignupDto) {
+    await this.cognito.confirmSignUp(dto.username, dto.code);
+    return { message: 'Account confirmed. You can now log in.' };
+  }
 
-    const user = await this.userModel.findOne({
-      emailVerificationToken: token,
-    });
-    if (!user)
-      throw new BadRequestException('Invalid or expired confirmation token');
-
-    user.emailVerified = true;
-    user.set('emailVerificationToken', undefined);
-    await user.save();
-
-    return { message: 'Email confirmed. You can now log in.' };
+  async resendConfirmation(dto: ResendConfirmationDto) {
+    await this.cognito.resendConfirmation(dto.username);
+    return { message: 'Confirmation code resent.' };
   }
 
   async login(dto: LoginDto) {
-    const user = await this.userModel
-      .findOne({ email: dto.email.toLowerCase() })
-      .select(
-        '-emailVerificationToken -passwordResetToken -passwordResetExpiry',
-      );
-
-    if (!user) throw new UnauthorizedException('Invalid credentials');
-
-    const match = await bcrypt.compare(dto.password, user.passwordHash);
-    if (!match) throw new UnauthorizedException('Invalid credentials');
-
-    const { token, refreshToken } = this.issueTokens(user);
-    // Use toJSON() to strip passwordHash for the returned user
-    return { token, refreshToken, user: (user as any).toJSON() };
+    const tokens = await this.cognito.login(dto.username, dto.password);
+    const user = await this.userModel.findOne({ username: dto.username }).lean();
+    return { ...tokens, user };
   }
 
   async refreshTokens(dto: RefreshTokenDto) {
-    try {
-      const payload: { sub: string; ver: number } = this.jwtService.verify(
-        dto.refreshToken,
-        {
-          secret: this.config.get<string>('JWT_REFRESH_SECRET'),
-        },
-      );
-
-      const user = await this.userModel.findOneAndUpdate(
-        { _id: payload.sub, refreshTokenVersion: payload.ver },
-        { $inc: { refreshTokenVersion: 1 } },
-        { new: true },
-      );
-      if (!user) throw new UnauthorizedException('Invalid refresh token');
-
-      return this.issueTokens(user);
-    } catch {
-      throw new UnauthorizedException('Invalid refresh token');
-    }
-  }
-
-  private issueTokens(user: UserDocument) {
-    const userId = (user._id as any).toString();
-    const token = this.jwtService.sign(
-      { sub: userId },
-      { expiresIn: this.config.get('JWT_EXPIRES_IN') },
-    );
-    const refreshToken = this.jwtService.sign(
-      { sub: userId, ver: user.refreshTokenVersion },
-      {
-        secret: this.config.get<string>('JWT_REFRESH_SECRET'),
-        expiresIn: this.config.get('JWT_REFRESH_EXPIRES_IN'),
-      },
-    );
-    return { token, refreshToken };
+    return this.cognito.refresh(dto.username, dto.refreshToken);
   }
 
   async forgotPassword(dto: ForgotPasswordDto) {
-    const user = await this.userModel.findOne({
-      email: dto.email.toLowerCase(),
-    });
-    if (!user)
-      return { message: 'If that email exists, a reset link has been sent.' };
-
-    const resetToken = uuidv4();
-    user.passwordResetToken = resetToken;
-    user.passwordResetExpiry = new Date(Date.now() + 60 * 60 * 1000);
-    await user.save();
-
-    const baseUrl = this.config.get('APP_BASE_URL');
-    try {
-      await this.transporter.sendMail({
-        from: this.config.get('MAIL_FROM'),
-        to: user.email,
-        subject: 'KicKR password reset',
-        html: `<p>Click the link to reset your password (valid 1 hour):</p>
-               <a href="${baseUrl}/auth/reset-password?token=${resetToken}">Reset Password</a>`,
-      });
-    } catch (err) {
-      // Clear the token so the DB isn't left with an inaccessible reset token
-      user.set('passwordResetToken', undefined);
-      user.set('passwordResetExpiry', undefined);
-      await user.save();
-      throw new ServiceUnavailableException(
-        'Failed to send reset email. Please try again later.',
-      );
-    }
-
-    return { message: 'If that email exists, a reset link has been sent.' };
+    await this.cognito.forgotPassword(dto.username);
+    return { message: 'If that account exists, a reset code has been sent.' };
   }
 
   async resetPassword(dto: ResetPasswordDto) {
-    const user = await this.userModel.findOne({
-      passwordResetToken: dto.token,
-      passwordResetExpiry: { $gt: new Date() },
-    });
-    if (!user) throw new BadRequestException('Invalid or expired reset token');
-
-    user.passwordHash = await bcrypt.hash(dto.newPassword, 10);
-    user.set('passwordResetToken', undefined);
-    user.set('passwordResetExpiry', undefined);
-    await user.save();
-
+    await this.cognito.confirmForgotPassword(dto.username, dto.code, dto.newPassword);
     return { message: 'Password reset successful. You can now log in.' };
   }
 }
