@@ -24,8 +24,8 @@ Built with **NestJS**, **MongoDB** (Mongoose), **Socket.io**, and **AWS Cognito*
 
 | Layer | Technology |
 |---|---|
-| Framework | NestJS ^10 |
-| Database | MongoDB via Mongoose ^8 |
+| Framework | NestJS ^11 |
+| Database | MongoDB via Mongoose ^9 |
 | Auth | AWS Cognito (RS256 JWKS verification via passport-jwt) |
 | Real-time | Socket.io (@nestjs/websockets) |
 | File uploads | Multer (local disk) |
