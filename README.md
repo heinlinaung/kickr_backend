@@ -2,13 +2,13 @@
 
 REST API + real-time WebSocket backend for the KicKR football event and tournament management platform.
 
-Built with **NestJS**, **MongoDB** (Mongoose), **Socket.io**, **JWT**, and **Nodemailer**.
+Built with **NestJS**, **MongoDB** (Mongoose), **Socket.io**, and **AWS Cognito**.
 
 ---
 
 ## Features (Phase 1)
 
-- **Auth** — Sign up with email confirmation, login, forgot/reset password, social auth stubs
+- **Auth** — AWS Cognito-backed: username sign-up with Cognito email verification, login, forgot/reset password, token refresh
 - **User profiles** — Edit profile fields, avatar upload
 - **Groups** — Create/update groups, wallpaper upload, member management
 - **Group Invitations** — Join by name search or QR invite code, approval flow
@@ -26,8 +26,7 @@ Built with **NestJS**, **MongoDB** (Mongoose), **Socket.io**, **JWT**, and **Nod
 |---|---|
 | Framework | NestJS ^10 |
 | Database | MongoDB via Mongoose ^8 |
-| Auth | JWT (passport-jwt) + bcrypt |
-| Email | Nodemailer |
+| Auth | AWS Cognito (RS256 JWKS verification via passport-jwt) |
 | Real-time | Socket.io (@nestjs/websockets) |
 | File uploads | Multer (local disk) |
 | Validation | class-validator + class-transformer |
@@ -39,7 +38,7 @@ Built with **NestJS**, **MongoDB** (Mongoose), **Socket.io**, **JWT**, and **Nod
 
 - Node.js 20+
 - MongoDB 6+ running locally or a MongoDB Atlas URI
-- (Optional) An SMTP account for email (Gmail, SendGrid, etc.)
+- An AWS Cognito user pool + app client, and IAM credentials with Cognito access
 
 ---
 
@@ -61,12 +60,15 @@ Edit `.env` and fill in at minimum:
 
 ```env
 MONGODB_URI=mongodb://localhost:27017/kickr
-JWT_SECRET=your_random_256bit_secret
-JWT_REFRESH_SECRET=a_different_random_256bit_secret
-MAIL_HOST=smtp.gmail.com
-MAIL_USER=your@gmail.com
-MAIL_PASS=your_app_password
 APP_BASE_URL=http://localhost:3000
+
+# AWS Cognito
+AWS_REGION=ap-southeast-1
+AWS_ACCESS_KEY_ID=your_iam_access_key
+AWS_SECRET_ACCESS_KEY=your_iam_secret_key
+COGNITO_USER_POOL_ID=your_user_pool_id
+COGNITO_CLIENT_ID=your_app_client_id
+COGNITO_CLIENT_SECRET=your_app_client_secret
 ```
 
 ### 3. Run in development
@@ -80,7 +82,7 @@ npm run start:dev
 | `http://localhost:3000` | REST API |
 | `http://localhost:3000/api` | Swagger UI |
 | `http://localhost:3000/uploads/*` | Static file uploads |
-| `ws://localhost:3000/chat?token=<jwt>` | WebSocket (group chat) |
+| `ws://localhost:3000/chat?token=<accessToken>` | WebSocket (group chat) |
 
 ---
 
@@ -122,7 +124,7 @@ npm run lint           # ESLint
 
 Interactive Swagger UI: **`http://localhost:3000/api`**
 
-All endpoints are documented with request/response schemas and JWT bearer auth.
+All endpoints are documented with request/response schemas and Cognito bearer auth.
 
 ### Response shape
 
@@ -133,23 +135,28 @@ All endpoints are documented with request/response schemas and JWT bearer auth.
 
 ### Authentication
 
-Login via `POST /auth/login` to receive a JWT. Pass it on all protected routes:
+Authentication is handled by AWS Cognito. Login via `POST /auth/login` to receive Cognito tokens (access + id + refresh). Pass the **access token** on all protected routes:
 
 ```
-Authorization: Bearer <token>
+Authorization: Bearer <accessToken>
 ```
+
+Notes:
+- The sign-in identifier is the **username** (not email).
+- The Cognito app client uses a client secret, so requests include a computed `SECRET_HASH`.
+- Login uses the `ADMIN_USER_PASSWORD_AUTH` flow, which must be enabled on the app client.
 
 ### Endpoints
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| POST | `/auth/signup` | — | Register + send confirmation email |
-| GET | `/auth/confirm-email?token=` | — | Verify email address |
-| POST | `/auth/login` | — | Login → JWT |
-| POST | `/auth/forgot-password` | — | Send password reset link |
-| POST | `/auth/reset-password` | — | Submit new password with reset token |
-| GET | `/auth/google` | — | Google OAuth (stub, returns 501) |
-| GET | `/auth/facebook` | — | Facebook OAuth (stub, returns 501) |
+| POST | `/auth/signup` | — | Register in Cognito + send verification code |
+| POST | `/auth/confirm-signup` | — | Confirm sign-up with the emailed code |
+| POST | `/auth/resend-confirmation` | — | Resend the sign-up confirmation code |
+| POST | `/auth/login` | — | Login → Cognito tokens (access + id + refresh) |
+| POST | `/auth/forgot-password` | — | Send password reset code |
+| POST | `/auth/reset-password` | — | Submit new password with reset code |
+| POST | `/auth/refresh` | — | Exchange refresh token for new tokens |
 | GET | `/users/me` | ✓ | Get own profile |
 | PATCH | `/users/me` | ✓ | Update profile fields |
 | POST | `/users/me/avatar` | ✓ | Upload profile image (multipart) |
@@ -182,7 +189,7 @@ Authorization: Bearer <token>
 
 ### WebSocket — Group Chat
 
-Connect: `ws://localhost:3000/chat?token=<jwt>`
+Connect: `ws://localhost:3000/chat?token=<accessToken>`
 
 **Emit:**
 
@@ -203,7 +210,7 @@ Connect: `ws://localhost:3000/chat?token=<jwt>`
 
 ```
 src/
-├── auth/           # Signup, login, email confirm, forgot/reset password
+├── auth/           # Cognito-backed signup, confirm, login, forgot/reset password, refresh
 ├── users/          # Profile CRUD, avatar upload
 ├── groups/         # Group management, wallpaper, invite codes
 ├── invitations/    # Join requests, QR join, approval flow
