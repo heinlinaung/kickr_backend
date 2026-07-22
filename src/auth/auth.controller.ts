@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, HttpCode, HttpStatus, HttpException } from '@nestjs/common';
+import { Controller, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
 import { SignupDto } from './dto/signup.dto';
@@ -6,6 +6,8 @@ import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { ConfirmSignupDto } from './dto/confirm-signup.dto';
+import { ResendConfirmationDto } from './dto/resend-confirmation.dto';
 
 @ApiTags('Auth')
 @Controller('auth')
@@ -17,10 +19,16 @@ export class AuthController {
     return this.authService.signup(dto);
   }
 
-  @Post('confirm-email')
+  @Post('confirm-signup')
   @HttpCode(HttpStatus.OK)
-  confirmEmail(@Body('token') token: string) {
-    return this.authService.confirmEmail(token);
+  confirmSignup(@Body() dto: ConfirmSignupDto) {
+    return this.authService.confirmSignup(dto);
+  }
+
+  @Post('resend-confirmation')
+  @HttpCode(HttpStatus.OK)
+  resendConfirmation(@Body() dto: ResendConfirmationDto) {
+    return this.authService.resendConfirmation(dto);
   }
 
   @Post('login')
@@ -45,15 +53,5 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   refresh(@Body() dto: RefreshTokenDto) {
     return this.authService.refreshTokens(dto);
-  }
-
-  @Get('google')
-  googleStub() {
-    throw new HttpException('Not implemented in phase 1', HttpStatus.NOT_IMPLEMENTED);
-  }
-
-  @Get('facebook')
-  facebookStub() {
-    throw new HttpException('Not implemented in phase 1', HttpStatus.NOT_IMPLEMENTED);
   }
 }
