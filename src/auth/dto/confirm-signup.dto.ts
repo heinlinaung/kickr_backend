@@ -1,12 +1,12 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsString } from 'class-validator';
 
-export class RefreshTokenDto {
+export class ConfirmSignupDto {
   @ApiProperty({ example: 'alice' })
   @IsString()
   username: string;
 
-  @ApiProperty()
+  @ApiProperty({ example: '123456' })
   @IsString()
-  refreshToken: string;
+  code: string;
 }

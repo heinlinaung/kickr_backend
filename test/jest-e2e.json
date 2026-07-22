@@ -7,6 +7,6 @@
     "^.+\\.(t|j)s$": ["ts-jest", { "tsconfig": { "module": "commonjs", "moduleResolution": "node", "resolvePackageJsonExports": false } }]
   },
   "transformIgnorePatterns": [
-    "/node_modules/(?!(uuid)/)"
+    "/node_modules/(?!(uuid|jose)/)"
   ]
 }
