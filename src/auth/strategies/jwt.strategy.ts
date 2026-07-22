@@ -25,6 +25,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: CognitoAccessClaims) {
+    // Reject ID/refresh tokens — only Cognito access tokens authorize the API,
+    // matching the WebSocket gateway's policy.
+    if (payload.token_use !== 'access') throw new UnauthorizedException();
     const user = await this.userModel
       .findOne({ cognitoSub: payload.sub })
       .select(USER_SENSITIVE_PROJECTION)

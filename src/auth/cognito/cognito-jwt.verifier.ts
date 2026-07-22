@@ -6,6 +6,8 @@ import { JwksClient, passportJwtSecret } from 'jwks-rsa';
 export interface CognitoAccessClaims {
   sub: string;
   username: string;
+  /** Cognito token category; must be 'access' for API/WS auth (reject 'id'). */
+  token_use?: string;
   [k: string]: unknown;
 }
 

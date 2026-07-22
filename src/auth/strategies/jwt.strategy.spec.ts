@@ -12,7 +12,7 @@ describe('JwtStrategy.validate (Cognito)', () => {
     const lean = jest.fn().mockResolvedValue({ _id: 'x', cognitoSub: 'sub-1' });
     const userModel = { findOne: jest.fn(() => ({ select: () => ({ lean }) })) };
     const strat = new JwtStrategy(verifier as any, userModel as any);
-    const user = await strat.validate({ sub: 'sub-1', username: 'alice' });
+    const user = await strat.validate({ sub: 'sub-1', username: 'alice', token_use: 'access' });
     expect(userModel.findOne).toHaveBeenCalledWith({ cognitoSub: 'sub-1' });
     expect(user).toEqual(expect.objectContaining({ cognitoSub: 'sub-1' }));
   });
@@ -21,6 +21,17 @@ describe('JwtStrategy.validate (Cognito)', () => {
     const lean = jest.fn().mockResolvedValue(null);
     const userModel = { findOne: jest.fn(() => ({ select: () => ({ lean }) })) };
     const strat = new JwtStrategy(verifier as any, userModel as any);
-    await expect(strat.validate({ sub: 'nope', username: 'x' })).rejects.toBeInstanceOf(UnauthorizedException);
+    await expect(
+      strat.validate({ sub: 'nope', username: 'x', token_use: 'access' }),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
+  it('rejects a non-access token (e.g. id token) without hitting the db', async () => {
+    const userModel = { findOne: jest.fn() };
+    const strat = new JwtStrategy(verifier as any, userModel as any);
+    await expect(
+      strat.validate({ sub: 'sub-1', username: 'alice', token_use: 'id' }),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(userModel.findOne).not.toHaveBeenCalled();
   });
 });
