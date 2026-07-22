@@ -55,8 +55,9 @@ describe('CognitoService.signUp', () => {
   });
 
   it('maps UsernameExistsException to 409', async () => {
-    const err: any = new Error('exists');
-    err.name = 'UsernameExistsException';
+    const err = Object.assign(new Error('exists'), {
+      name: 'UsernameExistsException',
+    });
     cognitoMock.on(SignUpCommand).rejects(err);
     const svc = new CognitoService(config);
     await expect(svc.signUp('alice', 'p', 'a@b.com')).rejects.toBeInstanceOf(

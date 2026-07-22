@@ -12,7 +12,9 @@ describe('CognitoJwtVerifier', () => {
 
   it('builds the correct issuer and jwks uri from config', () => {
     const v = new CognitoJwtVerifier(config);
-    expect(v.issuer).toBe('https://cognito-idp.ap-southeast-1.amazonaws.com/ap-southeast-1_0RV7oK5Z3');
+    expect(v.issuer).toBe(
+      'https://cognito-idp.ap-southeast-1.amazonaws.com/ap-southeast-1_0RV7oK5Z3',
+    );
     expect(v.jwksUri).toBe(v.issuer + '/.well-known/jwks.json');
   });
 

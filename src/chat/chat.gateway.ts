@@ -1,6 +1,11 @@
 import {
-  WebSocketGateway, WebSocketServer, SubscribeMessage,
-  MessageBody, ConnectedSocket, OnGatewayConnection, OnGatewayDisconnect,
+  WebSocketGateway,
+  WebSocketServer,
+  SubscribeMessage,
+  MessageBody,
+  ConnectedSocket,
+  OnGatewayConnection,
+  OnGatewayDisconnect,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
 import { InjectModel } from '@nestjs/mongoose';
@@ -24,7 +29,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   async handleConnection(client: Socket) {
     try {
-      const token = (client.handshake.auth?.token || client.handshake.query.token) as string;
+      const token = (client.handshake.auth?.token ||
+        client.handshake.query.token) as string;
       const claims = await this.verifier.verify(token);
       if (claims.token_use !== 'access') {
         client.disconnect();
@@ -73,7 +79,11 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const role = await this.groupsService.getMemberRole(data.groupId, userId);
     if (!role) return;
 
-    const message = await this.chatService.saveMessage(data.groupId, userId, data.text);
+    const message = await this.chatService.saveMessage(
+      data.groupId,
+      userId,
+      data.text,
+    );
     this.server.to(data.groupId).emit('newMessage', {
       messageId: message._id,
       senderId: userId,

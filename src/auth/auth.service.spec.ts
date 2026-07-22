@@ -40,20 +40,37 @@ describe('AuthService (Cognito proxy)', () => {
       name: 'Alice',
       email: 'a@b.com',
       password: 'Password123!',
-    } as any);
-    expect(cognito.signUp).toHaveBeenCalledWith('alice', 'Password123!', 'a@b.com');
+    });
+    expect(cognito.signUp).toHaveBeenCalledWith(
+      'alice',
+      'Password123!',
+      'a@b.com',
+    );
     expect(userModel.create).toHaveBeenCalledWith(
-      expect.objectContaining({ cognitoSub: 'sub-abc', username: 'alice', email: 'a@b.com', name: 'Alice' }),
+      expect.objectContaining({
+        cognitoSub: 'sub-abc',
+        username: 'alice',
+        email: 'a@b.com',
+        name: 'Alice',
+      }),
     );
     expect(res.message).toMatch(/confirm/i);
   });
 
   it('login: returns Cognito tokens', async () => {
     cognito.login.mockResolvedValue({
-      accessToken: 'at', idToken: 'it', refreshToken: 'rt', expiresIn: 3600,
+      accessToken: 'at',
+      idToken: 'it',
+      refreshToken: 'rt',
+      expiresIn: 3600,
     });
-    userModel.findOne.mockReturnValue({ lean: () => Promise.resolve({ username: 'alice' }) });
-    const res = await service.login({ username: 'alice', password: 'p' } as any);
+    userModel.findOne.mockReturnValue({
+      lean: () => Promise.resolve({ username: 'alice' }),
+    });
+    const res = await service.login({
+      username: 'alice',
+      password: 'p',
+    });
     expect(res).toEqual(
       expect.objectContaining({ accessToken: 'at', refreshToken: 'rt' }),
     );

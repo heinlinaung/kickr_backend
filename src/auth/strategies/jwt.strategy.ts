@@ -8,7 +8,10 @@ import {
   UserDocument,
   USER_SENSITIVE_PROJECTION,
 } from '../../users/schemas/user.schema';
-import { CognitoJwtVerifier, CognitoAccessClaims } from '../cognito/cognito-jwt.verifier';
+import {
+  CognitoJwtVerifier,
+  CognitoAccessClaims,
+} from '../cognito/cognito-jwt.verifier';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {

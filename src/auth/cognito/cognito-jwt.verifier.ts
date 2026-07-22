@@ -25,7 +25,9 @@ export class CognitoJwtVerifier {
     const region = config.get<string>('AWS_REGION');
     const poolId = config.get<string>('COGNITO_USER_POOL_ID');
     if (!region || !poolId) {
-      throw new Error('Missing Cognito config (AWS_REGION, COGNITO_USER_POOL_ID)');
+      throw new Error(
+        'Missing Cognito config (AWS_REGION, COGNITO_USER_POOL_ID)',
+      );
     }
     this.issuer = `https://cognito-idp.${region}.amazonaws.com/${poolId}`;
     this.jwksUri = `${this.issuer}/.well-known/jwks.json`;
@@ -52,7 +54,9 @@ export class CognitoJwtVerifier {
   async verify(token: string): Promise<CognitoAccessClaims> {
     const decoded = jwtDecode(token, { complete: true });
     const kid =
-      typeof decoded === 'object' && decoded !== null ? decoded.header?.kid : undefined;
+      typeof decoded === 'object' && decoded !== null
+        ? decoded.header?.kid
+        : undefined;
     if (!kid) throw new UnauthorizedException('Invalid token');
     const key = await this.jwksClient.getSigningKey(kid);
     const publicKey = key.getPublicKey();

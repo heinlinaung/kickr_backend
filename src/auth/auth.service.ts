@@ -31,7 +31,9 @@ export class AuthService {
       name: dto.name,
       email,
     });
-    return { message: 'Signup successful. Check your email to confirm your account.' };
+    return {
+      message: 'Signup successful. Check your email to confirm your account.',
+    };
   }
 
   async confirmSignup(dto: ConfirmSignupDto) {
@@ -46,7 +48,9 @@ export class AuthService {
 
   async login(dto: LoginDto) {
     const tokens = await this.cognito.login(dto.username, dto.password);
-    const user = await this.userModel.findOne({ username: dto.username }).lean();
+    const user = await this.userModel
+      .findOne({ username: dto.username })
+      .lean();
     return { ...tokens, user };
   }
 
@@ -60,7 +64,11 @@ export class AuthService {
   }
 
   async resetPassword(dto: ResetPasswordDto) {
-    await this.cognito.confirmForgotPassword(dto.username, dto.code, dto.newPassword);
+    await this.cognito.confirmForgotPassword(
+      dto.username,
+      dto.code,
+      dto.newPassword,
+    );
     return { message: 'Password reset successful. You can now log in.' };
   }
 }
