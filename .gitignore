@@ -1,2 +1,7 @@
+.DS_Store
+dist/
 .env
 uploads/
+node_modules/
+.claude/
+.worktrees/
