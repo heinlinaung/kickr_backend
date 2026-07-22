@@ -3,9 +3,12 @@ import {
   MessageBody, ConnectedSocket, OnGatewayConnection, OnGatewayDisconnect,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
-import { JwtService } from '@nestjs/jwt';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 import { ChatService } from './chat.service';
 import { GroupsService } from '../groups/groups.service';
+import { CognitoJwtVerifier } from '../auth/cognito/cognito-jwt.verifier';
+import { User, UserDocument } from '../users/schemas/user.schema';
 
 @WebSocketGateway({ cors: true, namespace: '/chat' })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -14,15 +17,28 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   constructor(
     private chatService: ChatService,
-    private jwtService: JwtService,
+    private verifier: CognitoJwtVerifier,
     private groupsService: GroupsService,
+    @InjectModel(User.name) private userModel: Model<UserDocument>,
   ) {}
 
-  handleConnection(client: Socket) {
+  async handleConnection(client: Socket) {
     try {
       const token = (client.handshake.auth?.token || client.handshake.query.token) as string;
-      const payload = this.jwtService.verify(token);
-      (client as any).userId = payload.sub;
+      const claims = await this.verifier.verify(token);
+      if (claims.token_use !== 'access') {
+        client.disconnect();
+        return;
+      }
+      const user = await this.userModel
+        .findOne({ cognitoSub: claims.sub })
+        .select('_id')
+        .lean();
+      if (!user) {
+        client.disconnect();
+        return;
+      }
+      (client as any).userId = user._id.toString();
     } catch {
       client.disconnect();
     }
