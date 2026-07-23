@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Patch, Post, Body, UseGuards,
+  Controller, Get, Patch, Post, Body, Param, UseGuards,
   UseInterceptors, UploadedFile, BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
@@ -37,5 +37,15 @@ export class UsersController {
       throw new BadRequestException('File is required');
     }
     return this.usersService.updateAvatar(user._id.toString(), file);
+  }
+
+  @Get('me/qr')
+  getQr(@CurrentUser() user: any) {
+    return this.usersService.getQr(user._id.toString());
+  }
+
+  @Get(':id/profile')
+  getPublicProfile(@Param('id') id: string) {
+    return this.usersService.getPublicProfile(id);
   }
 }
