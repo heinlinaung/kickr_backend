@@ -4,7 +4,19 @@
 **Author:** Backend team
 **Baseline:** [2026-06-20 KickR Backend Phase 1 Design Spec](./2026-06-20-kickr-backend-design.md)
 **Drivers:** `kickr-spec-v2.pdf` (Football Event & Tournament Management Platform) + Flutter reference screenshots (`screenshots/*.png`)
-**Stack (unchanged):** NestJS · MongoDB (Mongoose) · Socket.io · JWT · Nodemailer
+**Stack:** NestJS · MongoDB (Mongoose) · Socket.io · **AWS Cognito** (auth) · **ImageKit** (file storage/CDN)
+
+> **Stack note:** JWT/Nodemailer auth and local-disk multer uploads (as this doc originally assumed) have since been **replaced**: auth is now AWS Cognito (RS256/JWKS), and file uploads go to **ImageKit** (backend-proxied, storing url + fileId). See the Update Log below — references to "local disk / multer / S3" in the storage sections are superseded by ImageKit.
+
+---
+
+## 0.1 Update Log (post-authoring)
+
+Work shipped since this gap analysis was written (all on branch `worktree-kickr-spec-v2-changes`):
+
+- **Auth → AWS Cognito** — custom bcrypt/JWT/nodemailer replaced with Cognito (backend-proxy, username sign-in, JWKS verification on HTTP + WebSocket). This resolves §11 decision #1 (email verification is now Cognito's) and #2 (OAuth stubs removed).
+- **File storage → ImageKit** — local-disk multer replaced by a shared `ImageKitService` (backend-proxied upload via SDK; stores full CDN url + fileId; deletes prior file on replace). Avatar upload migrated; group logo/wallpaper, gallery, event photos, and chat/highlight **video** all use this path going forward. This resolves §11 decisions #3 and #10 and the §9.3 video-size note. ImageKit handles video, so the old 5MB image-only / S3 concerns no longer apply.
+- **Player Profile (§4.2/§4.1)** — profile fields, privacy, QR/invite link, public profile, partial stats: implemented.
 
 ---
 
@@ -86,8 +98,8 @@ These are **not** stored on `User` but assembled from other collections when `GE
 - **Match history** → derived from `EventPlayer` + `Event` (events the user joined, past `date`).
 - **Statistics** → aggregated from match results (matches played, wins, MVP count, avg rating). Requires the Events lifecycle rework (§4) to have result data.
 - **Player ratings** → aggregated from the new `ratings` collection (§7).
-- **Highlight videos** → new lightweight sub-collection or `highlightVideos: string[]` (array of uploaded video URLs). **Decision needed** (see §11).
-- **Achievements (Gallery)** → `gallery: string[]` (image URLs) on `User`, or a `media` collection. **Decision needed** (see §11).
+- **Highlight videos** → `highlightVideos: string[]` (ImageKit CDN URLs). Field implemented; the upload route uploads video via `ImageKitService` (see §0.1). A dedicated `media` collection remains optional if per-item metadata is later needed.
+- **Achievements (Gallery)** → `gallery: string[]` (ImageKit CDN URLs) on `User`. Field implemented; upload route uploads via `ImageKitService`.
 
 ### 2.4 DTO changes
 
@@ -415,13 +427,13 @@ attachmentUrl: string                     // uploaded media path
 attachmentMeta: { name, size, mimeType }  // optional
 ```
 
-- **Add upload transport**: `POST /groups/:id/messages/attachment` (multipart, member-only, reuses `common/upload/multer.config.ts`) → returns URL → client sends a `sendMessage` with `type` + `attachmentUrl`. Extend gateway `sendMessage` payload to accept `type`/`attachmentUrl`.
+- **Add upload transport**: `POST /groups/:id/messages/attachment` (multipart, member-only) → uploads via the shared `ImageKitService` (memory-buffer multer → ImageKit) → returns the CDN url + fileId → client sends a `sendMessage` with `type` + `attachmentUrl`. Extend gateway `sendMessage` payload to accept `type`/`attachmentUrl`.
 - **Announcements** (§4.9): add `isAnnouncement: boolean` or a pinned flag (owner/admin only). Overlaps with group Posts (§3.4) — reconcile in §11.
 - **Team chats** for events (§4.6): scope chat rooms to `eventId`+`team` during `preparation`; archive on `done`.
 
-### 9.3 Video size note
+### 9.3 Video storage — RESOLVED (ImageKit)
 
-Training-video uploads exceed the current 5MB image limit. Raise limits for video and/or move to object storage (S3) — the Phase 1 spec already flagged the `multer-s3` swap path. **Decision needed** (see §11).
+Training/highlight video uploads go to **ImageKit** via the shared `ImageKitService` (see Update Log §0.1), which handles video natively — no local-disk size limit and no S3 to set up. The existing image-upload multer (`multerMemoryImageOptions`) is image-MIME-only; add a sibling `multerMemoryVideoOptions` (video MIME allowlist + larger size cap) for video routes, reusing the same `ImageKitService.upload`. The earlier "raise multer limits vs move to S3" question is moot.
 
 ---
 
@@ -443,16 +455,16 @@ Extend `type` enum to include `challenge`, `rating`, `tournament` as needed.
 
 These materially affect implementation and should be resolved before build:
 
-1. **Email verification** — enforce (block login until verified) or keep frictionless auto-verify? (Current code silently auto-verifies.)
-2. **OAuth** — build Google/Facebook now, or keep 501 stubs?
-3. **Highlight videos & Gallery storage** — arrays of URLs on the entity, or a dedicated `media` collection? And where do videos live (local disk vs S3)?
+1. ~~**Email verification**~~ — RESOLVED: handled by AWS Cognito (see §0.1).
+2. ~~**OAuth**~~ — RESOLVED: Google/Facebook 501 stubs removed; deferred (can be added via Cognito identity providers later).
+3. **Highlight videos & Gallery storage** — storage location RESOLVED: **ImageKit** (see §0.1). Remaining sub-question (optional): keep URLs as arrays on the entity (current: `highlightVideos: string[]`, `gallery: string[]`) or move to a dedicated `media` collection if per-item metadata/deletion is needed.
 4. **Group Posts vs Chat announcements** — is the "Posts" tab a separate feed, or pinned/announcement chat messages?
 5. **Invite-link approval** — should join-by-link/QR still require owner approval (current code auto-approves), matching "owners approve new members before joining"?
 6. **Shuffle strategy** — random buckets of 6 (current), skill/position-balanced, or 2-team A/B split? What does "lineups finalized" mean concretely?
 7. **League standings storage** — recomputed collection vs computed-on-read.
 8. **Ratings cardinality** — one rating per match total, or one per teammate per match?
 9. **Financial management** — real payments (Stripe) or bookkeeping ledger only?
-10. **Chat/video upload limits & storage** — raise multer limits vs move to S3 now.
+10. ~~**Chat/video upload limits & storage**~~ — RESOLVED: all uploads go to **ImageKit** (see §0.1 and §9.3); no local multer size limit / S3 decision remains.
 
 ---
 
