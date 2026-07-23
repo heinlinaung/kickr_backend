@@ -1,6 +1,8 @@
 import { Injectable, ConflictException, NotFoundException, Logger } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { ConfigService } from '@nestjs/config';
 import { Model } from 'mongoose';
+import { v4 as uuidv4 } from 'uuid';
 import { User, UserDocument, USER_SENSITIVE_PROJECTION } from './schemas/user.schema';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ImageKitService } from '../common/upload/imagekit.service';
@@ -12,6 +14,7 @@ export class UsersService {
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     private readonly imagekit: ImageKitService,
+    private config: ConfigService,
   ) {}
 
   async findById(id: string): Promise<UserDocument> {
@@ -70,5 +73,17 @@ export class UsersService {
       .lean();
     if (!user) throw new NotFoundException('User not found');
     return user as unknown as UserDocument;
+  }
+
+  async getQr(userId: string): Promise<{ inviteCode: string; inviteLink: string }> {
+    const user = await this.userModel.findById(userId);
+    if (!user) throw new NotFoundException('User not found');
+    let code = user.inviteCode;
+    if (!code) {
+      code = uuidv4();
+      await this.userModel.findByIdAndUpdate(userId, { $set: { inviteCode: code } });
+    }
+    const base = this.config.get<string>('APP_BASE_URL') ?? '';
+    return { inviteCode: code, inviteLink: `${base}/u/${code}` };
   }
 }

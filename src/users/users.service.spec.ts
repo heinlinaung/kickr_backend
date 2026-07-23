@@ -1,5 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
+import { ConfigService } from '@nestjs/config';
 import { UsersService } from './users.service';
 import { User } from './schemas/user.schema';
 import { ImageKitService } from '../common/upload/imagekit.service';
@@ -7,7 +8,7 @@ import { ImageKitService } from '../common/upload/imagekit.service';
 describe('UsersService', () => {
   let service: UsersService;
 
-  const userModel = {
+  const userModel: any = {
     findById: jest.fn(),
     findByIdAndUpdate: jest.fn(),
   };
@@ -23,6 +24,10 @@ describe('UsersService', () => {
         UsersService,
         { provide: getModelToken(User.name), useValue: userModel },
         { provide: ImageKitService, useValue: imagekit },
+        {
+          provide: ConfigService,
+          useValue: { get: jest.fn().mockReturnValue('http://localhost:3000') },
+        },
       ],
     }).compile();
     service = m.get(UsersService);
@@ -93,6 +98,22 @@ describe('UsersService', () => {
       await service.updateAvatar('u1', file);
 
       expect(imagekit.deleteFile).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getQr', () => {
+    it('generates and persists an inviteCode when absent, returns a shareable payload', async () => {
+      userModel.findById = jest.fn().mockResolvedValue({ _id: 'u1', inviteCode: undefined });
+      userModel.findByIdAndUpdate = jest.fn().mockResolvedValue({ _id: 'u1', inviteCode: 'generated' });
+      const res = await service.getQr('u1');
+      expect(userModel.findByIdAndUpdate).toHaveBeenCalled();
+      expect(res.inviteCode).toBeDefined();
+      expect(res.inviteLink).toContain(res.inviteCode);
+    });
+    it('reuses an existing inviteCode', async () => {
+      userModel.findById = jest.fn().mockResolvedValue({ _id: 'u1', inviteCode: 'existing' });
+      const res = await service.getQr('u1');
+      expect(res.inviteCode).toBe('existing');
     });
   });
 });
