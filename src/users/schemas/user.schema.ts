@@ -62,7 +62,11 @@ export class User {
 
   @Prop(
     raw({
-      profileVisibility: { type: String, enum: [...PROFILE_VISIBILITY], default: 'public' },
+      profileVisibility: {
+        type: String,
+        enum: [...PROFILE_VISIBILITY],
+        default: 'public',
+      },
       showStats: { type: Boolean, default: true },
       showMatchHistory: { type: Boolean, default: true },
     }),

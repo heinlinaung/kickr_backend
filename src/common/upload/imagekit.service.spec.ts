@@ -19,10 +19,18 @@ describe('ImageKitService', () => {
   });
 
   it('uploads a buffer and returns url + fileId', async () => {
-    ikClient.upload.mockResolvedValue({ url: 'https://ik.imagekit.io/kickr/profiles/x.jpg', fileId: 'fid1' });
+    ikClient.upload.mockResolvedValue({
+      url: 'https://ik.imagekit.io/kickr/profiles/x.jpg',
+      fileId: 'fid1',
+    });
     const res = await service.upload(Buffer.from('abc'), 'x.jpg', 'profiles');
-    expect(ikClient.upload).toHaveBeenCalledWith(expect.objectContaining({ fileName: 'x.jpg', folder: '/profiles' }));
-    expect(res).toEqual({ url: 'https://ik.imagekit.io/kickr/profiles/x.jpg', fileId: 'fid1' });
+    expect(ikClient.upload).toHaveBeenCalledWith(
+      expect.objectContaining({ fileName: 'x.jpg', folder: '/profiles' }),
+    );
+    expect(res).toEqual({
+      url: 'https://ik.imagekit.io/kickr/profiles/x.jpg',
+      fileId: 'fid1',
+    });
   });
 
   it('deleteFile ignores a missing fileId (no-op) and calls SDK when present', async () => {

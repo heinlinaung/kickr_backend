@@ -1,9 +1,21 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
-  IsString, IsOptional, IsNumber, MinLength, IsArray, IsIn, IsDateString, ValidateNested, IsBoolean,
+  IsString,
+  IsOptional,
+  IsNumber,
+  MinLength,
+  IsArray,
+  IsIn,
+  IsDateString,
+  ValidateNested,
+  IsBoolean,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { FOOTBALL_POSITIONS, PROFILE_VISIBILITY, SPORT_TYPES } from '../profile.constants';
+import {
+  FOOTBALL_POSITIONS,
+  PROFILE_VISIBILITY,
+  SPORT_TYPES,
+} from '../profile.constants';
 
 class PrivacyDto {
   @ApiProperty({ enum: PROFILE_VISIBILITY, required: false })

@@ -12,7 +12,11 @@ export interface UploadResult {
 export class ImageKitService {
   constructor(@Inject(IMAGEKIT_CLIENT) private readonly client: ImageKit) {}
 
-  async upload(file: Buffer, fileName: string, folder: string): Promise<UploadResult> {
+  async upload(
+    file: Buffer,
+    fileName: string,
+    folder: string,
+  ): Promise<UploadResult> {
     const res = await this.client.upload({
       file,
       fileName,

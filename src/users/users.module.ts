@@ -3,7 +3,10 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
 import { User, UserSchema } from './schemas/user.schema';
-import { EventPlayer, EventPlayerSchema } from '../events/schemas/event-player.schema';
+import {
+  EventPlayer,
+  EventPlayerSchema,
+} from '../events/schemas/event-player.schema';
 import { Event, EventSchema } from '../events/schemas/event.schema';
 import { UploadModule } from '../common/upload/upload.module';
 

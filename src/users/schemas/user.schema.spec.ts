@@ -17,12 +17,23 @@ describe('User schema (Cognito migration)', () => {
 describe('User schema (profile fields)', () => {
   it('has the new profile paths', () => {
     const paths = Object.keys(UserSchema.paths);
-    expect(paths).toEqual(expect.arrayContaining([
-      'biography', 'country', 'city', 'dateOfBirth',
-      'sports', 'preferredSport', 'footballPosition',
-      'privacy.profileVisibility', 'privacy.showStats', 'privacy.showMatchHistory',
-      'inviteCode', 'highlightVideos', 'gallery',
-    ]));
+    expect(paths).toEqual(
+      expect.arrayContaining([
+        'biography',
+        'country',
+        'city',
+        'dateOfBirth',
+        'sports',
+        'preferredSport',
+        'footballPosition',
+        'privacy.profileVisibility',
+        'privacy.showStats',
+        'privacy.showMatchHistory',
+        'inviteCode',
+        'highlightVideos',
+        'gallery',
+      ]),
+    );
   });
   it('privacy visibility defaults to public', () => {
     const vis: any = UserSchema.path('privacy.profileVisibility');

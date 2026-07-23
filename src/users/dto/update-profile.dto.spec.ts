@@ -6,10 +6,14 @@ import { UpdateProfileDto } from './update-profile.dto';
 describe('UpdateProfileDto whitelist + validation', () => {
   it('accepts a valid footballPosition and rejects an invalid one', () => {
     expect(
-      validateSync(plainToInstance(UpdateProfileDto, { footballPosition: 'goalkeeper' })),
+      validateSync(
+        plainToInstance(UpdateProfileDto, { footballPosition: 'goalkeeper' }),
+      ),
     ).toHaveLength(0);
     expect(
-      validateSync(plainToInstance(UpdateProfileDto, { footballPosition: 'striker' })).length,
+      validateSync(
+        plainToInstance(UpdateProfileDto, { footballPosition: 'striker' }),
+      ).length,
     ).toBeGreaterThan(0);
   });
 

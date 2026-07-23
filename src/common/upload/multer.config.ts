@@ -21,16 +21,24 @@ export function multerDiskOptions(subDir: string): multer.Options {
     storage: diskStorage({
       destination: dest,
       filename: (req, file, cb) => {
-        const userId = (req as Express.Request & { user?: { _id: string } }).user?._id ?? 'anon';
+        const userId =
+          (req as Express.Request & { user?: { _id: string } }).user?._id ??
+          'anon';
         const ext = MIME_TO_EXT[file.mimetype] ?? '.bin';
         const unique = `${userId}-${Date.now()}${ext}`;
         cb(null, unique);
       },
     }),
     limits: { fileSize: MAX_SIZE_BYTES },
-    fileFilter: (_req: Express.Request, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
+    fileFilter: (
+      _req: Express.Request,
+      file: Express.Multer.File,
+      cb: multer.FileFilterCallback,
+    ) => {
       if (!ALLOWED_MIME.includes(file.mimetype)) {
-        return cb(new BadRequestException('Only JPEG, PNG, WebP images are allowed'));
+        return cb(
+          new BadRequestException('Only JPEG, PNG, WebP images are allowed'),
+        );
       }
       cb(null, true);
     },
