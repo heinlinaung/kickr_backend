@@ -1,8 +1,11 @@
 import { Test } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
+import { NotFoundException } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { User } from './schemas/user.schema';
+import { EventPlayer } from '../events/schemas/event-player.schema';
+import { Event } from '../events/schemas/event.schema';
 import { ImageKitService } from '../common/upload/imagekit.service';
 
 describe('UsersService', () => {
@@ -16,6 +19,8 @@ describe('UsersService', () => {
     upload: jest.fn(),
     deleteFile: jest.fn(),
   };
+  const playerModel: any = {};
+  const eventModel: any = {};
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -28,6 +33,8 @@ describe('UsersService', () => {
           provide: ConfigService,
           useValue: { get: jest.fn().mockReturnValue('http://localhost:3000') },
         },
+        { provide: getModelToken(EventPlayer.name), useValue: playerModel },
+        { provide: getModelToken(Event.name), useValue: eventModel },
       ],
     }).compile();
     service = m.get(UsersService);
@@ -106,7 +113,10 @@ describe('UsersService', () => {
       userModel.findById = jest.fn().mockResolvedValue({ _id: 'u1', inviteCode: undefined });
       userModel.findByIdAndUpdate = jest.fn().mockResolvedValue({ _id: 'u1', inviteCode: 'generated' });
       const res = await service.getQr('u1');
-      expect(userModel.findByIdAndUpdate).toHaveBeenCalled();
+      // the persisted code must equal the returned code
+      expect(userModel.findByIdAndUpdate).toHaveBeenCalledWith('u1', {
+        $set: { inviteCode: res.inviteCode },
+      });
       expect(res.inviteCode).toBeDefined();
       expect(res.inviteLink).toContain(res.inviteCode);
     });
@@ -114,6 +124,50 @@ describe('UsersService', () => {
       userModel.findById = jest.fn().mockResolvedValue({ _id: 'u1', inviteCode: 'existing' });
       const res = await service.getQr('u1');
       expect(res.inviteCode).toBe('existing');
+    });
+  });
+
+  describe('getPublicProfile', () => {
+    it('hides email/phone and rejects private visibility', async () => {
+      userModel.findById = jest.fn().mockReturnValue({
+        select: () => ({ lean: () => Promise.resolve({
+          _id: 'u2', name: 'Bob', email: 'bob@x.com', phoneNumber: '123',
+          privacy: { profileVisibility: 'private', showStats: true, showMatchHistory: true },
+        }) }),
+      });
+      await expect(service.getPublicProfile('u2')).rejects.toBeInstanceOf(NotFoundException);
+    });
+    it('returns filtered profile + stats + history for public users', async () => {
+      userModel.findById = jest.fn().mockReturnValue({
+        select: () => ({ lean: () => Promise.resolve({
+          _id: 'u3', name: 'Cara', email: 'c@x.com', phoneNumber: '999', country: 'TH',
+          privacy: { profileVisibility: 'public', showStats: true, showMatchHistory: true },
+        }) }),
+      });
+      playerModel.countDocuments = jest.fn().mockResolvedValue(2);
+      playerModel.find = jest.fn().mockReturnValue({ lean: () => Promise.resolve([]) });
+      const res = await service.getPublicProfile('u3');
+      expect(res.email).toBeUndefined();
+      expect(res.phoneNumber).toBeUndefined();
+      expect(res.name).toBe('Cara');
+      expect(res.statistics).toEqual(expect.objectContaining({ matchesPlayed: 2, wins: 0, mvpCount: 0, avgRating: 0 }));
+      expect(Array.isArray(res.matchHistory)).toBe(true);
+    });
+    it('omits stats and history when the privacy flags are off', async () => {
+      userModel.findById = jest.fn().mockReturnValue({
+        select: () => ({ lean: () => Promise.resolve({
+          _id: 'u4', name: 'Dan',
+          privacy: { profileVisibility: 'public', showStats: false, showMatchHistory: false },
+        }) }),
+      });
+      playerModel.countDocuments = jest.fn();
+      playerModel.find = jest.fn();
+      const res = await service.getPublicProfile('u4');
+      expect(res.statistics).toBeUndefined();
+      expect(res.matchHistory).toBeUndefined();
+      // gated off → no EventPlayer queries at all
+      expect(playerModel.countDocuments).not.toHaveBeenCalled();
+      expect(playerModel.find).not.toHaveBeenCalled();
     });
   });
 });
