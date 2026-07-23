@@ -1,5 +1,6 @@
-import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { Prop, Schema, SchemaFactory, raw } from '@nestjs/mongoose';
 import { HydratedDocument } from 'mongoose';
+import { FOOTBALL_POSITIONS, PROFILE_VISIBILITY } from '../profile.constants';
 
 export type UserDocument = HydratedDocument<User>;
 
@@ -32,8 +33,58 @@ export class User {
   @Prop()
   profileImage: string;
 
+  @Prop()
+  profileImageFileId: string;
+
   @Prop({ default: false })
   emailVerified: boolean;
+
+  @Prop()
+  biography: string;
+
+  @Prop()
+  country: string;
+
+  @Prop()
+  city: string;
+
+  @Prop()
+  dateOfBirth: Date;
+
+  @Prop({ type: [String], default: [] })
+  sports: string[];
+
+  @Prop()
+  preferredSport: string;
+
+  @Prop({ enum: [...FOOTBALL_POSITIONS] })
+  footballPosition: string;
+
+  @Prop(
+    raw({
+      profileVisibility: {
+        type: String,
+        enum: [...PROFILE_VISIBILITY],
+        default: 'public',
+      },
+      showStats: { type: Boolean, default: true },
+      showMatchHistory: { type: Boolean, default: true },
+    }),
+  )
+  privacy: {
+    profileVisibility: string;
+    showStats: boolean;
+    showMatchHistory: boolean;
+  };
+
+  @Prop({ unique: true, sparse: true })
+  inviteCode: string;
+
+  @Prop({ type: [String], default: [] })
+  highlightVideos: string[];
+
+  @Prop({ type: [String], default: [] })
+  gallery: string[];
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
