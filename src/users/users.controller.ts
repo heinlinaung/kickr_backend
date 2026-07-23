@@ -8,7 +8,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { UsersService } from './users.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
-import { multerDiskOptions } from '../common/upload/multer.config';
+import { multerMemoryImageOptions } from '../common/upload/multer-memory.config';
 
 @ApiTags('Users')
 @ApiBearerAuth()
@@ -28,7 +28,7 @@ export class UsersController {
   }
 
   @Post('me/avatar')
-  @UseInterceptors(FileInterceptor('file', multerDiskOptions('profiles')))
+  @UseInterceptors(FileInterceptor('file', multerMemoryImageOptions))
   uploadAvatar(
     @CurrentUser() user: any,
     @UploadedFile() file: Express.Multer.File,
@@ -36,6 +36,6 @@ export class UsersController {
     if (!file) {
       throw new BadRequestException('File is required');
     }
-    return this.usersService.updateAvatar(user._id.toString(), file.filename);
+    return this.usersService.updateAvatar(user._id.toString(), file);
   }
 }

@@ -33,6 +33,9 @@ export class User {
   @Prop()
   profileImage: string;
 
+  @Prop()
+  profileImageFileId: string;
+
   @Prop({ default: false })
   emailVerified: boolean;
 
