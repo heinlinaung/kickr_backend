@@ -1,4 +1,3 @@
-
 # KickR Backend — Spec v2 Changes (Gap Analysis & Change Spec)
 
 **Date:** 2026-07-26
@@ -43,7 +42,7 @@ Each domain (users/auth, groups/invitations, events/shuffle, tournaments/chat/no
 | §4.2 Player Profile | Partial | **Extend** — biography, statistics, match history, ratings, highlight videos, gallery, QR/invite link |
 | §4.3 Groups | Partial | **Extend** — logo, country, city, home ground, team rules, sport type, captains |
 | §4.4 Group Invitations | Partial | **Add** join-by-team-name & QR; **fix** invite link vs approval |
-| §4.5 Events | Partial | **Rework** status → 7-state lifecycle; **add** MVP, scores, photos, cover, templates |
+| §4.5 Events | Partial | **Rework** status → 7-state lifecycle; **add** MVP, scores, multi-team fixtures & results, photos, cover, templates |
 | §4.6 Public Events | Partial | **Add** nearby/geo discovery; auto-close-when-full |
 | §4.7 Tournament Management | Data-model only | **Build engine** — bracket gen, league fixtures, standings, winner propagation, status lifecycle |
 | §4.8 Team Challenge | **Missing** | **Build** — new module |
@@ -205,48 +204,6 @@ The current `status` is a **capacity model** (auto open↔full on join/leave; `d
 
 Replace the capacity-based `status` enum with the spec lifecycle. Capacity (full vs not) becomes a derived boolean (`joinedCount >= maxPlayers`), not a status.
 
-### 4.3 Match Fixtures & Results
-
-**Overview**
-
-Introduce a Match Fixtures & Results screen that displays the full round-robin schedule for a 4-team tournament. Each of the four teams — Red, Yellow, Blue, and Black — plays 6 matches, for a total of 12 matches across the competition.
-
-**Teams**
-
-| Team   | Color indicator |
-|--------|------------------|
-| Red    | Red jersey icon    |
-| Yellow | Yellow jersey icon |
-| Blue   | Blue jersey icon   |
-| Black  | Black jersey icon  |
-
-**Fixture list**
-
-| Match | Team A | Team B | Result |
-|-------|--------|--------|--------|
-| 1     | Red    | Yellow | —      |
-| 2     | Blue   | Black  | —      |
-| 3     | Black  | Red    | —      |
-| 4     | Blue   | Yellow | —      |
-| 5     | Yellow | Black  | —      |
-| 6     | Blue   | Red    | —      |
-| 7     | Yellow | Red    | —      |
-| 8     | Blue   | Black  | —      |
-| 9     | Black  | Red    | —      |
-| 10    | Blue   | Yellow | —      |
-| 11    | Yellow | Black  | —      |
-| 12    | Blue   | Red    | —      |
-
-**Functional requirements**
-
-1. The screen must present a table with three columns: **Match** (sequence number 1–12), **Fixture** (Team A vs. Team B, each shown with its color-coded jersey icon), and **Result**.
-2. Each team must appear in exactly 6 fixtures, for a total of 12 matches across the tournament.
-3. The **Result** field is empty (rendered as a placeholder dash `—`) until the corresponding match has been played, at which point it is populated with the outcome.
-4. Match order and pairings must follow the fixture list above and must not be user-editable.
-5. The header must clearly state that all teams play 6 matches, so participants understand the format at a glance.
-6. winner: 3, draw: 1, lose: 0
-
-
 ```
 status enum: join | before_match | preparation | playing | after_match | done
 ```
@@ -265,6 +222,49 @@ Lifecycle semantics (from spec table):
 - "Unjoin" is an **action** valid only while `status == join`, not a stored status (matches the DELETE-join endpoint that already exists — just gate it on lifecycle).
 - Add explicit transition endpoints (organizer-gated); do not rely on capacity auto-toggle.
 
+### 4.3 Multi-team fixtures & results (§4.5 "scores")
+
+**Gap.** `Event.result` (§4.4) models a single two-team score (`scoreA`/`scoreB`). The Flutter reference screenshot for an event's results screen instead shows a **4-team round-robin format**: four teams — identified by color (Red, Yellow, Blue, Black) — each play 6 matches, for 12 fixtures total *within one event*, each with its own independent result, not one score for the whole event.
+
+**Reference fixture list** (from the screenshot; fixed pairing order, generated once and not user-editable):
+
+| Match | Team A | Team B |
+|---|---|---|
+| 1  | Red    | Yellow |
+| 2  | Blue   | Black  |
+| 3  | Black  | Red    |
+| 4  | Blue   | Yellow |
+| 5  | Yellow | Black  |
+| 6  | Blue   | Red    |
+| 7  | Yellow | Red    |
+| 8  | Blue   | Black  |
+| 9  | Black  | Red    |
+| 10 | Blue   | Yellow |
+| 11 | Yellow | Black  |
+| 12 | Blue   | Red    |
+
+**Schema — new `EventMatch` sub-document, embedded as `Event.matches[]`:**
+
+```
+matches: [{
+  matchNumber: number      // 1..N, fixed order within the event
+  teamA: string             // team identifier assigned during shuffle (§4.7), e.g. color
+  teamB: string
+  scoreA: number | null     // null until played
+  scoreB: number | null
+  playedAt: Date | null
+}]
+```
+
+**Scoring rule (standings):** win = 3 points, draw = 1 point, loss = 0 points, applied per team per match to derive an event's internal standings — the same points scheme used for league standings (§5.2).
+
+**Functional requirements:**
+1. An event's fixtures view presents **Match** (sequence number), **Fixture** (Team A vs. Team B), and **Result** columns.
+2. Fixture generation must give every participating team an equal number of matches (e.g. 4 teams → 6 fixtures each, 12 total); this is computed by fixture-generation logic, not entered by hand.
+3. `scoreA`/`scoreB` stay `null` (rendered as a placeholder dash in the UI) until the match is played, then are populated via the result-submission route.
+4. Standings are derived on read from `matches[]` using the win/draw/loss point values above — never stored redundantly.
+5. Fixtures are generated once, when the event enters `preparation` alongside team shuffle (§4.7), and are immutable afterward except for score entry.
+
 ### 4.4 Schema additions to `Event`
 
 ```
@@ -276,6 +276,7 @@ result: {                       // set in after_match
   scoreB: number
   mvpUserId: ObjectId->User      // §4.5 MVP selection
 }
+matches: EventMatch[]           // §4.3 — multi-team fixtures & per-match results
 photos: string[]                // §4.5 after-match photos
 templateId: ObjectId | null     // §4.5 "templates when user creates events"
 skillLevel                      // present (keep)
@@ -299,6 +300,7 @@ Current `shuffle.service.ts` chunks joined players into random groups of 6 and n
 
 - **Gate shuffle to `preparation`**: shuffle should only run (and transition/confirm) when `status == preparation`.
 - **Team balancing**: current shuffle is pure-random buckets of 6. Spec preparation says "teams generated or assigned, lineups finalized." **Decision needed**: keep random, or balance by `skillLevel`/`footballPosition`, or split into 2 teams (A/B) vs N groups. See §11.
+- **Fixture generation**: when the event has more than 2 teams, generate the round-robin `matches[]` (§4.3) immediately after teams are assigned, in the same `preparation` transition.
 - **Team chats**: on entering `preparation`, create per-team chat rooms (reuse chat module scoped to `eventId`+`team`). Archive on `done`.
 
 ### 4.8 New/changed routes
@@ -313,8 +315,8 @@ Current `shuffle.service.ts` chunks joined players into random groups of 6 and n
 | GET | `/events?near=&radius=` | **CHANGED** — geo discovery |
 | POST | `/events/:id/like` | **NEW** — event_detail "Like" button |
 | POST | `/event-templates`, GET `/event-templates` | **NEW** |
-| POST | `/events/:id/shuffle` | **CHANGED** — gated to `preparation`, creates team chats |
-| POST | `/events/:id/matches` | **NEW** to check the score and result|
+| POST | `/events/:id/shuffle` | **CHANGED** — gated to `preparation`, creates team chats, generates fixtures (§4.3) |
+| PATCH | `/events/:id/matches/:matchNumber` | **NEW** — submit/update a single fixture's score (§4.3, `playing`/`after_match`) |
 
 ---
 
