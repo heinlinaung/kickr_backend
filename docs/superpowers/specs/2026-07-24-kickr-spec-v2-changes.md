@@ -144,18 +144,20 @@ Multilocation need to provide for `locationName`, `latitude`, `longitude` as obj
 ### 3.2 Schema additions to `Group`
 
 ```
-logo: string                 // team logo (§4.3) — distinct from wallpaper; screenshots show both
+logo: string                 // team logo (§4.3) — distinct from team logo
 country: string              // create-group form has Country select
 city: string                 // create-group form has City select
-homeGround: string           // §4.3 "Home ground" — dedicated field (keep lat/lng for map)
+homeGround: string           // §4.3 "Home ground" — dedicated field (keep lat/lng for map) // should remove for it.
 teamRules: string            // §4.3 "Team rules" — "Add Rules and Map Location" in group screen
 sportType: string            // §4.3 + create-group "Sport Type" select (enum football|futsal|padel|...)
 handle: string               // unique — the "@Bangkok FC" handle shown in group_detail screenshot
+wallpaper: string            // team photo - distinct from wallpaper; screenshots show both
+isPrivate: bool              // it did not allow to search. 
 ```
 
 ### 3.3 GroupMember change — captains (§4.3)
 
-Spec lists **Captains** as a distinct group role. Extend `role` enum to `owner | admin | captain | member`. Captains are member-promoted; used later for tournament team seeding and event lineup.
+Spec lists **Captains** as a distinct group role. Extend `role` enum to `owner | admin | captain | member(eg. 1, 2, 3 level)`. Captains are member-promoted; used later for tournament team seeding and event lineup. Highest level member can add the plus one user and the high role of group can approve it for the plus one user. 
 
 ### 3.4 Group sub-content (screenshots: Events / Posts / Members / Gallery tabs)
 
@@ -188,7 +190,11 @@ Spec §4.4 join methods: **QR Code**, **Team Name**, **Invitation Link**, **Appr
 | PATCH | `/groups/:id/members/:userId/role` | **NEW** — promote to captain/admin |
 | GET | `/groups/:id/posts`, POST `/groups/:id/posts` | **NEW** (if Posts is a separate feed — see §11) |
 | POST | `/groups/:id/gallery` | **NEW** — upload gallery media |
+| GET | `/groups/:id/rules`, POST `/groups/:id/rules` | **NEW** (if rules is a separte event) |
+| POST | `/groups/:id/rules` | **NEW** — create rules (3 maximum) |
 
+| GET | `/groups/:id/maps`, POST `/groups/:id/maps` | **NEW** |
+| POST | `/groups/:id/maps` | **NEW** — create locations (5 maximum) |
 ---
 
 ## 4. Events & Lifecycle (§4.5, §4.6)
