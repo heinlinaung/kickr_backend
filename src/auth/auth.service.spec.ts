@@ -54,7 +54,9 @@ describe('AuthService (Cognito proxy)', () => {
       unknown
     >[][];
     expect(createCalls[0][0]).not.toHaveProperty('username');
-    expect(res.message).toMatch(/confirm/i);
+    // users are auto-confirmed by a pre-sign-up Lambda — no emailed code
+    expect(res.message).toBe('Signup successful. You can now log in.');
+    expect(res.message).not.toMatch(/check your email/i);
   });
 
   it('signup: lowercases the email before Cognito and Mongo see it', async () => {

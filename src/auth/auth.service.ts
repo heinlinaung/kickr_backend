@@ -44,7 +44,9 @@ export class AuthService {
       email,
     });
     return {
-      message: 'Signup successful. Check your email to confirm your account.',
+      // A pre-sign-up Lambda auto-confirms the user, so there is no emailed
+      // code to wait for — they can log in straight away.
+      message: 'Signup successful. You can now log in.',
     };
   }
 
