@@ -75,7 +75,8 @@ describe('AuthService (Cognito proxy)', () => {
       expiresIn: 3600,
     });
     userModel.findOne.mockReturnValue({
-      lean: () => Promise.resolve({ email: 'alice@b.com' }),
+      lean: () =>
+        Promise.resolve({ email: 'alice@b.com', cognitoSub: 'sub-uuid-1' }),
     });
     const res = await service.login({
       email: 'Alice@b.com',
@@ -86,6 +87,8 @@ describe('AuthService (Cognito proxy)', () => {
     expect(res).toEqual(
       expect.objectContaining({ accessToken: 'at', refreshToken: 'rt' }),
     );
+    // the client needs this to call POST /auth/refresh
+    expect(res.sub).toBe('sub-uuid-1');
   });
 
   it('confirmSignup: passes the lowercased email to Cognito', async () => {
@@ -116,9 +119,11 @@ describe('AuthService (Cognito proxy)', () => {
     );
   });
 
-  it('refreshTokens: passes the lowercased email to Cognito', async () => {
-    await service.refreshTokens({ email: 'A@b.com', refreshToken: 'rt' });
-    expect(cognito.refresh).toHaveBeenCalledWith('a@b.com', 'rt');
+  // REFRESH_TOKEN_AUTH hashes the Cognito sub, not the email — see
+  // CognitoService.refresh(). Passing an email here fails against real Cognito.
+  it('refreshTokens: passes the sub (not the email) to Cognito', async () => {
+    await service.refreshTokens({ sub: 'sub-uuid-1', refreshToken: 'rt' });
+    expect(cognito.refresh).toHaveBeenCalledWith('sub-uuid-1', 'rt');
   });
 });
 

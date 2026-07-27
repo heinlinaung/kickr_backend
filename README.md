@@ -147,6 +147,11 @@ Notes:
   optional profile field set later via `PATCH /users/me`.
 - The Cognito app client uses a client secret, so requests include a computed `SECRET_HASH`.
 - Login uses the `ADMIN_USER_PASSWORD_AUTH` flow, which must be enabled on the app client.
+- `POST /auth/refresh` takes the Cognito **`sub`**, not the email. `REFRESH_TOKEN_AUTH`
+  requires `SECRET_HASH` over the user's real Cognito username, which in an email
+  sign-in pool is the `sub` UUID — an email-derived hash fails with *"Unable to
+  verify secret hash"*. `POST /auth/login` returns `sub` alongside the tokens for
+  exactly this purpose.
 
 ### Endpoints
 

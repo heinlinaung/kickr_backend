@@ -115,7 +115,13 @@ export class CognitoService {
     }
   }
 
-  async refresh(email: string, refreshToken: string) {
+  /**
+   * REFRESH_TOKEN_AUTH is the one flow that does NOT take the email: Cognito
+   * requires SECRET_HASH over the user's real username, which for an email
+   * sign-in pool is the `sub` UUID. Passing the email here fails with
+   * "Unable to verify secret hash".
+   */
+  async refresh(sub: string, refreshToken: string) {
     try {
       const res = await this.client.send(
         new AdminInitiateAuthCommand({
@@ -124,7 +130,7 @@ export class CognitoService {
           AuthFlow: AuthFlowType.REFRESH_TOKEN_AUTH,
           AuthParameters: {
             REFRESH_TOKEN: refreshToken,
-            SECRET_HASH: this.secretHash(email),
+            SECRET_HASH: this.secretHash(sub),
           },
         }),
       );

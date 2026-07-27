@@ -28,6 +28,7 @@ describe('CognitoService.secretHash', () => {
 
 import { mockClient } from 'aws-sdk-client-mock';
 import {
+  AdminInitiateAuthCommand,
   CognitoIdentityProviderClient,
   SignUpCommand,
 } from '@aws-sdk/client-cognito-identity-provider';
@@ -67,6 +68,38 @@ describe('CognitoService.signUp', () => {
     const svc = new CognitoService(config);
     await expect(svc.signUp('alice@b.com', 'p')).rejects.toBeInstanceOf(
       ConflictException,
+    );
+  });
+
+  // Regression: refresh must hash the sub, not the email. Real Cognito rejects
+  // an email-derived hash here with "Unable to verify secret hash".
+  it('refresh: computes SECRET_HASH over the sub, not the email', async () => {
+    cognitoMock.on(AdminInitiateAuthCommand).resolves({
+      AuthenticationResult: { AccessToken: 'at', ExpiresIn: 3600 },
+    });
+    const svc = new CognitoService(config);
+    await svc.refresh('69ca359c-uuid', 'refresh-token');
+
+    const input = cognitoMock.commandCalls(AdminInitiateAuthCommand)[0].args[0]
+      .input;
+    expect(input.AuthParameters?.SECRET_HASH).toBe(
+      expectedHash('69ca359c-uuid', 'client123', 'secret456'),
+    );
+    expect(input.AuthParameters?.REFRESH_TOKEN).toBe('refresh-token');
+  });
+
+  it('login: computes SECRET_HASH over the email', async () => {
+    cognitoMock.on(AdminInitiateAuthCommand).resolves({
+      AuthenticationResult: { AccessToken: 'at', ExpiresIn: 3600 },
+    });
+    const svc = new CognitoService(config);
+    await svc.login('alice@b.com', 'p@ssw0rd');
+
+    const input = cognitoMock.commandCalls(AdminInitiateAuthCommand)[0].args[0]
+      .input;
+    expect(input.AuthParameters?.USERNAME).toBe('alice@b.com');
+    expect(input.AuthParameters?.SECRET_HASH).toBe(
+      expectedHash('alice@b.com', 'client123', 'secret456'),
     );
   });
 });

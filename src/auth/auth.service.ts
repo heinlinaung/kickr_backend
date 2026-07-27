@@ -62,11 +62,13 @@ export class AuthService {
     const email = dto.email.toLowerCase();
     const tokens = await this.cognito.login(email, dto.password);
     const user = await this.userModel.findOne({ email }).lean();
-    return { ...tokens, user };
+    // `sub` is surfaced explicitly because POST /auth/refresh requires it —
+    // the refresh flow cannot be driven by the email alone.
+    return { ...tokens, sub: user?.cognitoSub, user };
   }
 
   async refreshTokens(dto: RefreshTokenDto) {
-    return this.cognito.refresh(dto.email.toLowerCase(), dto.refreshToken);
+    return this.cognito.refresh(dto.sub, dto.refreshToken);
   }
 
   async forgotPassword(dto: ForgotPasswordDto) {
