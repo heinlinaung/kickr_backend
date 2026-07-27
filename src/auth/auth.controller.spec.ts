@@ -24,8 +24,6 @@ describe('AuthController', () => {
 
   it('signup delegates to service', async () => {
     await controller.signup({
-      username: 'a',
-      name: 'A',
       email: 'a@b.com',
       password: 'Password123!',
     });
@@ -33,12 +31,12 @@ describe('AuthController', () => {
   });
 
   it('confirmSignup delegates to service', async () => {
-    await controller.confirmSignup({ username: 'a', code: '123456' });
+    await controller.confirmSignup({ email: 'a@b.com', code: '123456' });
     expect(authService.confirmSignup).toHaveBeenCalled();
   });
 
   it('login delegates to service', async () => {
-    await controller.login({ username: 'a', password: 'p' });
+    await controller.login({ email: 'a@b.com', password: 'p' });
     expect(authService.login).toHaveBeenCalled();
   });
 });

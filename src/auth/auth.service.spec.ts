@@ -1,6 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
-import { AuthService } from './auth.service';
+import { AuthService, defaultNameFromEmail } from './auth.service';
 import { CognitoService } from './cognito/cognito.service';
 import { User } from '../users/schemas/user.schema';
 
@@ -32,32 +32,42 @@ describe('AuthService (Cognito proxy)', () => {
     service = moduleRef.get(AuthService);
   });
 
-  it('signup: creates Cognito user then local profile keyed by sub', async () => {
+  it('signup: registers the email in Cognito then creates a profile keyed by sub', async () => {
     cognito.signUp.mockResolvedValue('sub-abc');
     userModel.create.mockResolvedValue({});
     const res = await service.signup({
-      username: 'alice',
-      name: 'Alice',
-      email: 'a@b.com',
+      email: 'alice@b.com',
       password: 'Password123!',
     });
-    expect(cognito.signUp).toHaveBeenCalledWith(
-      'alice',
-      'Password123!',
-      'a@b.com',
-    );
+    expect(cognito.signUp).toHaveBeenCalledWith('alice@b.com', 'Password123!');
     expect(userModel.create).toHaveBeenCalledWith(
       expect.objectContaining({
         cognitoSub: 'sub-abc',
-        username: 'alice',
-        email: 'a@b.com',
-        name: 'Alice',
+        email: 'alice@b.com',
+        // seeded from the email's local part — signup collects no name
+        name: 'alice',
       }),
     );
+    // no username at registration; it is a profile field set later
+    const createCalls = userModel.create.mock.calls as Record<
+      string,
+      unknown
+    >[][];
+    expect(createCalls[0][0]).not.toHaveProperty('username');
     expect(res.message).toMatch(/confirm/i);
   });
 
-  it('login: returns Cognito tokens', async () => {
+  it('signup: lowercases the email before Cognito and Mongo see it', async () => {
+    cognito.signUp.mockResolvedValue('sub-abc');
+    userModel.create.mockResolvedValue({});
+    await service.signup({ email: 'Alice@B.com', password: 'Password123!' });
+    expect(cognito.signUp).toHaveBeenCalledWith('alice@b.com', 'Password123!');
+    expect(userModel.create).toHaveBeenCalledWith(
+      expect.objectContaining({ email: 'alice@b.com', name: 'alice' }),
+    );
+  });
+
+  it('login: authenticates by email and returns Cognito tokens', async () => {
     cognito.login.mockResolvedValue({
       accessToken: 'at',
       idToken: 'it',
@@ -65,14 +75,65 @@ describe('AuthService (Cognito proxy)', () => {
       expiresIn: 3600,
     });
     userModel.findOne.mockReturnValue({
-      lean: () => Promise.resolve({ username: 'alice' }),
+      lean: () => Promise.resolve({ email: 'alice@b.com' }),
     });
     const res = await service.login({
-      username: 'alice',
+      email: 'Alice@b.com',
       password: 'p',
     });
+    expect(cognito.login).toHaveBeenCalledWith('alice@b.com', 'p');
+    expect(userModel.findOne).toHaveBeenCalledWith({ email: 'alice@b.com' });
     expect(res).toEqual(
       expect.objectContaining({ accessToken: 'at', refreshToken: 'rt' }),
     );
+  });
+
+  it('confirmSignup: passes the lowercased email to Cognito', async () => {
+    await service.confirmSignup({ email: 'A@b.com', code: '123456' });
+    expect(cognito.confirmSignUp).toHaveBeenCalledWith('a@b.com', '123456');
+  });
+
+  it('resendConfirmation: passes the lowercased email to Cognito', async () => {
+    await service.resendConfirmation({ email: 'A@b.com' });
+    expect(cognito.resendConfirmation).toHaveBeenCalledWith('a@b.com');
+  });
+
+  it('forgotPassword: passes the lowercased email to Cognito', async () => {
+    await service.forgotPassword({ email: 'A@b.com' });
+    expect(cognito.forgotPassword).toHaveBeenCalledWith('a@b.com');
+  });
+
+  it('resetPassword: passes the lowercased email to Cognito', async () => {
+    await service.resetPassword({
+      email: 'A@b.com',
+      code: '123456',
+      newPassword: 'NewPassword123!',
+    });
+    expect(cognito.confirmForgotPassword).toHaveBeenCalledWith(
+      'a@b.com',
+      '123456',
+      'NewPassword123!',
+    );
+  });
+
+  it('refreshTokens: passes the lowercased email to Cognito', async () => {
+    await service.refreshTokens({ email: 'A@b.com', refreshToken: 'rt' });
+    expect(cognito.refresh).toHaveBeenCalledWith('a@b.com', 'rt');
+  });
+});
+
+describe('defaultNameFromEmail', () => {
+  it.each([
+    ['alice@example.com', 'alice'],
+    ['john.doe@example.com', 'john.doe'],
+    ['a+tag@example.com', 'a+tag'],
+    // '@' inside a quoted local part: split on the LAST '@'
+    ['"weird@local"@example.com', '"weird@local"'],
+  ])('derives a name from %s', (email, expected) => {
+    expect(defaultNameFromEmail(email)).toBe(expected);
+  });
+
+  it('falls back to the full address when the local part is too short', () => {
+    expect(defaultNameFromEmail('a@example.com')).toBe('a@example.com');
   });
 });

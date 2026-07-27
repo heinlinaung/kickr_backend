@@ -2,9 +2,9 @@ import { createHmac } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { CognitoService } from './cognito.service';
 
-function expectedHash(username: string, clientId: string, secret: string) {
+function expectedHash(email: string, clientId: string, secret: string) {
   return createHmac('sha256', secret)
-    .update(username + clientId)
+    .update(email + clientId)
     .digest('base64');
 }
 
@@ -19,10 +19,10 @@ describe('CognitoService.secretHash', () => {
       })[k],
   } as unknown as ConfigService;
 
-  it('computes the Cognito SECRET_HASH for a username', () => {
+  it('computes the Cognito SECRET_HASH for an email', () => {
     const svc = new CognitoService(config);
-    const hash = (svc as any).secretHash('alice');
-    expect(hash).toBe(expectedHash('alice', 'client123', 'secret456'));
+    const hash = (svc as any).secretHash('alice@b.com');
+    expect(hash).toBe(expectedHash('alice@b.com', 'client123', 'secret456'));
   });
 });
 
@@ -50,8 +50,13 @@ describe('CognitoService.signUp', () => {
   it('returns the Cognito sub on success', async () => {
     cognitoMock.on(SignUpCommand).resolves({ UserSub: 'sub-123' });
     const svc = new CognitoService(config);
-    const sub = await svc.signUp('alice', 'p@ssw0rd', 'a@b.com');
+    const sub = await svc.signUp('alice@b.com', 'p@ssw0rd');
     expect(sub).toBe('sub-123');
+    const input = cognitoMock.commandCalls(SignUpCommand)[0].args[0].input;
+    expect(input.Username).toBe('alice@b.com');
+    expect(input.UserAttributes).toEqual([
+      { Name: 'email', Value: 'alice@b.com' },
+    ]);
   });
 
   it('maps UsernameExistsException to 409', async () => {
@@ -60,7 +65,7 @@ describe('CognitoService.signUp', () => {
     });
     cognitoMock.on(SignUpCommand).rejects(err);
     const svc = new CognitoService(config);
-    await expect(svc.signUp('alice', 'p', 'a@b.com')).rejects.toBeInstanceOf(
+    await expect(svc.signUp('alice@b.com', 'p')).rejects.toBeInstanceOf(
       ConflictException,
     );
   });
