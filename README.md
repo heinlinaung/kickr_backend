@@ -8,7 +8,7 @@ Built with **NestJS**, **MongoDB** (Mongoose), **Socket.io**, and **AWS Cognito*
 
 ## Features (Phase 1)
 
-- **Auth** — AWS Cognito-backed: username sign-up with Cognito email verification, login, forgot/reset password, token refresh
+- **Auth** — AWS Cognito-backed: email + password sign-up with Cognito email verification, login, forgot/reset password, token refresh
 - **User profiles** — Edit profile fields, avatar upload
 - **Groups** — Create/update groups, wallpaper upload, member management
 - **Group Invitations** — Join by name search or QR invite code, approval flow
@@ -142,9 +142,16 @@ Authorization: Bearer <accessToken>
 ```
 
 Notes:
-- The sign-in identifier is the **username** (not email).
+- The sign-in identifier is the **email address**. Sign-up collects only email +
+  password; `name` is seeded from the email's local part and `username` is an
+  optional profile field set later via `PATCH /users/me`.
 - The Cognito app client uses a client secret, so requests include a computed `SECRET_HASH`.
 - Login uses the `ADMIN_USER_PASSWORD_AUTH` flow, which must be enabled on the app client.
+- `POST /auth/refresh` takes the Cognito **`sub`**, not the email. `REFRESH_TOKEN_AUTH`
+  requires `SECRET_HASH` over the user's real Cognito username, which in an email
+  sign-in pool is the `sub` UUID — an email-derived hash fails with *"Unable to
+  verify secret hash"*. `POST /auth/login` returns `sub` alongside the tokens for
+  exactly this purpose.
 
 ### Endpoints
 

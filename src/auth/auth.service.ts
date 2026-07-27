@@ -11,6 +11,15 @@ import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { ConfirmSignupDto } from './dto/confirm-signup.dto';
 import { ResendConfirmationDto } from './dto/resend-confirmation.dto';
 
+/**
+ * Seed a display name from an email's local part ('john.doe@x.com' -> 'john.doe').
+ * Falls back to the whole address if the local part is too short to be a name.
+ */
+export function defaultNameFromEmail(email: string): string {
+  const localPart = email.slice(0, email.lastIndexOf('@'));
+  return localPart.length >= 2 ? localPart : email;
+}
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -20,52 +29,58 @@ export class AuthService {
 
   async signup(dto: SignupDto) {
     const email = dto.email.toLowerCase();
-    const sub = await this.cognito.signUp(dto.username, dto.password, email);
+    const sub = await this.cognito.signUp(email, dto.password);
     // Dual-write: Cognito owns the identity, Mongo the profile. If this create()
-    // fails after Cognito succeeds (e.g. duplicate username), the Cognito user is
+    // fails after Cognito succeeds (e.g. duplicate email), the Cognito user is
     // left without a profile. Recovery is an idempotent re-signup / retry — we do
     // not compensate with AdminDeleteUser here (own failure modes). See Task 7.
+    //
+    // Signup collects only email + password, but `name` is required on the
+    // schema, so seed it from the email's local part. Users rename themselves
+    // (and pick a `username`) later via PATCH /users/me.
     await this.userModel.create({
       cognitoSub: sub,
-      username: dto.username,
-      name: dto.name,
+      name: defaultNameFromEmail(email),
       email,
     });
     return {
-      message: 'Signup successful. Check your email to confirm your account.',
+      // A pre-sign-up Lambda auto-confirms the user, so there is no emailed
+      // code to wait for — they can log in straight away.
+      message: 'Signup successful. You can now log in.',
     };
   }
 
   async confirmSignup(dto: ConfirmSignupDto) {
-    await this.cognito.confirmSignUp(dto.username, dto.code);
+    await this.cognito.confirmSignUp(dto.email.toLowerCase(), dto.code);
     return { message: 'Account confirmed. You can now log in.' };
   }
 
   async resendConfirmation(dto: ResendConfirmationDto) {
-    await this.cognito.resendConfirmation(dto.username);
+    await this.cognito.resendConfirmation(dto.email.toLowerCase());
     return { message: 'Confirmation code resent.' };
   }
 
   async login(dto: LoginDto) {
-    const tokens = await this.cognito.login(dto.username, dto.password);
-    const user = await this.userModel
-      .findOne({ username: dto.username })
-      .lean();
-    return { ...tokens, user };
+    const email = dto.email.toLowerCase();
+    const tokens = await this.cognito.login(email, dto.password);
+    const user = await this.userModel.findOne({ email }).lean();
+    // `sub` is surfaced explicitly because POST /auth/refresh requires it —
+    // the refresh flow cannot be driven by the email alone.
+    return { ...tokens, sub: user?.cognitoSub, user };
   }
 
   async refreshTokens(dto: RefreshTokenDto) {
-    return this.cognito.refresh(dto.username, dto.refreshToken);
+    return this.cognito.refresh(dto.sub, dto.refreshToken);
   }
 
   async forgotPassword(dto: ForgotPasswordDto) {
-    await this.cognito.forgotPassword(dto.username);
+    await this.cognito.forgotPassword(dto.email.toLowerCase());
     return { message: 'If that account exists, a reset code has been sent.' };
   }
 
   async resetPassword(dto: ResetPasswordDto) {
     await this.cognito.confirmForgotPassword(
-      dto.username,
+      dto.email.toLowerCase(),
       dto.code,
       dto.newPassword,
     );

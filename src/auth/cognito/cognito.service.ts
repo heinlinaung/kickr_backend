@@ -35,23 +35,21 @@ export class CognitoService {
     }
   }
 
-  private secretHash(username: string): string {
+  // The pool signs users in by email, so every Username/USERNAME we send is the
+  // email address — and SECRET_HASH must be computed over that exact same value.
+  private secretHash(email: string): string {
     return createHmac('sha256', this.clientSecret)
-      .update(username + this.clientId)
+      .update(email + this.clientId)
       .digest('base64');
   }
 
-  async signUp(
-    username: string,
-    password: string,
-    email: string,
-  ): Promise<string> {
+  async signUp(email: string, password: string): Promise<string> {
     try {
       const res = await this.client.send(
         new SignUpCommand({
           ClientId: this.clientId,
-          SecretHash: this.secretHash(username),
-          Username: username,
+          SecretHash: this.secretHash(email),
+          Username: email,
           Password: password,
           UserAttributes: [{ Name: 'email', Value: email }],
         }),
@@ -62,13 +60,13 @@ export class CognitoService {
     }
   }
 
-  async confirmSignUp(username: string, code: string): Promise<void> {
+  async confirmSignUp(email: string, code: string): Promise<void> {
     try {
       await this.client.send(
         new ConfirmSignUpCommand({
           ClientId: this.clientId,
-          SecretHash: this.secretHash(username),
-          Username: username,
+          SecretHash: this.secretHash(email),
+          Username: email,
           ConfirmationCode: code,
         }),
       );
@@ -77,13 +75,13 @@ export class CognitoService {
     }
   }
 
-  async resendConfirmation(username: string): Promise<void> {
+  async resendConfirmation(email: string): Promise<void> {
     try {
       await this.client.send(
         new ResendConfirmationCodeCommand({
           ClientId: this.clientId,
-          SecretHash: this.secretHash(username),
-          Username: username,
+          SecretHash: this.secretHash(email),
+          Username: email,
         }),
       );
     } catch (err) {
@@ -91,7 +89,7 @@ export class CognitoService {
     }
   }
 
-  async login(username: string, password: string) {
+  async login(email: string, password: string) {
     try {
       const res = await this.client.send(
         new AdminInitiateAuthCommand({
@@ -99,9 +97,9 @@ export class CognitoService {
           ClientId: this.clientId,
           AuthFlow: AuthFlowType.ADMIN_USER_PASSWORD_AUTH,
           AuthParameters: {
-            USERNAME: username,
+            USERNAME: email,
             PASSWORD: password,
-            SECRET_HASH: this.secretHash(username),
+            SECRET_HASH: this.secretHash(email),
           },
         }),
       );
@@ -117,7 +115,13 @@ export class CognitoService {
     }
   }
 
-  async refresh(username: string, refreshToken: string) {
+  /**
+   * REFRESH_TOKEN_AUTH is the one flow that does NOT take the email: Cognito
+   * requires SECRET_HASH over the user's real username, which for an email
+   * sign-in pool is the `sub` UUID. Passing the email here fails with
+   * "Unable to verify secret hash".
+   */
+  async refresh(sub: string, refreshToken: string) {
     try {
       const res = await this.client.send(
         new AdminInitiateAuthCommand({
@@ -126,7 +130,7 @@ export class CognitoService {
           AuthFlow: AuthFlowType.REFRESH_TOKEN_AUTH,
           AuthParameters: {
             REFRESH_TOKEN: refreshToken,
-            SECRET_HASH: this.secretHash(username),
+            SECRET_HASH: this.secretHash(sub),
           },
         }),
       );
@@ -141,13 +145,13 @@ export class CognitoService {
     }
   }
 
-  async forgotPassword(username: string): Promise<void> {
+  async forgotPassword(email: string): Promise<void> {
     try {
       await this.client.send(
         new ForgotPasswordCommand({
           ClientId: this.clientId,
-          SecretHash: this.secretHash(username),
-          Username: username,
+          SecretHash: this.secretHash(email),
+          Username: email,
         }),
       );
     } catch (err) {
@@ -156,7 +160,7 @@ export class CognitoService {
   }
 
   async confirmForgotPassword(
-    username: string,
+    email: string,
     code: string,
     newPassword: string,
   ): Promise<void> {
@@ -164,8 +168,8 @@ export class CognitoService {
       await this.client.send(
         new ConfirmForgotPasswordCommand({
           ClientId: this.clientId,
-          SecretHash: this.secretHash(username),
-          Username: username,
+          SecretHash: this.secretHash(email),
+          Username: email,
           ConfirmationCode: code,
           Password: newPassword,
         }),
