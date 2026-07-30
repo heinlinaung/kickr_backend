@@ -9,6 +9,7 @@ import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { GroupsModule } from './groups/groups.module';
+import { LocationsModule } from './locations/locations.module';
 import { InvitationsModule } from './invitations/invitations.module';
 import { ChatModule } from './chat/chat.module';
 import { EventsModule } from './events/events.module';
@@ -33,6 +34,7 @@ import { ShuffleModule } from './shuffle/shuffle.module';
     UsersModule,
     NotificationsModule,
     GroupsModule,
+    LocationsModule,
     EventsModule,
     TournamentsModule,
     ShuffleModule,
