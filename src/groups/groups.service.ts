@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  ConflictException,
   Logger,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -65,11 +66,18 @@ export class GroupsService {
     const { locationIds, ...rest } = dto;
     const locations = await this.resolveOwnedLocationIds(locationIds, ownerId);
 
-    const group = await this.groupModel.create({
-      ...rest,
-      ...(locations ? { locations } : {}),
-      ownerId: new Types.ObjectId(ownerId),
-    });
+    let group: GroupDocument;
+    try {
+      group = await this.groupModel.create({
+        ...rest,
+        ...(locations ? { locations } : {}),
+        ownerId: new Types.ObjectId(ownerId),
+      });
+    } catch (err: unknown) {
+      // `handle` has a unique index — surface a clean 409 instead of the raw
+      // Mongo duplicate-key error (which would otherwise become a 500).
+      throw this.mapDuplicateKey(err);
+    }
     await this.memberModel.create({
       groupId: group._id,
       userId: new Types.ObjectId(ownerId),
@@ -92,11 +100,34 @@ export class GroupsService {
     dto: UpdateGroupDto,
   ): Promise<GroupDocument> {
     await this.assertOwnerOrAdmin(groupId, userId);
-    const group = await this.groupModel
-      .findByIdAndUpdate(groupId, { $set: dto }, { new: true })
-      .lean();
+    let group: GroupDocument | null;
+    try {
+      group = await this.groupModel
+        .findByIdAndUpdate(groupId, { $set: dto }, { new: true })
+        .lean();
+    } catch (err: unknown) {
+      throw this.mapDuplicateKey(err);
+    }
     if (!group) throw new NotFoundException('Group not found');
     return group;
+  }
+
+  /**
+   * Turns a Mongo duplicate-key error into a 409 with a useful message.
+   * Without this a taken `handle` surfaces as an opaque 500.
+   */
+  private mapDuplicateKey(err: unknown): unknown {
+    const e = err as { code?: number; keyPattern?: Record<string, unknown> };
+    if (e?.code === 11000) {
+      const field = Object.keys(e.keyPattern ?? {})[0];
+      if (field === 'handle') {
+        return new ConflictException('That handle is already taken');
+      }
+      return new ConflictException(
+        field ? `${field} already exists` : 'Duplicate value',
+      );
+    }
+    return err;
   }
 
   async updateWallpaper(

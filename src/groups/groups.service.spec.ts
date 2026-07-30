@@ -5,6 +5,7 @@ import {
   BadRequestException,
   ForbiddenException,
   NotFoundException,
+  ConflictException,
 } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { GroupsService } from './groups.service';
@@ -383,6 +384,42 @@ describe('GroupsService', () => {
 
       expect(res.inviteCode).not.toBe('old-expired');
       expect(groupModel.findByIdAndUpdate).toHaveBeenCalled();
+    });
+  });
+
+  describe('duplicate handle', () => {
+    const dupErr = Object.assign(new Error('E11000 duplicate key'), {
+      code: 11000,
+      keyPattern: { handle: 1 },
+    });
+
+    it('create maps a Mongo duplicate-key error to 409, not 500', async () => {
+      locationsService.assertOwnedBy.mockResolvedValue({ _id: LOC_ID });
+      groupModel.create.mockRejectedValueOnce(dupErr);
+
+      await expect(
+        service.create(USER_ID, { name: 'Dup', handle: 'taken' } as any),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('update maps a duplicate-key error to 409 as well', async () => {
+      allowOwner();
+      groupModel.findByIdAndUpdate.mockImplementationOnce(() => {
+        throw dupErr;
+      });
+
+      await expect(
+        service.update(GROUP_ID, USER_ID, { handle: 'taken' } as any),
+      ).rejects.toBeInstanceOf(ConflictException);
+    });
+
+    it('rethrows non-duplicate errors untouched', async () => {
+      const boom = new Error('db exploded');
+      groupModel.create.mockRejectedValueOnce(boom);
+
+      await expect(
+        service.create(USER_ID, { name: 'X' } as any),
+      ).rejects.toThrow('db exploded');
     });
   });
 
