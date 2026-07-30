@@ -1,6 +1,16 @@
 import {
-  Controller, Post, Get, Patch, Delete, Body, Param, Query, UseGuards,
-  UseInterceptors, UploadedFile, BadRequestException,
+  Controller,
+  Post,
+  Get,
+  Patch,
+  Delete,
+  Body,
+  Param,
+  Query,
+  UseGuards,
+  UseInterceptors,
+  UploadedFile,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -113,7 +123,11 @@ export class GroupsController {
     @Param('locationId') locationId: string,
     @CurrentUser() user: any,
   ) {
-    return this.groupsService.detachLocation(id, user._id.toString(), locationId);
+    return this.groupsService.detachLocation(
+      id,
+      user._id.toString(),
+      locationId,
+    );
   }
 
   @Get(':id/members')
@@ -127,7 +141,11 @@ export class GroupsController {
     @Param('userId') targetUserId: string,
     @CurrentUser() user: any,
   ) {
-    return this.groupsService.removeMember(groupId, user._id.toString(), targetUserId);
+    return this.groupsService.removeMember(
+      groupId,
+      user._id.toString(),
+      targetUserId,
+    );
   }
 
   @Patch(':id/members/:userId/role')
@@ -147,7 +165,10 @@ export class GroupsController {
 
   @Get(':id/invite-code')
   async getInviteCode(@Param('id') id: string, @CurrentUser() user: any) {
-    const code = await this.groupsService.generateInviteCode(id, user._id.toString());
+    const code = await this.groupsService.generateInviteCode(
+      id,
+      user._id.toString(),
+    );
     return { inviteCode: code };
   }
 }

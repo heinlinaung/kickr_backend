@@ -41,7 +41,7 @@ export class LocationsService {
   async findById(locationId: string): Promise<LocationDocument> {
     const location = await this.locationModel.findById(locationId).lean();
     if (!location) throw new NotFoundException('Location not found');
-    return location as unknown as LocationDocument;
+    return location;
   }
 
   /**

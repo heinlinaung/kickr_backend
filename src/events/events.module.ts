@@ -4,7 +4,10 @@ import { EventsController } from './events.controller';
 import { EventsService } from './events.service';
 import { Event, EventSchema } from './schemas/event.schema';
 import { EventPlayer, EventPlayerSchema } from './schemas/event-player.schema';
-import { GroupMember, GroupMemberSchema } from '../groups/schemas/group-member.schema';
+import {
+  GroupMember,
+  GroupMemberSchema,
+} from '../groups/schemas/group-member.schema';
 
 @Module({
   imports: [

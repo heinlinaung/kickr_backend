@@ -1,19 +1,31 @@
 import {
-  Injectable, NotFoundException, ForbiddenException, ConflictException, BadRequestException,
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+  ConflictException,
+  BadRequestException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Event, EventDocument } from './schemas/event.schema';
-import { EventPlayer, EventPlayerDocument } from './schemas/event-player.schema';
-import { GroupMember, GroupMemberDocument } from '../groups/schemas/group-member.schema';
+import {
+  EventPlayer,
+  EventPlayerDocument,
+} from './schemas/event-player.schema';
+import {
+  GroupMember,
+  GroupMemberDocument,
+} from '../groups/schemas/group-member.schema';
 import { CreateEventDto } from './dto/create-event.dto';
 
 @Injectable()
 export class EventsService {
   constructor(
     @InjectModel(Event.name) private eventModel: Model<EventDocument>,
-    @InjectModel(EventPlayer.name) private playerModel: Model<EventPlayerDocument>,
-    @InjectModel(GroupMember.name) private memberModel: Model<GroupMemberDocument>,
+    @InjectModel(EventPlayer.name)
+    private playerModel: Model<EventPlayerDocument>,
+    @InjectModel(GroupMember.name)
+    private memberModel: Model<GroupMemberDocument>,
   ) {}
 
   async list(userId: string) {
@@ -28,7 +40,10 @@ export class EventsService {
         status: 'approved',
         role: { $in: ['owner', 'admin'] },
       });
-      if (!member) throw new ForbiddenException('Only group owner or admin can create events');
+      if (!member)
+        throw new ForbiddenException(
+          'Only group owner or admin can create events',
+        );
     }
     return this.eventModel.create({
       ...dto,
@@ -41,7 +56,7 @@ export class EventsService {
   async findById(eventId: string): Promise<EventDocument> {
     const event = await this.eventModel.findById(eventId).lean();
     if (!event) throw new NotFoundException('Event not found');
-    return event as unknown as EventDocument;
+    return event;
   }
 
   async join(eventId: string, userId: string) {
@@ -50,18 +65,27 @@ export class EventsService {
       eventId: new Types.ObjectId(eventId),
       userId: new Types.ObjectId(userId),
     });
-    if (existing && existing.status === 'joined') throw new ConflictException('Already joined');
+    if (existing && existing.status === 'joined')
+      throw new ConflictException('Already joined');
 
     // Atomic capacity check: only increment if joinedCount < maxPlayers and status is open
     const updatedEvent = await this.eventModel.findOneAndUpdate(
-      { _id: eventId, status: 'open', $expr: { $lt: ['$joinedCount', '$maxPlayers'] } },
+      {
+        _id: eventId,
+        status: 'open',
+        $expr: { $lt: ['$joinedCount', '$maxPlayers'] },
+      },
       { $inc: { joinedCount: 1 } },
       { new: true },
     );
     if (!updatedEvent) {
       const event = await this.eventModel.findById(eventId).lean();
       if (!event) throw new NotFoundException('Event not found');
-      throw new BadRequestException(event.status !== 'open' ? 'Event is not open for joining' : 'Event is full');
+      throw new BadRequestException(
+        event.status !== 'open'
+          ? 'Event is not open for joining'
+          : 'Event is full',
+      );
     }
 
     // Create or reactivate player record
@@ -80,7 +104,9 @@ export class EventsService {
 
     // Update status to 'full' if at capacity
     if (updatedEvent.joinedCount >= updatedEvent.maxPlayers) {
-      await this.eventModel.findByIdAndUpdate(eventId, { $set: { status: 'full' } });
+      await this.eventModel.findByIdAndUpdate(eventId, {
+        $set: { status: 'full' },
+      });
     }
 
     return { message: 'Joined event successfully' };

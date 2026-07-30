@@ -124,7 +124,9 @@ describe('GroupsService', () => {
       expect(imagekit.deleteFile).toHaveBeenCalledWith('old-logo-id');
 
       const patch = groupModel.findByIdAndUpdate.mock.calls[0][1];
-      expect(patch.$set.logo).toBe('https://ik.imagekit.io/kickr/groups/new.png');
+      expect(patch.$set.logo).toBe(
+        'https://ik.imagekit.io/kickr/groups/new.png',
+      );
       expect(patch.$set.logoFileId).toBe('new-file-id');
       expect(res.logo).toBe('https://ik.imagekit.io/kickr/groups/new.png');
     });
@@ -143,7 +145,10 @@ describe('GroupsService', () => {
       allowOwner();
       groupModel.findById.mockReturnValue(q({ logoFileId: 'old-logo-id' }));
       groupModel.findByIdAndUpdate.mockReturnValue(
-        q({ _id: GROUP_ID, logo: 'https://ik.imagekit.io/kickr/groups/new.png' }),
+        q({
+          _id: GROUP_ID,
+          logo: 'https://ik.imagekit.io/kickr/groups/new.png',
+        }),
       );
       imagekit.deleteFile.mockRejectedValue(new Error('imagekit down'));
 
@@ -201,7 +206,9 @@ describe('GroupsService', () => {
 
   describe('search', () => {
     it('only returns public groups and matches name OR handle', async () => {
-      groupModel.find.mockReturnValue(q([{ _id: GROUP_ID, name: 'Bangkok FC' }]));
+      groupModel.find.mockReturnValue(
+        q([{ _id: GROUP_ID, name: 'Bangkok FC' }]),
+      );
 
       await service.search('bangkok');
 
@@ -318,9 +325,7 @@ describe('GroupsService', () => {
 
       expect(res.inviteCode).toBeTruthy();
       expect(res.inviteLink).toContain(res.inviteCode);
-      expect(res.inviteLink).toBe(
-        `http://localhost:3000/g/${res.inviteCode}`,
-      );
+      expect(res.inviteLink).toBe(`http://localhost:3000/g/${res.inviteCode}`);
     });
   });
 
@@ -362,7 +367,10 @@ describe('GroupsService', () => {
         locationId: LOC_ID,
       });
 
-      expect(locationsService.assertOwnedBy).toHaveBeenCalledWith(LOC_ID, USER_ID);
+      expect(locationsService.assertOwnedBy).toHaveBeenCalledWith(
+        LOC_ID,
+        USER_ID,
+      );
       expect(locationsService.create).not.toHaveBeenCalled();
       const patch = groupModel.findByIdAndUpdate.mock.calls[0][1];
       expect(patch.$addToSet.locations.toString()).toBe(LOC_ID);
@@ -393,7 +401,7 @@ describe('GroupsService', () => {
       );
 
       await service.attachLocation(GROUP_ID, USER_ID, {
-        location: payload as any,
+        location: payload,
       });
 
       expect(locationsService.create).toHaveBeenCalledWith(USER_ID, payload);
@@ -535,7 +543,9 @@ describe('GroupsService', () => {
       gateThenTarget({ role: 'member' });
       memberModel.findOneAndUpdate.mockReturnValue(q({ level: 2 }));
 
-      await service.updateMemberRole(GROUP_ID, USER_ID, TARGET_ID, { level: 2 });
+      await service.updateMemberRole(GROUP_ID, USER_ID, TARGET_ID, {
+        level: 2,
+      });
 
       expect(memberModel.findOneAndUpdate.mock.calls[0][1]).toEqual({
         $set: { level: 2 },
@@ -560,7 +570,7 @@ describe('GroupsService', () => {
       groupModel.create.mockResolvedValue({ _id: GROUP_ID });
       memberModel.create.mockResolvedValue({});
 
-      await service.create(USER_ID, dto({ locationIds: [a, b] }) as any);
+      await service.create(USER_ID, dto({ locationIds: [a, b] }));
 
       expect(locationsService.assertOwnedBy).toHaveBeenCalledTimes(2);
       expect(locationsService.assertOwnedBy).toHaveBeenCalledWith(a, USER_ID);
@@ -575,7 +585,7 @@ describe('GroupsService', () => {
       groupModel.create.mockResolvedValue({ _id: GROUP_ID });
       memberModel.create.mockResolvedValue({});
 
-      await service.create(USER_ID, dto({ locationIds: [a] }) as any);
+      await service.create(USER_ID, dto({ locationIds: [a] }));
 
       const arg = groupModel.create.mock.calls[0][0];
       expect(arg).not.toHaveProperty('locationIds');
@@ -588,7 +598,7 @@ describe('GroupsService', () => {
       );
 
       await expect(
-        service.create(USER_ID, dto({ locationIds: ids }) as any),
+        service.create(USER_ID, dto({ locationIds: ids })),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(groupModel.create).not.toHaveBeenCalled();
       expect(memberModel.create).not.toHaveBeenCalled();
@@ -600,7 +610,7 @@ describe('GroupsService', () => {
       );
 
       await expect(
-        service.create(USER_ID, dto({ locationIds: [LOC_ID] }) as any),
+        service.create(USER_ID, dto({ locationIds: [LOC_ID] })),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(groupModel.create).not.toHaveBeenCalled();
     });
@@ -609,7 +619,7 @@ describe('GroupsService', () => {
       groupModel.create.mockResolvedValue({ _id: GROUP_ID });
       memberModel.create.mockResolvedValue({});
 
-      await service.create(USER_ID, dto() as any);
+      await service.create(USER_ID, dto());
 
       expect(locationsService.assertOwnedBy).not.toHaveBeenCalled();
       const arg = groupModel.create.mock.calls[0][0];

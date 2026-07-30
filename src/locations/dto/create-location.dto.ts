@@ -31,12 +31,18 @@ export class CreateLocationDto {
   @Max(180)
   lng: number;
 
-  @ApiProperty({ example: 'https://maps.google.com/?q=13.7563,100.5018', required: false })
+  @ApiProperty({
+    example: 'https://maps.google.com/?q=13.7563,100.5018',
+    required: false,
+  })
   @IsOptional()
   @IsUrl()
   url?: string;
 
-  @ApiProperty({ example: { surface: 'grass', indoor: false }, required: false })
+  @ApiProperty({
+    example: { surface: 'grass', indoor: false },
+    required: false,
+  })
   @IsOptional()
   @IsObject()
   metadata?: Record<string, any>;

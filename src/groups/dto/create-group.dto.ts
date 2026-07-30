@@ -19,7 +19,10 @@ export class CreateGroupDto {
   @MinLength(2)
   name: string;
 
-  @ApiProperty({ example: 'A group for Bangkok football players', required: false })
+  @ApiProperty({
+    example: 'A group for Bangkok football players',
+    required: false,
+  })
   @IsOptional()
   @IsString()
   description?: string;

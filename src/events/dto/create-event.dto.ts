@@ -1,6 +1,13 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
-  IsString, IsOptional, IsBoolean, IsNumber, IsEnum, IsDateString, MinLength,
+  IsString,
+  IsOptional,
+  IsBoolean,
+  IsNumber,
+  IsEnum,
+  IsDateString,
+  IsMongoId,
+  MinLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -29,22 +36,10 @@ export class CreateEventDto {
   @IsBoolean()
   isPublic?: boolean;
 
-  @ApiProperty({ example: 'Lumpini Park', required: false })
+  @ApiProperty({ example: '507f1f77bcf86cd799439011', required: false })
   @IsOptional()
-  @IsString()
-  locationName?: string;
-
-  @ApiProperty({ example: 13.7563, required: false })
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber()
-  latitude?: number;
-
-  @ApiProperty({ example: 100.5018, required: false })
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber()
-  longitude?: number;
+  @IsMongoId()
+  locationId?: string;
 
   @ApiProperty({ example: 22, required: false })
   @IsOptional()
@@ -52,12 +47,20 @@ export class CreateEventDto {
   @IsNumber()
   maxPlayers?: number;
 
-  @ApiProperty({ enum: ['football', 'futsal'], example: 'football', required: false })
+  @ApiProperty({
+    enum: ['football', 'futsal'],
+    example: 'football',
+    required: false,
+  })
   @IsOptional()
   @IsEnum(['football', 'futsal'])
   sportType?: string;
 
-  @ApiProperty({ enum: ['beginner', 'intermediate', 'advanced'], example: 'beginner', required: false })
+  @ApiProperty({
+    enum: ['beginner', 'intermediate', 'advanced'],
+    example: 'beginner',
+    required: false,
+  })
   @IsOptional()
   @IsEnum(['beginner', 'intermediate', 'advanced'])
   skillLevel?: string;

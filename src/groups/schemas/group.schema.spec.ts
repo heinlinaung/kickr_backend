@@ -4,9 +4,17 @@ import { GroupMemberSchema } from './group-member.schema';
 describe('Group schema (v2 extensions)', () => {
   it('adds logo/sportType/handle/teamRules/locations', () => {
     const paths = Object.keys(GroupSchema.paths);
-    expect(paths).toEqual(expect.arrayContaining([
-      'logo', 'logoFileId', 'wallpaperFileId', 'sportType', 'handle', 'teamRules', 'locations',
-    ]));
+    expect(paths).toEqual(
+      expect.arrayContaining([
+        'logo',
+        'logoFileId',
+        'wallpaperFileId',
+        'sportType',
+        'handle',
+        'teamRules',
+        'locations',
+      ]),
+    );
   });
 
   it('removes the flat location fields', () => {
@@ -19,8 +27,12 @@ describe('Group schema (v2 extensions)', () => {
 
 describe('GroupMember schema (roles + levels)', () => {
   it('role enum includes captain', () => {
-    expect((GroupMemberSchema.path('role') as any).options.enum)
-      .toEqual(['owner', 'admin', 'captain', 'member']);
+    expect(GroupMemberSchema.path('role').options.enum).toEqual([
+      'owner',
+      'admin',
+      'captain',
+      'member',
+    ]);
   });
 
   it('has a level defaulting to 1, enum 1|2|3', () => {

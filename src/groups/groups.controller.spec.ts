@@ -54,13 +54,17 @@ describe('GroupsController', () => {
 
     it('wallpaper passes the file object (not a filename)', async () => {
       await controller.uploadWallpaper('g1', user, file);
-      expect(svc.updateWallpaper).toHaveBeenCalledWith('g1', 'requester-1', file);
+      expect(svc.updateWallpaper).toHaveBeenCalledWith(
+        'g1',
+        'requester-1',
+        file,
+      );
     });
 
     it('wallpaper throws when no file is present', () => {
-      expect(() => controller.uploadWallpaper('g1', user, undefined as any)).toThrow(
-        BadRequestException,
-      );
+      expect(() =>
+        controller.uploadWallpaper('g1', user, undefined as any),
+      ).toThrow(BadRequestException);
       expect(svc.updateWallpaper).not.toHaveBeenCalled();
     });
 
@@ -90,7 +94,10 @@ describe('GroupsController', () => {
 
     it('POST unwraps the dto to the rules array', async () => {
       await controller.setRules('g1', user, { rules: ['a', 'b'] });
-      expect(svc.setRules).toHaveBeenCalledWith('g1', 'requester-1', ['a', 'b']);
+      expect(svc.setRules).toHaveBeenCalledWith('g1', 'requester-1', [
+        'a',
+        'b',
+      ]);
     });
   });
 
@@ -108,7 +115,11 @@ describe('GroupsController', () => {
 
     it('DELETE delegates the location id', async () => {
       await controller.detachLocation('g1', 'loc1', user);
-      expect(svc.detachLocation).toHaveBeenCalledWith('g1', 'requester-1', 'loc1');
+      expect(svc.detachLocation).toHaveBeenCalledWith(
+        'g1',
+        'requester-1',
+        'loc1',
+      );
     });
   });
 
@@ -155,7 +166,11 @@ describe('GroupsController', () => {
 
     it('DELETE /groups/:id/members/:userId passes requester then target', async () => {
       await controller.removeMember('g1', 'target-9', user);
-      expect(svc.removeMember).toHaveBeenCalledWith('g1', 'requester-1', 'target-9');
+      expect(svc.removeMember).toHaveBeenCalledWith(
+        'g1',
+        'requester-1',
+        'target-9',
+      );
     });
 
     it('GET /groups/:id/invite-code wraps the code', async () => {
@@ -167,7 +182,10 @@ describe('GroupsController', () => {
 
   describe('route ordering', () => {
     it("declares the literal 'search' route before the ':id' wildcard", () => {
-      const src = require('fs').readFileSync(__dirname + '/groups.controller.ts', 'utf8');
+      const src = require('fs').readFileSync(
+        __dirname + '/groups.controller.ts',
+        'utf8',
+      );
       const searchAt = src.indexOf("@Get('search')");
       const idAt = src.indexOf("@Get(':id')");
       expect(searchAt).toBeGreaterThan(-1);

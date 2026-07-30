@@ -24,14 +24,8 @@ export class Event {
   @Prop({ required: true, type: Types.ObjectId, ref: 'User' })
   createdBy: Types.ObjectId;
 
-  @Prop()
-  locationName: string;
-
-  @Prop()
-  latitude: number;
-
-  @Prop()
-  longitude: number;
+  @Prop({ type: Types.ObjectId, ref: 'Location', default: null })
+  locationId: Types.ObjectId | null;
 
   @Prop({ default: 12 })
   maxPlayers: number;

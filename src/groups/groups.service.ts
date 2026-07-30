@@ -1,12 +1,19 @@
 import {
-  Injectable, NotFoundException, ForbiddenException, BadRequestException, Logger,
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+  BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ConfigService } from '@nestjs/config';
 import { Model, Types } from 'mongoose';
 import { v4 as uuidv4 } from 'uuid';
 import { Group, GroupDocument } from './schemas/group.schema';
-import { GroupMember, GroupMemberDocument } from './schemas/group-member.schema';
+import {
+  GroupMember,
+  GroupMemberDocument,
+} from './schemas/group-member.schema';
 import { CreateGroupDto } from './dto/create-group.dto';
 import { UpdateGroupDto } from './dto/update-group.dto';
 import { AttachLocationDto } from './dto/attach-location.dto';
@@ -27,7 +34,8 @@ export class GroupsService {
 
   constructor(
     @InjectModel(Group.name) private groupModel: Model<GroupDocument>,
-    @InjectModel(GroupMember.name) private memberModel: Model<GroupMemberDocument>,
+    @InjectModel(GroupMember.name)
+    private memberModel: Model<GroupMemberDocument>,
     private readonly imagekit: ImageKitService,
     private readonly locationsService: LocationsService,
     private config: ConfigService,
@@ -38,10 +46,14 @@ export class GroupsService {
       .find({ userId: new Types.ObjectId(userId), status: 'approved' })
       .lean();
     const groupIds = memberships.map((m) => m.groupId);
-    const groups = await this.groupModel.find({ _id: { $in: groupIds } }).lean();
+    const groups = await this.groupModel
+      .find({ _id: { $in: groupIds } })
+      .lean();
     return groups.map((group) => ({
       ...group,
-      myRole: memberships.find((m) => m.groupId.toString() === (group._id as any).toString())?.role,
+      myRole: memberships.find(
+        (m) => m.groupId.toString() === (group._id as any).toString(),
+      )?.role,
     }));
   }
 
@@ -71,16 +83,20 @@ export class GroupsService {
   async findById(groupId: string): Promise<GroupDocument> {
     const group = await this.groupModel.findById(groupId).lean();
     if (!group) throw new NotFoundException('Group not found');
-    return group as unknown as GroupDocument;
+    return group;
   }
 
-  async update(groupId: string, userId: string, dto: UpdateGroupDto): Promise<GroupDocument> {
+  async update(
+    groupId: string,
+    userId: string,
+    dto: UpdateGroupDto,
+  ): Promise<GroupDocument> {
     await this.assertOwnerOrAdmin(groupId, userId);
     const group = await this.groupModel
       .findByIdAndUpdate(groupId, { $set: dto }, { new: true })
       .lean();
     if (!group) throw new NotFoundException('Group not found');
-    return group as unknown as GroupDocument;
+    return group;
   }
 
   async updateWallpaper(
@@ -88,7 +104,13 @@ export class GroupsService {
     userId: string,
     file: Express.Multer.File,
   ): Promise<GroupDocument> {
-    return this.replaceGroupImage(groupId, userId, file, 'wallpaper', 'wallpaperFileId');
+    return this.replaceGroupImage(
+      groupId,
+      userId,
+      file,
+      'wallpaper',
+      'wallpaperFileId',
+    );
   }
 
   async updateLogo(
@@ -114,7 +136,10 @@ export class GroupsService {
   ): Promise<GroupDocument> {
     await this.assertOwnerOrAdmin(groupId, userId);
 
-    const current = await this.groupModel.findById(groupId).select(fileIdField).lean();
+    const current = await this.groupModel
+      .findById(groupId)
+      .select(fileIdField)
+      .lean();
     if (!current) throw new NotFoundException('Group not found');
 
     const uploaded = await this.imagekit.upload(
@@ -142,7 +167,7 @@ export class GroupsService {
       )
       .lean();
     if (!group) throw new NotFoundException('Group not found');
-    return group as unknown as GroupDocument;
+    return group;
   }
 
   /** Public discovery: private groups are never searchable. */
@@ -164,7 +189,11 @@ export class GroupsService {
     return { inviteCode: code, inviteLink: `${base}/g/${code}` };
   }
 
-  async setRules(groupId: string, userId: string, rules: string[]): Promise<GroupDocument> {
+  async setRules(
+    groupId: string,
+    userId: string,
+    rules: string[],
+  ): Promise<GroupDocument> {
     await this.assertOwnerOrAdmin(groupId, userId);
     if (rules.length > 3) {
       throw new BadRequestException('A group may have at most 3 rules');
@@ -173,11 +202,14 @@ export class GroupsService {
       .findByIdAndUpdate(groupId, { $set: { teamRules: rules } }, { new: true })
       .lean();
     if (!group) throw new NotFoundException('Group not found');
-    return group as unknown as GroupDocument;
+    return group;
   }
 
   async getRules(groupId: string): Promise<{ rules: string[] }> {
-    const group = await this.groupModel.findById(groupId).select('teamRules').lean();
+    const group = await this.groupModel
+      .findById(groupId)
+      .select('teamRules')
+      .lean();
     if (!group) throw new NotFoundException('Group not found');
     return { rules: (group as any).teamRules ?? [] };
   }
@@ -189,7 +221,11 @@ export class GroupsService {
       .lean();
   }
 
-  async removeMember(groupId: string, requesterId: string, targetUserId: string) {
+  async removeMember(
+    groupId: string,
+    requesterId: string,
+    targetUserId: string,
+  ) {
     await this.assertOwnerOrAdmin(groupId, requesterId);
 
     const targetMember = await this.memberModel.findOne({
@@ -273,9 +309,14 @@ export class GroupsService {
   ): Promise<GroupDocument> {
     await this.assertOwnerOrAdmin(groupId, userId);
 
-    const current = await this.groupModel.findById(groupId).select('locations').lean();
+    const current = await this.groupModel
+      .findById(groupId)
+      .select('locations')
+      .lean();
     if (!current) throw new NotFoundException('Group not found');
-    if (((current as any).locations ?? []).length >= GroupsService.MAX_LOCATIONS) {
+    if (
+      ((current as any).locations ?? []).length >= GroupsService.MAX_LOCATIONS
+    ) {
       throw new BadRequestException(
         `A group may have at most ${GroupsService.MAX_LOCATIONS} locations`,
       );
@@ -288,7 +329,7 @@ export class GroupsService {
       locationId = dto.locationId;
     } else if (dto.location) {
       const created = await this.locationsService.create(userId, dto.location);
-      locationId = (created._id as Types.ObjectId).toString();
+      locationId = created._id.toString();
     } else {
       throw new BadRequestException('Provide either locationId or location');
     }
@@ -301,7 +342,7 @@ export class GroupsService {
       )
       .lean();
     if (!group) throw new NotFoundException('Group not found');
-    return group as unknown as GroupDocument;
+    return group;
   }
 
   /**
@@ -322,7 +363,7 @@ export class GroupsService {
       )
       .lean();
     if (!group) throw new NotFoundException('Group not found');
-    return group as unknown as GroupDocument;
+    return group;
   }
 
   /**
@@ -362,6 +403,9 @@ export class GroupsService {
       status: 'approved',
       role: { $in: ['owner', 'admin'] },
     });
-    if (!member) throw new ForbiddenException('Only group owner or admin can perform this action');
+    if (!member)
+      throw new ForbiddenException(
+        'Only group owner or admin can perform this action',
+      );
   }
 }

@@ -162,7 +162,8 @@ export class UsersService {
     if (eventIds.length === 0) return [];
     return this.eventModel
       .find({ _id: { $in: eventIds } })
-      .select('title date locationName sportType status')
+      .select('title date locationId sportType status')
+      .populate('locationId', 'name lat lng')
       .sort({ date: -1 })
       .lean();
   }

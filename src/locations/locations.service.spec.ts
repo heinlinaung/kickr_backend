@@ -43,7 +43,7 @@ describe('LocationsService', () => {
       };
       locationModel.create.mockResolvedValue({ _id: LOC_ID, ...dto });
 
-      await service.create(OWNER, dto as any);
+      await service.create(OWNER, dto);
 
       expect(locationModel.create).toHaveBeenCalledTimes(1);
       const arg = locationModel.create.mock.calls[0][0];
@@ -70,8 +70,8 @@ describe('LocationsService', () => {
         .mockResolvedValueOnce({ _id: 'a', ...dto })
         .mockResolvedValueOnce({ _id: 'b', ...dto });
 
-      const first = await service.create(OWNER, dto as any);
-      const second = await service.create(OTHER, dto as any);
+      const first = await service.create(OWNER, dto);
+      const second = await service.create(OTHER, dto);
 
       expect(locationModel.create).toHaveBeenCalledTimes(2);
       expect((first as any)._id).toBe('a');
@@ -133,7 +133,7 @@ describe('LocationsService', () => {
         name: 'New',
         lat: 51.5,
         lng: -0.12,
-      } as any);
+      });
 
       // the new values must be assigned onto the loaded doc...
       expect(doc.name).toBe('New');
@@ -221,9 +221,7 @@ describe('LocationsService', () => {
         _id: LOC_ID,
         createdBy: new Types.ObjectId(OWNER),
       });
-      await expect(
-        service.assertOwnedBy(LOC_ID, OWNER),
-      ).resolves.toBeDefined();
+      await expect(service.assertOwnedBy(LOC_ID, OWNER)).resolves.toBeDefined();
     });
 
     it('throws ForbiddenException when another user owns the location', async () => {
@@ -231,9 +229,9 @@ describe('LocationsService', () => {
         _id: LOC_ID,
         createdBy: new Types.ObjectId(OWNER),
       });
-      await expect(
-        service.assertOwnedBy(LOC_ID, OTHER),
-      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.assertOwnedBy(LOC_ID, OTHER)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
     });
   });
 });

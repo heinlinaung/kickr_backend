@@ -40,11 +40,17 @@ describe('CreateGroupDto', () => {
 
   it('accepts locationIds (max 5 mongo ids) in place of the flat trio', async () => {
     const ids = ['507f1f77bcf86cd799439011', '507f1f77bcf86cd799439012'];
-    const out: any = await run(CreateGroupDto, { name: 'Bangkok FC', locationIds: ids });
+    const out: any = await run(CreateGroupDto, {
+      name: 'Bangkok FC',
+      locationIds: ids,
+    });
     expect(out.locationIds).toEqual(ids);
 
     expect(
-      await expectRejected(CreateGroupDto, { name: 'Bangkok FC', locationIds: ['not-an-id'] }),
+      await expectRejected(CreateGroupDto, {
+        name: 'Bangkok FC',
+        locationIds: ['not-an-id'],
+      }),
     ).toContain('locationIds');
 
     expect(
@@ -57,19 +63,33 @@ describe('CreateGroupDto', () => {
 
   it('rejects a handle with spaces/uppercase, accepts a slug handle', async () => {
     expect(
-      await expectRejected(CreateGroupDto, { name: 'Bangkok FC', handle: 'Bangkok FC' }),
-    ).toContain('handle must be lowercase alphanumeric, dot, dash or underscore');
+      await expectRejected(CreateGroupDto, {
+        name: 'Bangkok FC',
+        handle: 'Bangkok FC',
+      }),
+    ).toContain(
+      'handle must be lowercase alphanumeric, dot, dash or underscore',
+    );
 
-    const out: any = await run(CreateGroupDto, { name: 'Bangkok FC', handle: 'bangkok-fc' });
+    const out: any = await run(CreateGroupDto, {
+      name: 'Bangkok FC',
+      handle: 'bangkok-fc',
+    });
     expect(out.handle).toBe('bangkok-fc');
   });
 
   it('rejects an unknown sportType, accepts football', async () => {
     expect(
-      await expectRejected(CreateGroupDto, { name: 'Bangkok FC', sportType: 'cricket' }),
+      await expectRejected(CreateGroupDto, {
+        name: 'Bangkok FC',
+        sportType: 'cricket',
+      }),
     ).toContain('sportType');
 
-    const out: any = await run(CreateGroupDto, { name: 'Bangkok FC', sportType: 'football' });
+    const out: any = await run(CreateGroupDto, {
+      name: 'Bangkok FC',
+      sportType: 'football',
+    });
     expect(out.sportType).toBe('football');
   });
 });
@@ -85,9 +105,9 @@ describe('UpdateGroupDto', () => {
   });
 
   it('rejects non-string rule entries', async () => {
-    expect(await expectRejected(UpdateGroupDto, { teamRules: ['a', 5] })).toContain(
-      'teamRules',
-    );
+    expect(
+      await expectRejected(UpdateGroupDto, { teamRules: ['a', 5] }),
+    ).toContain('teamRules');
   });
 
   it('accepts sportType/handle/isPrivate', async () => {
@@ -96,13 +116,19 @@ describe('UpdateGroupDto', () => {
       handle: 'bkk.fc_2',
       isPrivate: true,
     });
-    expect(out).toMatchObject({ sportType: 'padel', handle: 'bkk.fc_2', isPrivate: true });
+    expect(out).toMatchObject({
+      sportType: 'padel',
+      handle: 'bkk.fc_2',
+      isPrivate: true,
+    });
   });
 });
 
 describe('UpdateMemberRoleDto', () => {
   it("rejects role 'owner' — ownership is not transferable via this DTO", async () => {
-    expect(await expectRejected(UpdateMemberRoleDto, { role: 'owner' })).toContain('role');
+    expect(
+      await expectRejected(UpdateMemberRoleDto, { role: 'owner' }),
+    ).toContain('role');
   });
 
   it('accepts admin/captain/member and coerces level from a string', async () => {
@@ -115,7 +141,9 @@ describe('UpdateMemberRoleDto', () => {
   });
 
   it('rejects an out-of-range level', async () => {
-    expect(await expectRejected(UpdateMemberRoleDto, { level: 4 })).toContain('level');
+    expect(await expectRejected(UpdateMemberRoleDto, { level: 4 })).toContain(
+      'level',
+    );
   });
 });
 
