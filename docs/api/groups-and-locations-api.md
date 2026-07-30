@@ -4,6 +4,7 @@
 **Base URL (local):** `http://localhost:3000`
 **Swagger UI:** `http://localhost:3000/api-docs` · **OpenAPI JSON:** `/api-docs-json`
 **Status:** implemented and verified end-to-end against Cognito + MongoDB Atlas + ImageKit (2026-07-30).
+**See also:** [Auth API](./auth-api.md) — login, refresh, and how to obtain the access token these endpoints require.
 
 ---
 
