@@ -179,14 +179,52 @@ export class GroupsService {
       .lean();
   }
 
+  /**
+   * Returns the group's shareable invite code/link.
+   *
+   * Reuses the existing code while it is still valid so a shared or printed QR
+   * keeps working; only mints a new one when there is none or it has expired.
+   * Use `generateInviteCode` directly to deliberately rotate (invalidating any
+   * previously shared QR).
+   */
   async getQr(
     groupId: string,
     userId: string,
-  ): Promise<{ inviteCode: string; inviteLink: string }> {
-    // generateInviteCode is already owner/admin gated
-    const code = await this.generateInviteCode(groupId, userId);
+  ): Promise<{
+    inviteCode: string;
+    inviteLink: string;
+    expiresAt: Date | null;
+  }> {
+    await this.assertOwnerOrAdmin(groupId, userId);
+    const group = await this.groupModel
+      .findById(groupId)
+      .select('inviteCode inviteCodeExpiry')
+      .lean();
+    if (!group) throw new NotFoundException('Group not found');
+
+    const existingCode = group.inviteCode;
+    const existingExpiry = group.inviteCodeExpiry;
+    const stillValid =
+      !!existingCode &&
+      (!existingExpiry || new Date(existingExpiry).getTime() > Date.now());
+
+    let code: string;
+    let expiresAt: Date | null;
+    if (stillValid) {
+      code = existingCode;
+      expiresAt = existingExpiry ? new Date(existingExpiry) : null;
+    } else {
+      code = await this.generateInviteCode(groupId, userId);
+      const refreshed = await this.groupModel
+        .findById(groupId)
+        .select('inviteCodeExpiry')
+        .lean();
+      const refreshedExpiry = refreshed?.inviteCodeExpiry;
+      expiresAt = refreshedExpiry ? new Date(refreshedExpiry) : null;
+    }
+
     const base = this.config.get<string>('APP_BASE_URL') ?? '';
-    return { inviteCode: code, inviteLink: `${base}/g/${code}` };
+    return { inviteCode: code, inviteLink: `${base}/g/${code}`, expiresAt };
   }
 
   async setRules(

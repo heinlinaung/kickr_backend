@@ -317,15 +317,72 @@ describe('GroupsService', () => {
       );
     });
 
-    it('returns the invite code and a link containing it', async () => {
+    it('mints a code when the group has none, and returns a link containing it', async () => {
       allowOwner();
+      groupModel.findById
+        .mockReturnValueOnce(q({ _id: GROUP_ID })) // no inviteCode yet
+        .mockReturnValueOnce(
+          q({ inviteCodeExpiry: new Date(Date.now() + 1000) }),
+        );
       groupModel.findByIdAndUpdate.mockResolvedValue({ _id: GROUP_ID });
 
       const res = await service.getQr(GROUP_ID, USER_ID);
 
       expect(res.inviteCode).toBeTruthy();
-      expect(res.inviteLink).toContain(res.inviteCode);
       expect(res.inviteLink).toBe(`http://localhost:3000/g/${res.inviteCode}`);
+      // a fresh code was persisted
+      expect(groupModel.findByIdAndUpdate).toHaveBeenCalled();
+    });
+
+    it('REUSES an unexpired code instead of rotating it (shared QRs keep working)', async () => {
+      allowOwner();
+      groupModel.findById.mockReturnValue(
+        q({
+          inviteCode: 'existing-code',
+          inviteCodeExpiry: new Date(Date.now() + 60 * 60 * 1000),
+        }),
+      );
+
+      const res = await service.getQr(GROUP_ID, USER_ID);
+
+      expect(res.inviteCode).toBe('existing-code');
+      expect(res.inviteLink).toBe('http://localhost:3000/g/existing-code');
+      // must NOT have rotated the code
+      expect(groupModel.findByIdAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('is stable across consecutive calls while the code is valid', async () => {
+      allowOwner();
+      groupModel.findById.mockReturnValue(
+        q({
+          inviteCode: 'stable-code',
+          inviteCodeExpiry: new Date(Date.now() + 60 * 60 * 1000),
+        }),
+      );
+
+      const a = await service.getQr(GROUP_ID, USER_ID);
+      const b = await service.getQr(GROUP_ID, USER_ID);
+      expect(a.inviteCode).toBe(b.inviteCode);
+    });
+
+    it('mints a new code when the existing one has EXPIRED', async () => {
+      allowOwner();
+      groupModel.findById
+        .mockReturnValueOnce(
+          q({
+            inviteCode: 'old-expired',
+            inviteCodeExpiry: new Date(Date.now() - 1000), // in the past
+          }),
+        )
+        .mockReturnValueOnce(
+          q({ inviteCodeExpiry: new Date(Date.now() + 1000) }),
+        );
+      groupModel.findByIdAndUpdate.mockResolvedValue({ _id: GROUP_ID });
+
+      const res = await service.getQr(GROUP_ID, USER_ID);
+
+      expect(res.inviteCode).not.toBe('old-expired');
+      expect(groupModel.findByIdAndUpdate).toHaveBeenCalled();
     });
   });
 
