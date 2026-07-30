@@ -9,6 +9,8 @@ import { Group, GroupDocument } from './schemas/group.schema';
 import { GroupMember, GroupMemberDocument } from './schemas/group-member.schema';
 import { CreateGroupDto } from './dto/create-group.dto';
 import { UpdateGroupDto } from './dto/update-group.dto';
+import { AttachLocationDto } from './dto/attach-location.dto';
+import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import { ImageKitService } from '../common/upload/imagekit.service';
 import { LocationsService } from '../locations/locations.service';
 
@@ -19,6 +21,8 @@ function escapeRegex(input: string): string {
 
 @Injectable()
 export class GroupsService {
+  private static readonly MAX_LOCATIONS = 5;
+
   private readonly logger = new Logger(GroupsService.name);
 
   constructor(
@@ -42,8 +46,16 @@ export class GroupsService {
   }
 
   async create(ownerId: string, dto: CreateGroupDto): Promise<GroupDocument> {
+    // locationIds is a DTO-only field: it must be destructured out rather than
+    // spread into the model. Mongoose's create() typing is loose enough that an
+    // unknown field is silently dropped with no compile error, so the mapping to
+    // `locations` is done explicitly here.
+    const { locationIds, ...rest } = dto;
+    const locations = await this.resolveOwnedLocationIds(locationIds, ownerId);
+
     const group = await this.groupModel.create({
-      ...dto,
+      ...rest,
+      ...(locations ? { locations } : {}),
       ownerId: new Types.ObjectId(ownerId),
     });
     await this.memberModel.create({
@@ -205,6 +217,133 @@ export class GroupsService {
       },
     });
     return code;
+  }
+
+  async updateMemberRole(
+    groupId: string,
+    requesterId: string,
+    targetUserId: string,
+    dto: UpdateMemberRoleDto,
+  ) {
+    await this.assertOwnerOrAdmin(groupId, requesterId);
+
+    const target = await this.memberModel.findOne({
+      groupId: new Types.ObjectId(groupId),
+      userId: new Types.ObjectId(targetUserId),
+    });
+    if (!target) throw new NotFoundException('Member not found');
+    if (target.role === 'owner') {
+      throw new ForbiddenException("Cannot change the group owner's role");
+    }
+
+    const patch: Record<string, unknown> = {};
+    if (dto.role !== undefined) patch.role = dto.role;
+    if (dto.level !== undefined) patch.level = dto.level;
+    if (Object.keys(patch).length === 0) {
+      throw new BadRequestException('Provide at least one of role or level');
+    }
+
+    const member = await this.memberModel
+      .findOneAndUpdate(
+        {
+          groupId: new Types.ObjectId(groupId),
+          userId: new Types.ObjectId(targetUserId),
+        },
+        { $set: patch },
+        { new: true },
+      )
+      .lean();
+    if (!member) throw new NotFoundException('Member not found');
+    return member;
+  }
+
+  async listLocations(groupId: string) {
+    const group = await this.groupModel
+      .findById(groupId)
+      .populate('locations')
+      .lean();
+    if (!group) throw new NotFoundException('Group not found');
+    return (group as any).locations ?? [];
+  }
+
+  async attachLocation(
+    groupId: string,
+    userId: string,
+    dto: AttachLocationDto,
+  ): Promise<GroupDocument> {
+    await this.assertOwnerOrAdmin(groupId, userId);
+
+    const current = await this.groupModel.findById(groupId).select('locations').lean();
+    if (!current) throw new NotFoundException('Group not found');
+    if (((current as any).locations ?? []).length >= GroupsService.MAX_LOCATIONS) {
+      throw new BadRequestException(
+        `A group may have at most ${GroupsService.MAX_LOCATIONS} locations`,
+      );
+    }
+
+    let locationId: string;
+    if (dto.locationId) {
+      // you may only attach locations you own
+      await this.locationsService.assertOwnedBy(dto.locationId, userId);
+      locationId = dto.locationId;
+    } else if (dto.location) {
+      const created = await this.locationsService.create(userId, dto.location);
+      locationId = (created._id as Types.ObjectId).toString();
+    } else {
+      throw new BadRequestException('Provide either locationId or location');
+    }
+
+    const group = await this.groupModel
+      .findByIdAndUpdate(
+        groupId,
+        { $addToSet: { locations: new Types.ObjectId(locationId) } },
+        { new: true },
+      )
+      .lean();
+    if (!group) throw new NotFoundException('Group not found');
+    return group as unknown as GroupDocument;
+  }
+
+  /**
+   * Detaching only removes the group's reference: the Location row stays in its
+   * owner's library, where it may still be attached to other groups.
+   */
+  async detachLocation(
+    groupId: string,
+    userId: string,
+    locationId: string,
+  ): Promise<GroupDocument> {
+    await this.assertOwnerOrAdmin(groupId, userId);
+    const group = await this.groupModel
+      .findByIdAndUpdate(
+        groupId,
+        { $pull: { locations: new Types.ObjectId(locationId) } },
+        { new: true },
+      )
+      .lean();
+    if (!group) throw new NotFoundException('Group not found');
+    return group as unknown as GroupDocument;
+  }
+
+  /**
+   * Validates the count and the caller's ownership of every supplied location id
+   * and maps them to ObjectIds. Returns undefined when nothing was supplied, so
+   * callers can leave the schema default in place.
+   */
+  private async resolveOwnedLocationIds(
+    locationIds: string[] | undefined,
+    userId: string,
+  ): Promise<Types.ObjectId[] | undefined> {
+    if (!locationIds || locationIds.length === 0) return undefined;
+    if (locationIds.length > GroupsService.MAX_LOCATIONS) {
+      throw new BadRequestException(
+        `A group may have at most ${GroupsService.MAX_LOCATIONS} locations`,
+      );
+    }
+    for (const id of locationIds) {
+      await this.locationsService.assertOwnedBy(id, userId);
+    }
+    return locationIds.map((id) => new Types.ObjectId(id));
   }
 
   async getMemberRole(groupId: string, userId: string): Promise<string | null> {

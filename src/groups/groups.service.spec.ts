@@ -323,4 +323,301 @@ describe('GroupsService', () => {
       );
     });
   });
+
+  // ---------------------------------------------------------------- TASK 7
+  describe('attachLocation', () => {
+    const fiveLocations = () =>
+      Array.from({ length: 5 }, () => new Types.ObjectId());
+
+    it('is owner/admin gated', async () => {
+      memberModel.findOne.mockResolvedValue(null);
+      await expect(
+        service.attachLocation(GROUP_ID, USER_ID, { locationId: LOC_ID }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(groupModel.findByIdAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('rejects a 6th location, naming the limit of 5', async () => {
+      allowOwner();
+      groupModel.findById.mockReturnValue(q({ locations: fiveLocations() }));
+
+      await expect(
+        service.attachLocation(GROUP_ID, USER_ID, { locationId: LOC_ID }),
+      ).rejects.toThrow(/5/);
+      await expect(
+        service.attachLocation(GROUP_ID, USER_ID, { locationId: LOC_ID }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(groupModel.findByIdAndUpdate).not.toHaveBeenCalled();
+      expect(locationsService.assertOwnedBy).not.toHaveBeenCalled();
+    });
+
+    it('verifies caller ownership of an existing location before $addToSet-ing it', async () => {
+      allowOwner();
+      groupModel.findById.mockReturnValue(q({ locations: [] }));
+      groupModel.findByIdAndUpdate.mockReturnValue(
+        q({ _id: GROUP_ID, locations: [LOC_ID] }),
+      );
+
+      const res: any = await service.attachLocation(GROUP_ID, USER_ID, {
+        locationId: LOC_ID,
+      });
+
+      expect(locationsService.assertOwnedBy).toHaveBeenCalledWith(LOC_ID, USER_ID);
+      expect(locationsService.create).not.toHaveBeenCalled();
+      const patch = groupModel.findByIdAndUpdate.mock.calls[0][1];
+      expect(patch.$addToSet.locations.toString()).toBe(LOC_ID);
+      expect(res.locations).toEqual([LOC_ID]);
+    });
+
+    it('propagates the ownership failure without attaching', async () => {
+      allowOwner();
+      groupModel.findById.mockReturnValue(q({ locations: [] }));
+      locationsService.assertOwnedBy.mockRejectedValue(
+        new ForbiddenException('You do not own this location'),
+      );
+
+      await expect(
+        service.attachLocation(GROUP_ID, USER_ID, { locationId: LOC_ID }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(groupModel.findByIdAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('creates the location first when given an inline payload, then attaches the new id', async () => {
+      allowOwner();
+      const newId = new Types.ObjectId();
+      const payload = { name: 'Lumpini Pitch', lat: 13.75, lng: 100.5 };
+      groupModel.findById.mockReturnValue(q({ locations: [] }));
+      locationsService.create.mockResolvedValue({ _id: newId });
+      groupModel.findByIdAndUpdate.mockReturnValue(
+        q({ _id: GROUP_ID, locations: [newId] }),
+      );
+
+      await service.attachLocation(GROUP_ID, USER_ID, {
+        location: payload as any,
+      });
+
+      expect(locationsService.create).toHaveBeenCalledWith(USER_ID, payload);
+      expect(locationsService.assertOwnedBy).not.toHaveBeenCalled();
+      const patch = groupModel.findByIdAndUpdate.mock.calls[0][1];
+      expect(patch.$addToSet.locations.toString()).toBe(newId.toString());
+    });
+
+    it('rejects a payload with neither locationId nor location', async () => {
+      allowOwner();
+      groupModel.findById.mockReturnValue(q({ locations: [] }));
+
+      await expect(
+        service.attachLocation(GROUP_ID, USER_ID, {} as any),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(groupModel.findByIdAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('404s when the group is missing', async () => {
+      allowOwner();
+      groupModel.findById.mockReturnValue(q(null));
+      await expect(
+        service.attachLocation(GROUP_ID, USER_ID, { locationId: LOC_ID }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('detachLocation', () => {
+    it('$pulls the ref and does NOT delete the Location row itself', async () => {
+      allowOwner();
+      groupModel.findByIdAndUpdate.mockReturnValue(
+        q({ _id: GROUP_ID, locations: [] }),
+      );
+
+      await service.detachLocation(GROUP_ID, USER_ID, LOC_ID);
+
+      const patch = groupModel.findByIdAndUpdate.mock.calls[0][1];
+      expect(patch.$pull.locations.toString()).toBe(LOC_ID);
+      // detaching is not deleting: the location stays in the owner's library
+      expect(locationsService.remove).not.toHaveBeenCalled();
+      expect(groupModel.deleteOne).not.toHaveBeenCalled();
+    });
+
+    it('is owner/admin gated', async () => {
+      memberModel.findOne.mockResolvedValue(null);
+      await expect(
+        service.detachLocation(GROUP_ID, USER_ID, LOC_ID),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(groupModel.findByIdAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('404s when the group is missing', async () => {
+      allowOwner();
+      groupModel.findByIdAndUpdate.mockReturnValue(q(null));
+      await expect(
+        service.detachLocation(GROUP_ID, USER_ID, LOC_ID),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('listLocations', () => {
+    it('populates the location refs and returns them', async () => {
+      const populated = [{ _id: LOC_ID, name: 'Lumpini Pitch' }];
+      const query = q({ _id: GROUP_ID, locations: populated });
+      groupModel.findById.mockReturnValue(query);
+
+      const res = await service.listLocations(GROUP_ID);
+
+      expect(query.populate).toHaveBeenCalledWith('locations');
+      expect(res).toEqual(populated);
+    });
+
+    it('404s when the group is missing', async () => {
+      groupModel.findById.mockReturnValue(q(null));
+      await expect(service.listLocations(GROUP_ID)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+    });
+  });
+
+  describe('updateMemberRole', () => {
+    /** first findOne is the requester gate, second is the target member */
+    const gateThenTarget = (target: any) =>
+      memberModel.findOne
+        .mockResolvedValueOnce({ role: 'owner' })
+        .mockResolvedValueOnce(target);
+
+    it('is owner/admin gated', async () => {
+      memberModel.findOne.mockResolvedValue(null);
+      await expect(
+        service.updateMemberRole(GROUP_ID, USER_ID, TARGET_ID, {
+          role: 'captain',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(memberModel.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('refuses to modify a member whose role is owner', async () => {
+      gateThenTarget({ role: 'owner' });
+
+      await expect(
+        service.updateMemberRole(GROUP_ID, USER_ID, TARGET_ID, {
+          role: 'member',
+        }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(memberModel.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('404s when the target is not a member', async () => {
+      gateThenTarget(null);
+      await expect(
+        service.updateMemberRole(GROUP_ID, USER_ID, TARGET_ID, {
+          role: 'admin',
+        }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('sets role and level together', async () => {
+      gateThenTarget({ role: 'member' });
+      memberModel.findOneAndUpdate.mockReturnValue(
+        q({ role: 'captain', level: 3 }),
+      );
+
+      const res: any = await service.updateMemberRole(
+        GROUP_ID,
+        USER_ID,
+        TARGET_ID,
+        { role: 'captain', level: 3 },
+      );
+
+      expect(memberModel.findOneAndUpdate.mock.calls[0][1]).toEqual({
+        $set: { role: 'captain', level: 3 },
+      });
+      expect(res.role).toBe('captain');
+      expect(res.level).toBe(3);
+    });
+
+    it('sets only level when role is omitted', async () => {
+      gateThenTarget({ role: 'member' });
+      memberModel.findOneAndUpdate.mockReturnValue(q({ level: 2 }));
+
+      await service.updateMemberRole(GROUP_ID, USER_ID, TARGET_ID, { level: 2 });
+
+      expect(memberModel.findOneAndUpdate.mock.calls[0][1]).toEqual({
+        $set: { level: 2 },
+      });
+    });
+
+    it('rejects an empty patch', async () => {
+      gateThenTarget({ role: 'member' });
+      await expect(
+        service.updateMemberRole(GROUP_ID, USER_ID, TARGET_ID, {}),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(memberModel.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('create with locationIds', () => {
+    const dto = (extra: any = {}) => ({ name: 'Bangkok FC', ...extra });
+
+    it('verifies ownership of every id and stores them as group.locations', async () => {
+      const a = new Types.ObjectId().toString();
+      const b = new Types.ObjectId().toString();
+      groupModel.create.mockResolvedValue({ _id: GROUP_ID });
+      memberModel.create.mockResolvedValue({});
+
+      await service.create(USER_ID, dto({ locationIds: [a, b] }) as any);
+
+      expect(locationsService.assertOwnedBy).toHaveBeenCalledTimes(2);
+      expect(locationsService.assertOwnedBy).toHaveBeenCalledWith(a, USER_ID);
+      expect(locationsService.assertOwnedBy).toHaveBeenCalledWith(b, USER_ID);
+
+      const arg = groupModel.create.mock.calls[0][0];
+      expect(arg.locations.map((id: any) => id.toString())).toEqual([a, b]);
+    });
+
+    it('never passes locationIds through as a stray field on the model', async () => {
+      const a = new Types.ObjectId().toString();
+      groupModel.create.mockResolvedValue({ _id: GROUP_ID });
+      memberModel.create.mockResolvedValue({});
+
+      await service.create(USER_ID, dto({ locationIds: [a] }) as any);
+
+      const arg = groupModel.create.mock.calls[0][0];
+      expect(arg).not.toHaveProperty('locationIds');
+      expect(arg.name).toBe('Bangkok FC');
+    });
+
+    it('rejects more than 5 locationIds before creating anything', async () => {
+      const ids = Array.from({ length: 6 }, () =>
+        new Types.ObjectId().toString(),
+      );
+
+      await expect(
+        service.create(USER_ID, dto({ locationIds: ids }) as any),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(groupModel.create).not.toHaveBeenCalled();
+      expect(memberModel.create).not.toHaveBeenCalled();
+    });
+
+    it('does not attach anything when a location is not owned by the creator', async () => {
+      locationsService.assertOwnedBy.mockRejectedValue(
+        new ForbiddenException('You do not own this location'),
+      );
+
+      await expect(
+        service.create(USER_ID, dto({ locationIds: [LOC_ID] }) as any),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(groupModel.create).not.toHaveBeenCalled();
+    });
+
+    it('still creates the group (and the owner membership) with no locationIds', async () => {
+      groupModel.create.mockResolvedValue({ _id: GROUP_ID });
+      memberModel.create.mockResolvedValue({});
+
+      await service.create(USER_ID, dto() as any);
+
+      expect(locationsService.assertOwnedBy).not.toHaveBeenCalled();
+      const arg = groupModel.create.mock.calls[0][0];
+      expect(arg).not.toHaveProperty('locationIds');
+      expect(arg.ownerId.toString()).toBe(USER_ID);
+      expect(memberModel.create.mock.calls[0][0]).toEqual(
+        expect.objectContaining({ role: 'owner', status: 'approved' }),
+      );
+    });
+  });
 });
