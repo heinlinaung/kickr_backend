@@ -7,7 +7,7 @@
 **Drivers:** `kickr-spec-v2.pdf` + Flutter reference screenshots (`screenshots/*.png`)
 **Stack:** NestJS · MongoDB (Mongoose) · Socket.io · **AWS Cognito** (auth) · **ImageKit** (file storage/CDN)
 
-> **What changed in v3:** all "current state" sections re-verified against source on `main` (the previous version described pre-Cognito code that no longer exists); obsolete email-verification section removed; a new **global `Location` collection** (§3) replaces the three conflicting location models; contradictions in the group/fixture sections resolved.
+> **What changed in v3:** all "current state" sections re-verified against source on `main` (the previous version described pre-Cognito code that no longer exists); obsolete email-verification section removed; a new **`Location` collection** (§3, owned by its creator) replaces the three conflicting location models; contradictions in the group/fixture sections resolved.
 
 ---
 
@@ -44,7 +44,7 @@ Every "current state" block below was re-read from `src/` on the branch this doc
 | §4.9 Group Chat | Partial | **Add** attachment upload transport (ImageKit) |
 | §4.10 Player Ratings | **Missing** | **Build** — new `ratings` module |
 | §4.11 Financial Management | **Missing** | **Build** — new group funds module |
-| **Location (cross-cutting)** | **Missing** | **Build** — new global `locations` collection (§3) |
+| **Location (cross-cutting)** | **Missing** | **Build** — new `locations` collection, creator-owned (§3) |
 | Future §7 (AI matching, live tracking, push, dark mode, i18n) | Out of scope | Defer |
 
 **Unimplemented feature areas:** Player Ratings (§4.10), Financial Management (§4.11), Team Challenge (§4.8), Location (§3). **Model-without-engine:** Tournaments (§4.7), chat attachments (§4.9).
@@ -93,11 +93,15 @@ favouriteTeam: string   // e.g. 'arsenal', 'manchester-united' — free string o
 
 ---
 
-## 3. Location — NEW global collection (cross-cutting)
+## 3. Location — NEW collection (cross-cutting), owned by its creator
 
-**Problem being solved.** Location is currently modelled three inconsistent ways: flat `locationName/latitude/longitude` duplicated on `Group` and `Event`; a proposed "multilocation object array" on Group; and a proposed `/groups/:id/maps` sub-resource. A group needs **many** locations, an event needs **one**, and a challenge needs one — and the same real-world pitch is used by many of them.
+**Problem being solved.** Location is currently modelled three inconsistent ways: flat `locationName/latitude/longitude` duplicated on `Group` and `Event`; a proposed "multilocation object array" on Group; and a proposed `/groups/:id/maps` sub-resource. A group needs **many** locations, an event needs **one**, and a challenge needs one.
 
-**Decision.** One **global, shareable `locations` collection**. Referrers point at locations; a location never points back. This keeps a venue as a single row reused by many groups/events, rather than duplicating it per owner.
+**Decision.** A single `locations` collection, but **not a shared/global venue registry**. Each row is **owned by the user who created it** (`createdBy`) and is reusable **by that creator** across their own groups/events. Two users adding the same real-world pitch produce **two rows** — this duplication is **intentional and accepted** for this phase.
+
+**Why per-user rather than global:** a shared registry raises questions this phase doesn't need to answer — who may rename or correct a venue, and whether one user's edit should change what every other group sees. Per-user ownership keeps edit permissions trivial (the creator owns their row) at the cost of duplicate rows.
+
+**Consequence to be aware of:** geo discovery (§5.7) matches against location rows, so the same physical pitch may appear as several nearby results (one per creator). That is expected behaviour here, not a defect. If a canonical venue registry is wanted later, it is an additive change (introduce a `venueId` that locations point at) rather than a rewrite.
 
 ### 3.1 New schema `Location`
 
@@ -109,18 +113,18 @@ locations/{id}
   lng: number               // required
   geo: { type: 'Point', coordinates: [lng, lat] }   // derived from lat/lng; 2dsphere index
   url: string               // optional — Google Maps / venue link
-  metadata: Mixed           // free-form, LOCATION-INTRINSIC data only:
+  metadata: Mixed           // free-form, location-intrinsic extras:
                             //   e.g. { surface:'grass', indoor:false, pitches:2, parking:true, notes:'...' }
-  createdBy: ObjectId->User // provenance only, NOT ownership
+  createdBy: ObjectId->User // required — OWNER. Only this user may edit/delete.
   createdAt / updatedAt
 }
 ```
 
-**Indexes:** `2dsphere` on `geo` (enables §7 "events near me"); text or prefix index on `name` for search.
+**Indexes:** `2dsphere` on `geo` (enables §5.7 "events near me"); `createdBy` (list "my locations"); text or prefix index on `name` for search.
 
-**Why `geo` in addition to `lat`/`lng`:** MongoDB geo queries (`$near`, `$geoWithin`) require GeoJSON with a `2dsphere` index. `lat`/`lng` stay as plain readable numbers (the shape requested); `geo` is derived from them in a pre-save hook so the two can't drift. Callers never set `geo` directly.
+**Why `geo` in addition to `lat`/`lng`:** MongoDB geo queries (`$near`, `$geoWithin`) require GeoJSON with a `2dsphere` index. `lat`/`lng` stay as plain readable numbers; `geo` is derived from them in a pre-save hook so the two can't drift. Callers never set `geo` directly.
 
-**What `metadata` is NOT for.** It must not contain `refType`/`refId` (i.e. "this location belongs to group X"). That would make a location single-owner, forcing a duplicate row per group/event for the same venue and defeating the point of a global collection. Ownership lives on the referrer (§3.2).
+**`metadata` holds location-intrinsic extras only** (surface, indoor, pitch count, parking, notes). It should not carry relationship data (`refType`/`refId`) — which thing uses a location is expressed by the referrer holding the ref (§3.2), so one location can serve several of its creator's groups/events without a metadata rewrite.
 
 ### 3.2 How other collections reference it
 
@@ -130,15 +134,15 @@ locations/{id}
 | `Event` | `locationId: ObjectId->Location \| null` | one |
 | `Challenge` (§10) | `locationId: ObjectId->Location \| null` | one |
 
-Any future collection follows the same pattern: hold a ref, don't be referenced.
+Referrers hold the ref; a location does not point back at its consumers. This is what lets one of the creator's locations be attached to several of their groups/events.
 
-### 3.3 Sharing & dedupe
+### 3.3 Ownership & reuse (no dedupe)
 
-Locations are **shared**, not private to their creator. On create, attempt dedupe before inserting:
-- If an existing location has a near-identical `name` (case-insensitive) **and** is within ~50 m (`$near` on `geo`), return the existing one instead of creating a duplicate.
-- Otherwise insert new.
-
-This keeps one row per real venue, which makes venue-level aggregation (all events at a pitch) and geo discovery meaningful.
+- **Owner:** `createdBy`. Only the owner may `PATCH`/`DELETE` a location.
+- **Reuse:** the owner may attach the same location to any number of their own groups/events.
+- **No dedupe.** Creating a location always inserts a new row; there is no name/proximity matching against other users' locations. Duplicates across users are expected.
+- **Attach permission:** to attach a location to a group, the caller must be that group's owner/admin **and** the location's `createdBy` (i.e. you attach your own locations). *(If groups should be able to attach a co-member's location, that is a small extension — not assumed here.)*
+- **Detach ≠ delete:** removing a location from a group detaches the ref only; the row survives for the owner's other uses.
 
 ### 3.4 Migration (replaces the flat fields)
 
@@ -149,21 +153,23 @@ Remove `locationName`, `latitude`, `longitude` from **both** `Group` and `Event`
 - `src/events/schemas/event.schema.ts` (3), `src/events/dto/create-event.dto.ts` (3)
 - `src/users/users.service.ts:165` — match-history projection selects `locationName`; change to populate `locationId` (or select `locationId` and populate `name`).
 
-**One-off data migration:** for each existing Group/Event with a non-empty `locationName`, upsert a `Location` (deduped per §3.3) and set the ref. Rows with no location data get `null`/`[]`.
+**One-off data migration:** for each existing Group/Event with a non-empty `locationName`, insert a `Location` owned by that group's `ownerId` / event's `createdBy`, and set the ref. No dedupe — one row per source record. Rows with no location data get `null`/`[]`.
 
 ### 3.5 Routes
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/locations` | Create (or return deduped existing) — authenticated |
+| POST | `/locations` | Create (always inserts; `createdBy` = caller) |
+| GET | `/locations` | List the caller's own locations |
 | GET | `/locations/search?q=&near=&radius=` | Search by name and/or proximity |
 | GET | `/locations/:id` | Detail |
-| PATCH | `/locations/:id` | Update name/url/metadata (creator or admin) |
+| PATCH | `/locations/:id` | Update name/lat/lng/url/metadata — **owner only** |
+| DELETE | `/locations/:id` | Delete — **owner only** (detaches from referrers) |
 | GET | `/groups/:id/locations` | Group's locations |
 | POST | `/groups/:id/locations` | Attach a location to a group (max 5; accepts an existing `locationId` or a new location payload) |
-| DELETE | `/groups/:id/locations/:locationId` | Detach (does not delete the shared Location) |
+| DELETE | `/groups/:id/locations/:locationId` | Detach (does not delete the Location row) |
 
-> Detaching from a group must **not** delete the location row — other groups/events may reference it.
+> Detaching from a group must **not** delete the location row — the owner's other groups/events may reference it.
 
 ---
 
@@ -706,26 +712,26 @@ sequenceDiagram
     end
 ```
 
-### 13.7 Location resolution (shared, deduped)
+### 13.7 Location attach (creator-owned)
 
-How any collection attaches a location (§3.3).
+How any collection attaches a location (§3.3). No dedupe — creating always inserts.
 
 ```mermaid
 flowchart TD
     A["Caller supplies location<br/>(new payload or existing locationId)"] --> B{locationId given?}
-    B -->|yes| C[validate exists] --> H
+    B -->|yes| C["validate exists<br/>AND createdBy == caller"] --> H
     B -->|no| D["POST /locations {name, lat, lng, url, metadata}"]
-    D --> E{"dedupe: same name (ci)<br/>AND within ~50m?"}
-    E -->|match found| F[reuse existing Location] --> H
-    E -->|no match| G["insert new Location<br/>geo derived from lat/lng<br/>2dsphere indexed"] --> H
+    D --> G["always INSERT a new row<br/>createdBy = caller<br/>geo derived from lat/lng (2dsphere)"] --> H
 
     H["referrer stores the ref"]
-    H --> I["Group.locations[] (max 5)"]
+    H --> I["Group.locations[] (max 5)<br/>caller must be group owner/admin"]
     H --> J[Event.locationId]
     H --> K[Challenge.locationId]
 
-    I --> L["DELETE detaches only —<br/>never deletes the shared row"]
+    I --> L["DELETE detaches only —<br/>row survives for the owner's other uses"]
     J --> M["enables GET /events?near=&radius=<br/>via $near on Location.geo"]
+
+    N["No dedupe: two users adding the same<br/>pitch create two rows — intended"] -.-> G
 ```
 
 ### 13.8 File upload (ImageKit, backend-proxied)
@@ -769,7 +775,6 @@ sequenceDiagram
 | 8 | **Ratings cardinality** — one per match total, or one per teammate per match? | OPEN |
 | 9 | Chat/video upload limits & storage | ✅ RESOLVED — ImageKit |
 | 10 | **Member levels & "plus one"** — what do levels 1/2/3 mean, how are they assigned, is plus-one per-event or per-group? (§4.3) | OPEN |
-| 11 | **Location dedupe threshold** — is name + ~50 m the right rule? Who may edit a shared location? | OPEN |
 
 ---
 
