@@ -4,7 +4,11 @@ import { EventsController } from './events.controller';
 import { EventsService } from './events.service';
 import { Event, EventSchema } from './schemas/event.schema';
 import { EventPlayer, EventPlayerSchema } from './schemas/event-player.schema';
-import { GroupMember, GroupMemberSchema } from '../groups/schemas/group-member.schema';
+import {
+  GroupMember,
+  GroupMemberSchema,
+} from '../groups/schemas/group-member.schema';
+import { LocationsModule } from '../locations/locations.module';
 
 @Module({
   imports: [
@@ -13,6 +17,7 @@ import { GroupMember, GroupMemberSchema } from '../groups/schemas/group-member.s
       { name: EventPlayer.name, schema: EventPlayerSchema },
       { name: GroupMember.name, schema: GroupMemberSchema },
     ]),
+    LocationsModule,
   ],
   controllers: [EventsController],
   providers: [EventsService],

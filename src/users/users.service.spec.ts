@@ -199,6 +199,48 @@ describe('UsersService', () => {
       );
       expect(Array.isArray(res.matchHistory)).toBe(true);
     });
+    it('projects locationId and populates it instead of the removed flat fields', async () => {
+      userModel.findById = jest.fn().mockReturnValue({
+        select: () => ({
+          lean: () =>
+            Promise.resolve({
+              _id: 'u5',
+              name: 'Eve',
+              privacy: {
+                profileVisibility: 'public',
+                showStats: true,
+                showMatchHistory: true,
+              },
+            }),
+        }),
+      });
+      playerModel.countDocuments = jest.fn().mockResolvedValue(1);
+      playerModel.find = jest.fn().mockReturnValue({
+        lean: () => Promise.resolve([{ eventId: 'e1' }]),
+      });
+
+      const history = [
+        {
+          _id: 'e1',
+          title: 'Friday match',
+          locationId: { _id: 'loc1', name: 'Lumpini', lat: 13.7, lng: 100.5 },
+        },
+      ];
+      const lean = jest.fn().mockResolvedValue(history);
+      const sort = jest.fn().mockReturnValue({ lean });
+      const populate = jest.fn().mockReturnValue({ sort });
+      const select = jest.fn().mockReturnValue({ populate });
+      eventModel.find = jest.fn().mockReturnValue({ select });
+
+      const res = await service.getPublicProfile('u5');
+
+      expect(select).toHaveBeenCalledWith(
+        'title date locationId sportType status',
+      );
+      expect(populate).toHaveBeenCalledWith('locationId', 'name lat lng');
+      expect(sort).toHaveBeenCalledWith({ date: -1 });
+      expect(res.matchHistory).toEqual(history);
+    });
     it('omits stats and history when the privacy flags are off', async () => {
       userModel.findById = jest.fn().mockReturnValue({
         select: () => ({

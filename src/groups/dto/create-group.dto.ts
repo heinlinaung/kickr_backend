@@ -1,5 +1,16 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsOptional, IsBoolean, IsNumber, MinLength } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsBoolean,
+  IsNumber,
+  IsIn,
+  IsArray,
+  IsMongoId,
+  ArrayMaxSize,
+  Matches,
+  MinLength,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class CreateGroupDto {
@@ -8,27 +19,41 @@ export class CreateGroupDto {
   @MinLength(2)
   name: string;
 
-  @ApiProperty({ example: 'A group for Bangkok football players', required: false })
+  @ApiProperty({
+    example: 'A group for Bangkok football players',
+    required: false,
+  })
   @IsOptional()
   @IsString()
   description?: string;
 
-  @ApiProperty({ example: 'Lumpini Park', required: false })
+  @ApiProperty({
+    example: 'football',
+    required: false,
+    enum: ['football', 'futsal', 'padel', 'basketball'],
+  })
+  @IsOptional()
+  @IsIn(['football', 'futsal', 'padel', 'basketball'])
+  sportType?: string;
+
+  @ApiProperty({ example: 'bangkok-fc', required: false })
   @IsOptional()
   @IsString()
-  locationName?: string;
+  @Matches(/^[a-z0-9_.-]+$/, {
+    message: 'handle must be lowercase alphanumeric, dot, dash or underscore',
+  })
+  handle?: string;
 
-  @ApiProperty({ example: 13.7563, required: false })
+  @ApiProperty({
+    required: false,
+    type: [String],
+    description: 'existing Location ids owned by the caller (max 5)',
+  })
   @IsOptional()
-  @Type(() => Number)
-  @IsNumber()
-  latitude?: number;
-
-  @ApiProperty({ example: 100.5018, required: false })
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber()
-  longitude?: number;
+  @IsArray()
+  @ArrayMaxSize(5)
+  @IsMongoId({ each: true })
+  locationIds?: string[];
 
   @ApiProperty({ example: false, required: false })
   @IsOptional()

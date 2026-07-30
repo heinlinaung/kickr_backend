@@ -19,13 +19,25 @@ export class Group {
   wallpaper: string;
 
   @Prop()
-  locationName: string;
+  wallpaperFileId: string;
 
   @Prop()
-  latitude: number;
+  logo: string;
 
   @Prop()
-  longitude: number;
+  logoFileId: string;
+
+  @Prop({ enum: ['football', 'futsal', 'padel', 'basketball'] })
+  sportType: string;
+
+  @Prop({ trim: true })
+  handle: string;
+
+  @Prop({ type: [String], default: [] })
+  teamRules: string[];
+
+  @Prop({ type: [{ type: Types.ObjectId, ref: 'Location' }], default: [] })
+  locations: Types.ObjectId[];
 
   @Prop({ default: false })
   isPrivate: boolean;
@@ -42,3 +54,5 @@ export class Group {
 
 export const GroupSchema = SchemaFactory.createForClass(Group);
 GroupSchema.index({ inviteCode: 1 }, { unique: true, sparse: true });
+GroupSchema.index({ handle: 1 }, { unique: true, sparse: true });
+GroupSchema.index({ name: 'text' });
