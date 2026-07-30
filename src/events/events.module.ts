@@ -8,6 +8,7 @@ import {
   GroupMember,
   GroupMemberSchema,
 } from '../groups/schemas/group-member.schema';
+import { LocationsModule } from '../locations/locations.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import {
       { name: EventPlayer.name, schema: EventPlayerSchema },
       { name: GroupMember.name, schema: GroupMemberSchema },
     ]),
+    LocationsModule,
   ],
   controllers: [EventsController],
   providers: [EventsService],

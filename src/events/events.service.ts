@@ -17,6 +17,7 @@ import {
   GroupMemberDocument,
 } from '../groups/schemas/group-member.schema';
 import { CreateEventDto } from './dto/create-event.dto';
+import { LocationsService } from '../locations/locations.service';
 
 @Injectable()
 export class EventsService {
@@ -26,6 +27,7 @@ export class EventsService {
     private playerModel: Model<EventPlayerDocument>,
     @InjectModel(GroupMember.name)
     private memberModel: Model<GroupMemberDocument>,
+    private readonly locationsService: LocationsService,
   ) {}
 
   async list(userId: string) {
@@ -45,10 +47,18 @@ export class EventsService {
           'Only group owner or admin can create events',
         );
     }
+    // Destructure locationId out so the raw string is never spread onto the
+    // model (Mongoose's loose create() typing would not flag the mismatch).
+    const { locationId, ...rest } = dto;
+    if (locationId) {
+      // You may only attach a location you own (mirrors GroupsService).
+      await this.locationsService.assertOwnedBy(locationId, userId);
+    }
     return this.eventModel.create({
-      ...dto,
+      ...rest,
       date: new Date(dto.date),
       groupId: dto.groupId ? new Types.ObjectId(dto.groupId) : null,
+      locationId: locationId ? new Types.ObjectId(locationId) : null,
       createdBy: new Types.ObjectId(userId),
     });
   }
