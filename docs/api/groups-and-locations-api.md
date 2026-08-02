@@ -3,7 +3,7 @@
 **Audience:** Flutter developers integrating the KickR mobile app.
 **Base URL (local):** `http://localhost:3000`
 **Swagger UI:** `http://localhost:3000/api-docs` · **OpenAPI JSON:** `/api-docs-json`
-**Status:** implemented and verified end-to-end against Cognito + MongoDB Atlas + ImageKit (2026-07-30).
+**Status:** implemented and verified end-to-end against Cognito + MongoDB Atlas + ImageKit. Last updated 2026-08-02 (group-owned locations).
 **See also:** [Auth API](./auth-api.md) — login, refresh, and how to obtain the access token these endpoints require.
 
 ---
@@ -69,7 +69,10 @@ Documents include Mongoose's `__v`. Ignore it in your models.
 
 A **Location** is a place (pitch/venue). Important semantics:
 
-- **Creator-owned.** `createdBy` is the owner. **Only the owner can edit or delete it.**
+- **Two kinds of location**, distinguished by `groupId`:
+  - **Personal** (`groupId: null`) — only `createdBy` can edit or delete it.
+  - **Group-owned** (`groupId` set) — the group's **owner / admin / captain** can edit it, and **owner / admin** can delete it, regardless of who created it. The creator always keeps access too.
+  Locations created through `POST /groups/:id/locations` are automatically group-owned.
 - **Not a shared registry, and NOT deduplicated.** Every `POST /locations` inserts a new row. If two users add the same pitch you get two rows — this is intentional. Do not build UI that assumes venues are unique/global.
 - **Reusable by its owner.** One location can be attached to several of that user's own groups/events.
 - `geo` is derived server-side from `lat`/`lng` — **never send `geo`**; it will be rejected.
@@ -85,6 +88,7 @@ A **Location** is a place (pitch/venue). Important semantics:
   "url": "https://maps.google.com/?q=1.5,2.5",
   "metadata": { "surface": "grass", "indoor": false, "pitches": 2 },
   "createdBy": "6a66ff6775eaff06079c36dd",
+  "groupId": null,
   "geo": { "type": "Point", "coordinates": [2.5, 1.5] },
   "createdAt": "2026-07-30T10:02:10.368Z",
   "updatedAt": "2026-07-30T10:02:10.368Z"
@@ -97,11 +101,24 @@ A **Location** is a place (pitch/venue). Important semantics:
 
 | Method | Path | Notes |
 |---|---|---|
-| `POST` | `/locations` | Create. Always inserts. `createdBy` = caller. |
-| `GET` | `/locations` | **Only the caller's own** locations, newest first. |
+| `POST` | `/locations` | Create a **personal** location. Always inserts. `createdBy` = caller, `groupId` = null. |
+| `GET` | `/locations` | Locations the caller **created**, newest first. Note: group-owned locations you can edit but didn't create are **not** listed here — use `GET /groups/:id/locations`. |
 | `GET` | `/locations/:id` | Any location by id. |
-| `PATCH` | `/locations/:id` | **Owner only** → `403` otherwise. |
-| `DELETE` | `/locations/:id` | **Owner only** → `403` otherwise. |
+| `PATCH` | `/locations/:id` | Creator, **or** owner/admin/**captain** of the owning group → `403` otherwise. |
+| `DELETE` | `/locations/:id` | Creator, **or** owner/**admin** of the owning group (**not captain**) → `403` otherwise. |
+
+#### Who can do what
+
+| Actor | Personal location | Group-owned location |
+|---|---|---|
+| Creator | edit ✅ delete ✅ | edit ✅ delete ✅ |
+| Group **owner** / **admin** | ❌ | edit ✅ delete ✅ |
+| Group **captain** | ❌ | edit ✅ **delete ❌** |
+| Plain member / non-member | ❌ | ❌ |
+
+Captains can correct a venue's details but not remove it — removing a pitch the group relies on is a structural change reserved for owner/admin.
+
+> Attaching *your personal* location to a group does **not** hand that group's staff edit rights over it. Only locations created in a group context (or otherwise carrying that `groupId`) are group-managed. This stops one user's rename from leaking into another user's groups.
 
 **Create request** — `name`, `lat`, `lng` required:
 
@@ -277,7 +294,8 @@ Capacity is enforced against `maxPlayers` on approval/join.
 
 - Sending neither → `400 Provide either locationId or location`.
 - Max **5** per group → `400 A group may have at most 5 locations`.
-- With `locationId`, **you must own that location** → `403`/`404` otherwise. The inline form creates it under the caller, so it always works.
+- With `locationId`, **you must be the creator of that location** → `403`/`404` otherwise. (Attaching is stricter than editing: group staff can edit a group-owned location, but you can only attach rows you created.)
+- The **inline form is preferred** — it creates the location already owned by the group, so the group's owner/admin/captain can maintain it later.
 - `GET /groups/:id/locations` returns them **populated** (full objects) — use this for display.
 - `DELETE /groups/:id/locations/:locationId` **detaches only**; the location row survives for the owner's other groups/events.
 
@@ -320,6 +338,8 @@ class KickrLocation {
   final String? url;
   final Map<String, dynamic> metadata;
   final String createdBy;
+  /// Owning group, or null for a personal location.
+  final String? groupId;
 
   KickrLocation({
     required this.id,
@@ -327,6 +347,7 @@ class KickrLocation {
     required this.lat,
     required this.lng,
     required this.createdBy,
+    this.groupId,
     this.url,
     this.metadata = const {},
   });
@@ -339,10 +360,22 @@ class KickrLocation {
         url: j['url'] as String?,
         metadata: (j['metadata'] as Map<String, dynamic>?) ?? const {},
         createdBy: j['createdBy'] as String,
+        groupId: j['groupId'] as String?,
       );
 
-  /// Only the owner may edit/delete.
-  bool isOwnedBy(String userId) => createdBy == userId;
+  bool get isGroupOwned => groupId != null;
+
+  /// Mirrors the server rule — use it to show/hide the Edit button.
+  /// [myRoleInGroup] is the caller's role in [groupId] (null if not a member).
+  bool canEdit(String userId, {String? myRoleInGroup}) =>
+      createdBy == userId ||
+      (isGroupOwned &&
+          const ['owner', 'admin', 'captain'].contains(myRoleInGroup));
+
+  /// Same, minus captain — deleting is owner/admin only.
+  bool canDelete(String userId, {String? myRoleInGroup}) =>
+      createdBy == userId ||
+      (isGroupOwned && const ['owner', 'admin'].contains(myRoleInGroup));
 
   Map<String, dynamic> toCreateJson() => {
         'name': name,
@@ -501,7 +534,8 @@ class GroupInvite {
 - [ ] `GET /:id/qr` is **stable**; `GET /:id/invite-code` **rotates** — don't call it on screen load.
 - [ ] Max **5** locations per group, max **3** team rules.
 - [ ] Locations are **not deduplicated** — the same pitch may exist many times, once per creator.
-- [ ] You can only attach/edit/delete **your own** locations.
+- [ ] Check `location.groupId` before showing Edit/Delete: personal = creator only; group-owned = owner/admin/captain edit, owner/admin delete.
+- [ ] You can only **attach** locations you created; editing extends to group staff for group-owned rows.
 - [ ] `handle` must be lowercase-slug and is globally unique (`409`).
 - [ ] Owner's role/level can never be changed (`403`); `owner` isn't an assignable role.
 - [ ] Uploads: field name `file`, images only (JPEG/PNG/WebP), ≤ 10 MB.
