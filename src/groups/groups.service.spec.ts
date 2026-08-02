@@ -498,7 +498,13 @@ describe('GroupsService', () => {
         location: payload,
       });
 
-      expect(locationsService.create).toHaveBeenCalledWith(USER_ID, payload);
+      // the owning group is stamped on the new location so the group's
+      // owner/admin/captain can manage it afterwards (not just the creator)
+      expect(locationsService.create).toHaveBeenCalledWith(
+        USER_ID,
+        payload,
+        GROUP_ID,
+      );
       expect(locationsService.assertOwnedBy).not.toHaveBeenCalled();
       const patch = groupModel.findByIdAndUpdate.mock.calls[0][1];
       expect(patch.$addToSet.locations.toString()).toBe(newId.toString());
