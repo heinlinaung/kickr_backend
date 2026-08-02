@@ -101,7 +101,7 @@ A **Location** is a place (pitch/venue). Important semantics:
 
 | Method | Path | Notes |
 |---|---|---|
-| `POST` | `/locations` | Create a **personal** location. Always inserts. `createdBy` = caller, `groupId` = null. |
+| `POST` | `/locations` | Create. Always inserts. `createdBy` = caller. Pass `groupId` to make it group-owned (owner/admin of that group only); omit it for a personal location. |
 | `GET` | `/locations` | Locations the caller **created**, newest first. Note: group-owned locations you can edit but didn't create are **not** listed here — use `GET /groups/:id/locations`. |
 | `GET` | `/locations/:id` | Any location by id. |
 | `PATCH` | `/locations/:id` | Creator, **or** owner/admin/**captain** of the owning group → `403` otherwise. |
@@ -120,7 +120,7 @@ Captains can correct a venue's details but not remove it — removing a pitch th
 
 > Attaching *your personal* location to a group does **not** hand that group's staff edit rights over it. Only locations created in a group context (or otherwise carrying that `groupId`) are group-managed. This stops one user's rename from leaking into another user's groups.
 
-**Create request** — `name`, `lat`, `lng` required:
+**Create request** — `name`, `lat`, `lng` required; `url`, `metadata`, `groupId` optional:
 
 ```json
 {
@@ -128,11 +128,26 @@ Captains can correct a venue's details but not remove it — removing a pitch th
   "lat": 13.7563,
   "lng": 100.5018,
   "url": "https://maps.google.com/?q=13.7563,100.5018",
-  "metadata": { "surface": "grass", "pitches": 2 }
+  "metadata": { "surface": "grass", "pitches": 2 },
+  "groupId": "6a6b21217d15afe5f7856043"
 }
 ```
 
-Validation: `name` ≥ 2 chars · `lat` −90…90 · `lng` −180…180 · `url` must be a valid URL · `metadata` free-form object.
+| Field | Required | Notes |
+|---|---|---|
+| `name` | ✅ | ≥ 2 chars |
+| `lat` | ✅ | −90…90 |
+| `lng` | ✅ | −180…180 |
+| `url` | — | must be a valid URL |
+| `metadata` | — | free-form object |
+| **`groupId`** | **—** | **Omit for a personal location.** Set it to make the location **group-owned**, so the group's owner/admin/captain can maintain it (see the matrix above). |
+
+**About `groupId`:**
+- **Omitted / `null`** → personal location, editable only by you.
+- **Set** → group-owned. You must be an **owner or admin of that group**, otherwise `403 Only a group owner or admin can create a location owned by that group`. (Captains can *edit* group locations but can't *create* one owned by the group.)
+- Sending an unknown field such as `geo` is rejected with `400 property geo should not exist` — `geo` is always derived server-side.
+
+> Creating with `groupId` does **not** attach the location to the group's `locations` list — it only sets ownership. To also attach it, either use `POST /groups/:id/locations` (which creates *and* attaches, and is usually what you want), or create it here and then attach by id.
 
 **Updating `lat`/`lng` refreshes `geo` automatically** — no extra call needed.
 
@@ -383,6 +398,10 @@ class KickrLocation {
         'lng': lng,
         if (url != null) 'url': url,
         if (metadata.isNotEmpty) 'metadata': metadata,
+        // optional: makes the location group-owned so the group's
+        // owner/admin/captain can maintain it. You must be an owner/admin of
+        // that group. Omit for a personal location.
+        if (groupId != null) 'groupId': groupId,
         // never send `geo` — the server derives it
       };
 }
@@ -535,6 +554,7 @@ class GroupInvite {
 - [ ] Max **5** locations per group, max **3** team rules.
 - [ ] Locations are **not deduplicated** — the same pitch may exist many times, once per creator.
 - [ ] Check `location.groupId` before showing Edit/Delete: personal = creator only; group-owned = owner/admin/captain edit, owner/admin delete.
+- [ ] `groupId` is **optional on create** — omit for personal, set it (as group owner/admin) for group-owned. It sets ownership only; it does **not** attach the location to the group.
 - [ ] You can only **attach** locations you created; editing extends to group staff for group-owned rows.
 - [ ] `handle` must be lowercase-slug and is globally unique (`409`).
 - [ ] Owner's role/level can never be changed (`403`); `owner` isn't an assignable role.

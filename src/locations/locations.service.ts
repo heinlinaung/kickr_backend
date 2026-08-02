@@ -41,15 +41,44 @@ export class LocationsService {
   async create(
     userId: string,
     dto: CreateLocationDto,
-    groupId?: string,
+    groupIdOverride?: string,
   ): Promise<LocationDocument> {
+    // groupId is a DTO field, but it must be destructured out rather than
+    // spread: Mongoose's loose create() typing would let the raw string
+    // through with no compile error. The internal override (used by
+    // GroupsService.attachLocation) wins when supplied.
+    const { groupId: dtoGroupId, ...rest } = dto;
+    const owningGroup = groupIdOverride ?? dtoGroupId;
+
+    // Client-supplied owning groups must be checked: otherwise anyone could
+    // create a location owned by a group they have nothing to do with. The
+    // internal override is already gated by attachLocation's owner/admin check.
+    if (!groupIdOverride && dtoGroupId) {
+      await this.assertGroupManager(dtoGroupId, userId);
+    }
+
     return this.locationModel.create({
-      ...dto,
+      ...rest,
       createdBy: new Types.ObjectId(userId),
-      // When created in a group context the group owns it, so the group's
-      // owner/admin/captain can manage it (not just the creator).
-      groupId: groupId ? new Types.ObjectId(groupId) : null,
+      // When owned by a group, that group's owner/admin/captain can manage it
+      // (not just the creator).
+      groupId: owningGroup ? new Types.ObjectId(owningGroup) : null,
     });
+  }
+
+  /** Only a group's owner/admin may declare that group the owner of a location. */
+  private async assertGroupManager(groupId: string, userId: string) {
+    const member = await this.memberModel.findOne({
+      groupId: new Types.ObjectId(groupId),
+      userId: new Types.ObjectId(userId),
+      status: 'approved',
+      role: { $in: DELETE_ROLES }, // owner | admin
+    });
+    if (!member) {
+      throw new ForbiddenException(
+        'Only a group owner or admin can create a location owned by that group',
+      );
+    }
   }
 
   async listMine(userId: string) {

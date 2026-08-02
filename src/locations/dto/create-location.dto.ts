@@ -5,6 +5,7 @@ import {
   IsNumber,
   IsObject,
   IsUrl,
+  IsMongoId,
   MinLength,
   Min,
   Max,
@@ -46,4 +47,16 @@ export class CreateLocationDto {
   @IsOptional()
   @IsObject()
   metadata?: Record<string, any>;
+
+  @ApiProperty({
+    required: false,
+    description:
+      'Owning group. Omit for a personal location. When set, the group and ' +
+      'its owner/admin/captain can manage the location — so the caller must ' +
+      'be an owner or admin of that group.',
+    example: '6a6b21217d15afe5f7856043',
+  })
+  @IsOptional()
+  @IsMongoId()
+  groupId?: string;
 }
