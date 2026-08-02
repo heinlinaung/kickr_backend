@@ -85,6 +85,18 @@ export class GroupsService {
       status: 'approved',
       joinedAt: new Date(),
     });
+
+    // Mobile creates the location first (the group has no id yet), so those
+    // rows start out personal. Now that the group exists, hand ownership over
+    // so its owner/admin/captain can maintain them.
+    if (locations?.length) {
+      await this.locationsService.adoptPersonalLocations(
+        locations,
+        ownerId,
+        group._id.toString(),
+      );
+    }
+
     return group;
   }
 
@@ -417,6 +429,16 @@ export class GroupsService {
       )
       .lean();
     if (!group) throw new NotFoundException('Group not found');
+
+    // Attaching one of your still-personal locations hands it to the group so
+    // the group's owner/admin/captain can maintain it. Locations already owned
+    // by another group are left untouched.
+    await this.locationsService.adoptPersonalLocations(
+      [new Types.ObjectId(locationId)],
+      userId,
+      groupId,
+    );
+
     return group;
   }
 

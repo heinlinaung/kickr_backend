@@ -148,10 +148,60 @@ Captains can correct a venue's details but not remove it — removing a pitch th
 - Sending an unknown field such as `geo` is rejected with `400 property geo should not exist` — `geo` is always derived server-side.
 
 > Creating with `groupId` does **not** attach the location to the group's `locations` list — it only sets ownership. To also attach it, either use `POST /groups/:id/locations` (which creates *and* attaches, and is usually what you want), or create it here and then attach by id.
+>
+> If the group doesn't exist yet (the create-group screen), omit `groupId` entirely — see §2.3.
 
 **Updating `lat`/`lng` refreshes `geo` automatically** — no extra call needed.
 
 `metadata` is for **place attributes only** (surface, indoor, parking, pitch count, notes). Do **not** put relationship data there (e.g. which group uses it) — that lives on the group/event.
+
+### 2.3 Workflow: creating a location *before* the group exists
+
+This is the normal mobile "Create Group" screen: the user picks a venue while filling in the form, but the group has no id yet, so you **cannot** send `groupId` on the location.
+
+**You don't need to.** Create the location plainly, then pass its id in `locationIds` when you create the group — the backend transfers ownership to the new group automatically.
+
+```
+1. POST /locations           { name, lat, lng }              -> { _id, groupId: null }   // personal
+2. POST /groups              { name, ..., locationIds: [_id] } -> { _id, locations: [...] }
+   └── the server stamps groupId on those locations for you
+3. (optional) GET /locations/:id                             -> { groupId: "<new group id>" }
+```
+
+```dart
+// 1 — venue picked on the form; no group id exists yet, so no groupId
+final loc = await api.createLocation(
+  name: 'Shwe Pitch', lat: 13.7563, lng: 100.5018,
+); // loc.groupId == null
+
+// 2 — creating the group adopts it
+final group = await api.createGroup(
+  name: 'Bangkok FC',
+  handle: 'bangkok-fc',
+  locationIds: [loc.id],
+);
+// the location is now group-owned: the group's owner/admin/captain can edit it
+```
+
+**What the server does on step 2** — for each id in `locationIds`:
+
+| Location state | Result |
+|---|---|
+| Personal (`groupId: null`) **and** created by you | **Adopted** — `groupId` set to the new group |
+| Already owned by another group | **Skipped** — ownership is never reassigned/stolen |
+| Created by a different user | Rejected up front (`403`) — you can only attach your own |
+
+The same adoption happens on `POST /groups/:id/locations` when you attach one of your still-personal locations to an existing group.
+
+> **Why it matters:** without this, a location created before its group would stay personal forever, and the group's admins/captains couldn't fix its name or pin — only the original creator could.
+
+**Three ways to end up with a group-owned location**, pick whichever fits the screen:
+
+| Situation | Call |
+|---|---|
+| Group doesn't exist yet (create-group form) | `POST /locations` → `POST /groups { locationIds }` ← *this section* |
+| Group exists, adding a venue | `POST /groups/:id/locations { location: {...} }` (creates **and** attaches — simplest) |
+| Group exists, you already know the group id | `POST /locations { ..., groupId }`, then attach if needed |
 
 ---
 
@@ -528,7 +578,7 @@ class GroupInvite {
 |---|---|
 | My groups | `GET /groups` (use `myRole` to gate admin UI) |
 | Group discovery / search | `GET /groups/search?q=` |
-| Create group | `POST /locations` (optional) → `POST /groups` with `locationIds` |
+| Create group | `POST /locations` (no `groupId` — group doesn't exist yet) → `POST /groups` with `locationIds`; the server adopts them (§2.3) |
 | Group detail — header | `GET /groups/:id` (`logo`, `wallpaper`, `handle`) |
 | Group detail — Members tab | `GET /groups/:id/members` |
 | Group detail — rules | `GET /groups/:id/rules` |
@@ -555,6 +605,7 @@ class GroupInvite {
 - [ ] Locations are **not deduplicated** — the same pitch may exist many times, once per creator.
 - [ ] Check `location.groupId` before showing Edit/Delete: personal = creator only; group-owned = owner/admin/captain edit, owner/admin delete.
 - [ ] `groupId` is **optional on create** — omit for personal, set it (as group owner/admin) for group-owned. It sets ownership only; it does **not** attach the location to the group.
+- [ ] Creating a location **before** its group? Omit `groupId` and pass the id in `locationIds` on `POST /groups` — the server transfers ownership (§2.3). A location already owned by another group is skipped, never stolen.
 - [ ] You can only **attach** locations you created; editing extends to group staff for group-owned rows.
 - [ ] `handle` must be lowercase-slug and is globally unique (`409`).
 - [ ] Owner's role/level can never be changed (`403`); `owner` isn't an assignable role.
