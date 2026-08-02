@@ -6,14 +6,31 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Location, LocationDocument } from './schemas/location.schema';
+import {
+  GroupMember,
+  GroupMemberDocument,
+} from '../groups/schemas/group-member.schema';
+import { Group, GroupDocument } from '../groups/schemas/group.schema';
 import { CreateLocationDto } from './dto/create-location.dto';
 import { UpdateLocationDto } from './dto/update-location.dto';
+
+/** Group roles allowed to EDIT a group-owned location's details. */
+const EDIT_ROLES = ['owner', 'admin', 'captain'];
+/** Group roles allowed to DELETE a group-owned location (structural change). */
+const DELETE_ROLES = ['owner', 'admin'];
 
 @Injectable()
 export class LocationsService {
   constructor(
     @InjectModel(Location.name)
     private locationModel: Model<LocationDocument>,
+    // The GroupMember model is injected directly rather than depending on
+    // GroupsService: GroupsModule already imports LocationsModule, so going the
+    // other way would create a circular module dependency.
+    @InjectModel(GroupMember.name)
+    private memberModel: Model<GroupMemberDocument>,
+    @InjectModel(Group.name)
+    private groupModel: Model<GroupDocument>,
   ) {}
 
   /**
@@ -24,10 +41,14 @@ export class LocationsService {
   async create(
     userId: string,
     dto: CreateLocationDto,
+    groupId?: string,
   ): Promise<LocationDocument> {
     return this.locationModel.create({
       ...dto,
       createdBy: new Types.ObjectId(userId),
+      // When created in a group context the group owns it, so the group's
+      // owner/admin/captain can manage it (not just the creator).
+      groupId: groupId ? new Types.ObjectId(groupId) : null,
     });
   }
 
@@ -54,7 +75,7 @@ export class LocationsService {
     userId: string,
     dto: UpdateLocationDto,
   ): Promise<LocationDocument> {
-    const location = await this.assertOwner(locationId, userId);
+    const location = await this.assertCanEdit(locationId, userId);
 
     const { name, lat, lng, url, metadata } = dto;
     if (name !== undefined) location.name = name;
@@ -67,8 +88,15 @@ export class LocationsService {
   }
 
   async remove(locationId: string, userId: string) {
-    await this.assertOwner(locationId, userId);
+    await this.assertCanDelete(locationId, userId);
     await this.locationModel.deleteOne({ _id: locationId });
+    // Also drop the reference from any group holding it, otherwise the stale id
+    // lingers in `Group.locations` — invisible in the populated list but still
+    // counting toward the 5-location cap.
+    await this.groupModel.updateMany(
+      { locations: new Types.ObjectId(locationId) },
+      { $pull: { locations: new Types.ObjectId(locationId) } },
+    );
     return { message: 'Location deleted' };
   }
 
@@ -80,17 +108,65 @@ export class LocationsService {
     locationId: string,
     userId: string,
   ): Promise<LocationDocument> {
-    return this.assertOwner(locationId, userId);
-  }
-
-  private async assertOwner(
-    locationId: string,
-    userId: string,
-  ): Promise<LocationDocument> {
     const location = await this.locationModel.findById(locationId);
     if (!location) throw new NotFoundException('Location not found');
     if (location.createdBy.toString() !== userId) {
       throw new ForbiddenException('You do not own this location');
+    }
+    return location;
+  }
+
+  /**
+   * Editing details (name, pin, url, metadata).
+   * Allowed for the creator, or — when the location belongs to a group — for
+   * that group's owner/admin/captain.
+   */
+  async assertCanEdit(
+    locationId: string,
+    userId: string,
+  ): Promise<LocationDocument> {
+    return this.assertPermitted(locationId, userId, EDIT_ROLES);
+  }
+
+  /**
+   * Deleting. Same as edit, minus captain: removing a venue the group relies on
+   * is a structural change, so it stays with owner/admin.
+   */
+  async assertCanDelete(
+    locationId: string,
+    userId: string,
+  ): Promise<LocationDocument> {
+    return this.assertPermitted(locationId, userId, DELETE_ROLES);
+  }
+
+  private async assertPermitted(
+    locationId: string,
+    userId: string,
+    allowedRoles: string[],
+  ): Promise<LocationDocument> {
+    const location = await this.locationModel.findById(locationId);
+    if (!location) throw new NotFoundException('Location not found');
+
+    // The creator always retains control of their own row.
+    if (location.createdBy.toString() === userId) return location;
+
+    // Personal locations (no owning group) are creator-only — deliberately do
+    // not consult group membership here, so attaching a personal location to a
+    // group never hands that group's staff edit rights over it.
+    if (!location.groupId) {
+      throw new ForbiddenException('You do not own this location');
+    }
+
+    const member = await this.memberModel.findOne({
+      groupId: location.groupId,
+      userId: new Types.ObjectId(userId),
+      status: 'approved',
+      role: { $in: allowedRoles },
+    });
+    if (!member) {
+      throw new ForbiddenException(
+        'You do not have permission to manage this location',
+      );
     }
     return location;
   }

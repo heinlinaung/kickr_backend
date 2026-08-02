@@ -397,7 +397,13 @@ export class GroupsService {
       await this.locationsService.assertOwnedBy(dto.locationId, userId);
       locationId = dto.locationId;
     } else if (dto.location) {
-      const created = await this.locationsService.create(userId, dto.location);
+      // Created in a group context -> owned by the group, so the group's
+      // owner/admin/captain can manage it afterwards.
+      const created = await this.locationsService.create(
+        userId,
+        dto.location,
+        groupId,
+      );
       locationId = created._id.toString();
     } else {
       throw new BadRequestException('Provide either locationId or location');

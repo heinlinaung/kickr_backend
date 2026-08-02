@@ -4,6 +4,8 @@ import { ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { LocationsService } from './locations.service';
 import { Location } from './schemas/location.schema';
+import { GroupMember } from '../groups/schemas/group-member.schema';
+import { Group } from '../groups/schemas/group.schema';
 
 describe('LocationsService', () => {
   let service: LocationsService;
@@ -17,16 +19,23 @@ describe('LocationsService', () => {
     deleteOne: jest.fn(),
   };
 
+  const memberModel: any = { findOne: jest.fn() };
+  const groupModel: any = { updateMany: jest.fn().mockResolvedValue({}) };
+
   const OWNER = new Types.ObjectId().toString();
   const OTHER = new Types.ObjectId().toString();
   const LOC_ID = new Types.ObjectId().toString();
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    memberModel.findOne.mockResolvedValue(null);
+    groupModel.updateMany.mockResolvedValue({});
     const m = await Test.createTestingModule({
       providers: [
         LocationsService,
         { provide: getModelToken(Location.name), useValue: locationModel },
+        { provide: getModelToken(GroupMember.name), useValue: memberModel },
+        { provide: getModelToken(Group.name), useValue: groupModel },
       ],
     }).compile();
     service = m.get(LocationsService);
@@ -232,6 +241,145 @@ describe('LocationsService', () => {
       await expect(service.assertOwnedBy(LOC_ID, OTHER)).rejects.toBeInstanceOf(
         ForbiddenException,
       );
+    });
+  });
+
+  // ------------------------------------------------- group-owned locations (Option A)
+  describe('group-owned location permissions', () => {
+    const GROUP_ID = new Types.ObjectId().toString();
+
+    /** a location owned by GROUP_ID, created by OWNER */
+    const groupLocation = () => ({
+      _id: LOC_ID,
+      name: 'Club Ground',
+      lat: 1,
+      lng: 2,
+      createdBy: { toString: () => OWNER },
+      groupId: { toString: () => GROUP_ID },
+      save: jest.fn().mockResolvedValue({ _id: LOC_ID, name: 'Updated' }),
+    });
+
+    /** a personal location created by OWNER */
+    const personalLocation = () => ({
+      _id: LOC_ID,
+      name: 'My Pitch',
+      lat: 1,
+      lng: 2,
+      createdBy: { toString: () => OWNER },
+      groupId: null,
+      save: jest.fn().mockResolvedValue({ _id: LOC_ID }),
+    });
+
+    /**
+     * Simulates Mongo: only returns the membership when the caller's role is
+     * within the `role: { $in: [...] }` filter the service applies. Without
+     * this the mock would grant every role, hiding permission bugs.
+     */
+    const asRole = (role: string) =>
+      memberModel.findOne.mockImplementation((filter: any) => {
+        const allowed = filter?.role?.$in ?? [];
+        return Promise.resolve(
+          allowed.includes(role) ? { role, status: 'approved' } : null,
+        );
+      });
+
+    it('lets a group CAPTAIN edit a group-owned location they did not create', async () => {
+      locationModel.findById.mockResolvedValue(groupLocation());
+      asRole('captain');
+
+      await expect(
+        service.update(LOC_ID, OTHER, { name: 'Updated' }),
+      ).resolves.toBeDefined();
+    });
+
+    it('lets a group ADMIN edit a group-owned location', async () => {
+      locationModel.findById.mockResolvedValue(groupLocation());
+      asRole('admin');
+      await expect(
+        service.update(LOC_ID, OTHER, { name: 'Updated' }),
+      ).resolves.toBeDefined();
+    });
+
+    it('rejects a plain MEMBER editing a group-owned location', async () => {
+      locationModel.findById.mockResolvedValue(groupLocation());
+      asRole('member');
+      await expect(
+        service.update(LOC_ID, OTHER, { name: 'Nope' }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('rejects a non-member editing a group-owned location', async () => {
+      locationModel.findById.mockResolvedValue(groupLocation());
+      memberModel.findOne.mockResolvedValue(null);
+      groupModel.updateMany.mockResolvedValue({});
+      await expect(
+        service.update(LOC_ID, OTHER, { name: 'Nope' }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('still lets the creator edit their own group-owned location', async () => {
+      locationModel.findById.mockResolvedValue(groupLocation());
+      memberModel.findOne.mockResolvedValue(null);
+      groupModel.updateMany.mockResolvedValue({}); // not even a member
+      await expect(
+        service.update(LOC_ID, OWNER, { name: 'Updated' }),
+      ).resolves.toBeDefined();
+    });
+
+    it('does NOT let a captain of some group edit a PERSONAL location', async () => {
+      locationModel.findById.mockResolvedValue(personalLocation());
+      asRole('captain');
+      await expect(
+        service.update(LOC_ID, OTHER, { name: 'Nope' }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      // membership must not even be consulted for a personal location
+      expect(memberModel.findOne).not.toHaveBeenCalled();
+    });
+
+    it('captain may EDIT but NOT DELETE a group-owned location', async () => {
+      locationModel.findById.mockResolvedValue(groupLocation());
+      asRole('captain');
+      await expect(service.remove(LOC_ID, OTHER)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+    });
+
+    it('admin MAY delete a group-owned location', async () => {
+      locationModel.findById.mockResolvedValue(groupLocation());
+      asRole('admin');
+      locationModel.deleteOne.mockResolvedValue({ deletedCount: 1 });
+      await expect(service.remove(LOC_ID, OTHER)).resolves.toEqual(
+        expect.objectContaining({ message: expect.any(String) }),
+      );
+    });
+
+    it('only considers APPROVED memberships', async () => {
+      locationModel.findById.mockResolvedValue(groupLocation());
+      asRole('captain');
+      await service.update(LOC_ID, OTHER, { name: 'Updated' });
+      expect(memberModel.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'approved' }),
+      );
+    });
+  });
+
+  describe('remove cleans up group references', () => {
+    it('pulls the deleted id out of every group that referenced it', async () => {
+      locationModel.findById.mockResolvedValue({
+        _id: LOC_ID,
+        createdBy: { toString: () => OWNER },
+        groupId: null,
+      });
+      locationModel.deleteOne.mockResolvedValue({ deletedCount: 1 });
+
+      await service.remove(LOC_ID, OWNER);
+
+      // otherwise a stale id lingers in Group.locations — invisible in the
+      // populated list but still counting toward the 5-location cap
+      expect(groupModel.updateMany).toHaveBeenCalledTimes(1);
+      const [filter, update] = groupModel.updateMany.mock.calls[0];
+      expect(filter.locations.toString()).toBe(LOC_ID);
+      expect(update.$pull.locations.toString()).toBe(LOC_ID);
     });
   });
 });

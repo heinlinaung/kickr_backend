@@ -35,4 +35,21 @@ describe('Location schema', () => {
     expect((inst as any).geo.type).toBe('Point');
     expect((inst as any).geo.coordinates).toEqual([100.5018, 13.7563]);
   });
+
+  describe('group ownership (Option A)', () => {
+    it('has an optional groupId that defaults to null (personal location)', () => {
+      const path: any = LocationSchema.path('groupId');
+      expect(path).toBeDefined();
+      expect(path.isRequired).toBeFalsy();
+      expect(path.options.default).toBeNull();
+      expect(path.options.ref).toBe('Group');
+    });
+
+    it('indexes groupId for "locations of this group" lookups', () => {
+      const indexed = LocationSchema.indexes().some(
+        ([fields]: any) => fields.groupId === 1,
+      );
+      expect(indexed).toBe(true);
+    });
+  });
 });
