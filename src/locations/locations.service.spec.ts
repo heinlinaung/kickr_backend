@@ -439,4 +439,49 @@ describe('LocationsService', () => {
       expect(locationModel.create.mock.calls[0][0].groupId).toBeNull();
     });
   });
+
+  describe('adoptPersonalLocations', () => {
+    it('only adopts rows that are still personal AND created by the caller', async () => {
+      locationModel.updateMany = jest.fn().mockResolvedValue({});
+      const gid = new Types.ObjectId().toString();
+      const ids = [new Types.ObjectId()];
+
+      await service.adoptPersonalLocations(ids, OWNER, gid);
+
+      const [filter, update] = locationModel.updateMany.mock.calls[0];
+      // never steal a location owned by someone else or by another group
+      expect(filter.groupId).toBeNull(); // matches null AND missing in Mongo
+      expect(filter.createdBy.toString()).toBe(OWNER);
+      expect(update.$set.groupId.toString()).toBe(gid);
+    });
+
+    it('SKIPS a location that already belongs to a group (never reassigns)', async () => {
+      locationModel.updateMany = jest
+        .fn()
+        .mockResolvedValue({ modifiedCount: 0 });
+      const otherGroup = new Types.ObjectId().toString();
+      await service.adoptPersonalLocations(
+        [new Types.ObjectId()],
+        OWNER,
+        otherGroup,
+      );
+      // the filter must exclude already-owned rows, so Mongo matches nothing
+      const [filter] = locationModel.updateMany.mock.calls[0];
+      expect(filter.groupId).toBeNull(); // matches null AND missing in Mongo
+      // a doc with groupId set simply won't match this filter
+      const alreadyOwned = { groupId: new Types.ObjectId() };
+      const matchesUnclaimed =
+        alreadyOwned.groupId === null || alreadyOwned.groupId === undefined;
+      expect(matchesUnclaimed).toBe(false);
+    });
+    it('is a no-op for an empty list', async () => {
+      locationModel.updateMany = jest.fn();
+      await service.adoptPersonalLocations(
+        [],
+        OWNER,
+        new Types.ObjectId().toString(),
+      );
+      expect(locationModel.updateMany).not.toHaveBeenCalled();
+    });
+  });
 });

@@ -74,6 +74,7 @@ describe('GroupsService', () => {
     Object.assign(locationsService, {
       create: jest.fn(),
       assertOwnedBy: jest.fn().mockResolvedValue({ _id: LOC_ID }),
+      adoptPersonalLocations: jest.fn().mockResolvedValue(undefined),
       remove: jest.fn(),
     });
 
@@ -727,6 +728,51 @@ describe('GroupsService', () => {
       expect(arg.ownerId.toString()).toBe(USER_ID);
       expect(memberModel.create.mock.calls[0][0]).toEqual(
         expect.objectContaining({ role: 'owner', status: 'approved' }),
+      );
+    });
+  });
+
+  describe('adopting personal locations (create-location-before-group flow)', () => {
+    it('create() hands the supplied locations to the new group', async () => {
+      const locA = new Types.ObjectId().toString();
+      const newGroupId = new Types.ObjectId();
+      groupModel.create.mockResolvedValue({ _id: newGroupId });
+      memberModel.create.mockResolvedValue({});
+
+      await service.create(USER_ID, {
+        name: 'Flow FC',
+        locationIds: [locA],
+      });
+
+      // the location was created before the group existed, so it starts
+      // personal — the group must take ownership once it has an id
+      expect(locationsService.adoptPersonalLocations).toHaveBeenCalledWith(
+        expect.arrayContaining([expect.anything()]),
+        USER_ID,
+        newGroupId.toString(),
+      );
+    });
+
+    it('create() skips adoption when no locations were supplied', async () => {
+      groupModel.create.mockResolvedValue({ _id: new Types.ObjectId() });
+      memberModel.create.mockResolvedValue({});
+      await service.create(USER_ID, { name: 'No Loc FC' });
+      expect(locationsService.adoptPersonalLocations).not.toHaveBeenCalled();
+    });
+
+    it('attachLocation() also adopts a still-personal location', async () => {
+      allowOwner();
+      groupModel.findById.mockReturnValue(q({ locations: [] }));
+      groupModel.findByIdAndUpdate.mockReturnValue(
+        q({ _id: GROUP_ID, locations: [LOC_ID] }),
+      );
+
+      await service.attachLocation(GROUP_ID, USER_ID, { locationId: LOC_ID });
+
+      expect(locationsService.adoptPersonalLocations).toHaveBeenCalledWith(
+        [expect.anything()],
+        USER_ID,
+        GROUP_ID,
       );
     });
   });

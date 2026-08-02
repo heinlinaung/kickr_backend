@@ -66,6 +66,39 @@ export class LocationsService {
     });
   }
 
+  /**
+   * Transfers still-personal locations to a group that has just adopted them.
+   *
+   * Supports the mobile flow "create the location, then create the group":
+   * at creation time the group does not exist yet, so the location is
+   * necessarily personal. Once the group is created with those locationIds,
+   * the group takes ownership so its owner/admin/captain can maintain them.
+   *
+   * Only rows that are still personal (`groupId: null`) AND created by this
+   * user are adopted — a location already owned by another group is left
+   * alone rather than silently reassigned.
+   */
+  async adoptPersonalLocations(
+    locationIds: Types.ObjectId[],
+    userId: string,
+    groupId: string,
+  ): Promise<void> {
+    if (!locationIds.length) return;
+    await this.locationModel.updateMany(
+      {
+        _id: { $in: locationIds },
+        createdBy: new Types.ObjectId(userId),
+        // Only adopt rows that are still unclaimed. A location already owned by
+        // a group is SKIPPED, never reassigned — otherwise creating a group
+        // could quietly steal another group's venue.
+        // In MongoDB `field: null` also matches documents where the field is
+        // absent, so this covers rows written before `groupId` existed.
+        groupId: null,
+      },
+      { $set: { groupId: new Types.ObjectId(groupId) } },
+    );
+  }
+
   /** Only a group's owner/admin may declare that group the owner of a location. */
   private async assertGroupManager(groupId: string, userId: string) {
     const member = await this.memberModel.findOne({
