@@ -10,6 +10,7 @@ import {
   GroupMember,
   GroupMemberDocument,
 } from '../groups/schemas/group-member.schema';
+import { Group, GroupDocument } from '../groups/schemas/group.schema';
 import { CreateLocationDto } from './dto/create-location.dto';
 import { UpdateLocationDto } from './dto/update-location.dto';
 
@@ -28,6 +29,8 @@ export class LocationsService {
     // other way would create a circular module dependency.
     @InjectModel(GroupMember.name)
     private memberModel: Model<GroupMemberDocument>,
+    @InjectModel(Group.name)
+    private groupModel: Model<GroupDocument>,
   ) {}
 
   /**
@@ -87,6 +90,13 @@ export class LocationsService {
   async remove(locationId: string, userId: string) {
     await this.assertCanDelete(locationId, userId);
     await this.locationModel.deleteOne({ _id: locationId });
+    // Also drop the reference from any group holding it, otherwise the stale id
+    // lingers in `Group.locations` — invisible in the populated list but still
+    // counting toward the 5-location cap.
+    await this.groupModel.updateMany(
+      { locations: new Types.ObjectId(locationId) },
+      { $pull: { locations: new Types.ObjectId(locationId) } },
+    );
     return { message: 'Location deleted' };
   }
 

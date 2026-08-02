@@ -5,6 +5,7 @@ import { Types } from 'mongoose';
 import { LocationsService } from './locations.service';
 import { Location } from './schemas/location.schema';
 import { GroupMember } from '../groups/schemas/group-member.schema';
+import { Group } from '../groups/schemas/group.schema';
 
 describe('LocationsService', () => {
   let service: LocationsService;
@@ -19,6 +20,7 @@ describe('LocationsService', () => {
   };
 
   const memberModel: any = { findOne: jest.fn() };
+  const groupModel: any = { updateMany: jest.fn().mockResolvedValue({}) };
 
   const OWNER = new Types.ObjectId().toString();
   const OTHER = new Types.ObjectId().toString();
@@ -27,11 +29,13 @@ describe('LocationsService', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     memberModel.findOne.mockResolvedValue(null);
+    groupModel.updateMany.mockResolvedValue({});
     const m = await Test.createTestingModule({
       providers: [
         LocationsService,
         { provide: getModelToken(Location.name), useValue: locationModel },
         { provide: getModelToken(GroupMember.name), useValue: memberModel },
+        { provide: getModelToken(Group.name), useValue: groupModel },
       ],
     }).compile();
     service = m.get(LocationsService);
@@ -307,6 +311,7 @@ describe('LocationsService', () => {
     it('rejects a non-member editing a group-owned location', async () => {
       locationModel.findById.mockResolvedValue(groupLocation());
       memberModel.findOne.mockResolvedValue(null);
+      groupModel.updateMany.mockResolvedValue({});
       await expect(
         service.update(LOC_ID, OTHER, { name: 'Nope' }),
       ).rejects.toBeInstanceOf(ForbiddenException);
@@ -314,7 +319,8 @@ describe('LocationsService', () => {
 
     it('still lets the creator edit their own group-owned location', async () => {
       locationModel.findById.mockResolvedValue(groupLocation());
-      memberModel.findOne.mockResolvedValue(null); // not even a member
+      memberModel.findOne.mockResolvedValue(null);
+      groupModel.updateMany.mockResolvedValue({}); // not even a member
       await expect(
         service.update(LOC_ID, OWNER, { name: 'Updated' }),
       ).resolves.toBeDefined();
@@ -354,6 +360,26 @@ describe('LocationsService', () => {
       expect(memberModel.findOne).toHaveBeenCalledWith(
         expect.objectContaining({ status: 'approved' }),
       );
+    });
+  });
+
+  describe('remove cleans up group references', () => {
+    it('pulls the deleted id out of every group that referenced it', async () => {
+      locationModel.findById.mockResolvedValue({
+        _id: LOC_ID,
+        createdBy: { toString: () => OWNER },
+        groupId: null,
+      });
+      locationModel.deleteOne.mockResolvedValue({ deletedCount: 1 });
+
+      await service.remove(LOC_ID, OWNER);
+
+      // otherwise a stale id lingers in Group.locations — invisible in the
+      // populated list but still counting toward the 5-location cap
+      expect(groupModel.updateMany).toHaveBeenCalledTimes(1);
+      const [filter, update] = groupModel.updateMany.mock.calls[0];
+      expect(filter.locations.toString()).toBe(LOC_ID);
+      expect(update.$pull.locations.toString()).toBe(LOC_ID);
     });
   });
 });

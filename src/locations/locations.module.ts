@@ -7,6 +7,7 @@ import {
   GroupMember,
   GroupMemberSchema,
 } from '../groups/schemas/group-member.schema';
+import { Group, GroupSchema } from '../groups/schemas/group.schema';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import {
       // Registered directly (not via GroupsModule) to avoid a circular import:
       // GroupsModule already imports LocationsModule.
       { name: GroupMember.name, schema: GroupMemberSchema },
+      { name: Group.name, schema: GroupSchema },
     ]),
   ],
   controllers: [LocationsController],
