@@ -382,4 +382,61 @@ describe('LocationsService', () => {
       expect(update.$pull.locations.toString()).toBe(LOC_ID);
     });
   });
+
+  describe('create with groupId (client-supplied owning group)', () => {
+    const GROUP_ID = new Types.ObjectId().toString();
+
+    it('rejects when the caller is not an owner/admin of that group', async () => {
+      memberModel.findOne.mockResolvedValue(null); // not a manager
+      await expect(
+        service.create(OWNER, {
+          name: 'Club Ground',
+          lat: 1,
+          lng: 2,
+          groupId: GROUP_ID,
+        } as any),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(locationModel.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects a CAPTAIN creating a group-owned location (owner/admin only)', async () => {
+      memberModel.findOne.mockImplementation((f: any) =>
+        Promise.resolve(
+          (f?.role?.$in ?? []).includes('captain') ? { role: 'captain' } : null,
+        ),
+      );
+      await expect(
+        service.create(OWNER, {
+          name: 'X',
+          lat: 1,
+          lng: 2,
+          groupId: GROUP_ID,
+        } as any),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('stores groupId when the caller is an admin of that group', async () => {
+      memberModel.findOne.mockResolvedValue({ role: 'admin' });
+      locationModel.create.mockResolvedValue({ _id: LOC_ID });
+
+      await service.create(OWNER, {
+        name: 'Club Ground',
+        lat: 1,
+        lng: 2,
+        groupId: GROUP_ID,
+      });
+
+      const arg = locationModel.create.mock.calls[0][0];
+      expect(arg.groupId.toString()).toBe(GROUP_ID);
+      // the raw string must not leak through the spread
+      expect(typeof arg.groupId).not.toBe('string');
+    });
+
+    it('creates a personal location (groupId null) when omitted, with no membership check', async () => {
+      locationModel.create.mockResolvedValue({ _id: LOC_ID });
+      await service.create(OWNER, { name: 'Mine', lat: 1, lng: 2 });
+      expect(memberModel.findOne).not.toHaveBeenCalled();
+      expect(locationModel.create.mock.calls[0][0].groupId).toBeNull();
+    });
+  });
 });
