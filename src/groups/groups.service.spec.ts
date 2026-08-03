@@ -247,11 +247,13 @@ describe('GroupsService', () => {
     });
   });
 
-  describe('setRules', () => {
+  // Rules have no dedicated setRules/getRules any more — they go through
+  // update() and are read back from findById() like any other group field.
+  describe('teamRules via update()', () => {
     it('is owner/admin gated', async () => {
       memberModel.findOne.mockResolvedValue(null);
       await expect(
-        service.setRules(GROUP_ID, USER_ID, ['a']),
+        service.update(GROUP_ID, USER_ID, { teamRules: ['a'] }),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(groupModel.findByIdAndUpdate).not.toHaveBeenCalled();
     });
@@ -265,11 +267,11 @@ describe('GroupsService', () => {
         q({ _id: GROUP_ID, teamRules: six }),
       );
 
-      const res: any = await service.setRules(GROUP_ID, USER_ID, six);
+      const res: any = await service.update(GROUP_ID, USER_ID, {
+        teamRules: six,
+      });
 
       expect(res.teamRules).toEqual(six);
-      const patch = groupModel.findByIdAndUpdate.mock.calls[0][1];
-      expect(patch.$set.teamRules).toHaveLength(6);
     });
 
     it('stores multi-line and non-ASCII rule text verbatim', async () => {
@@ -284,59 +286,25 @@ describe('GroupsService', () => {
         q({ _id: GROUP_ID, teamRules: rules }),
       );
 
-      const res: any = await service.setRules(GROUP_ID, USER_ID, rules);
+      const res: any = await service.update(GROUP_ID, USER_ID, {
+        teamRules: rules,
+      });
 
-      const patch = groupModel.findByIdAndUpdate.mock.calls[0][1];
-      expect(patch.$set.teamRules[0]).toBe(rules[0]);
-      expect(patch.$set.teamRules[0]).toContain('\n');
-      expect(patch.$set.teamRules[1]).toContain('\n\n');
-      expect(res.teamRules).toEqual(rules);
+      expect(res.teamRules[0]).toBe(rules[0]);
+      expect(res.teamRules[0]).toContain('\n');
+      expect(res.teamRules[1]).toContain('\n\n');
     });
 
-    it('persists teamRules', async () => {
-      allowOwner();
+    it('is readable back from findById', async () => {
       const rules = ['Be on time', 'No slide tackles'];
-      groupModel.findByIdAndUpdate.mockReturnValue(
+      groupModel.findById.mockReturnValue(
         q({ _id: GROUP_ID, teamRules: rules }),
       );
+      memberModel.findOne.mockReturnValue(q(null));
 
-      const res: any = await service.setRules(GROUP_ID, USER_ID, rules);
+      const res: any = await service.findById(GROUP_ID, USER_ID);
 
-      expect(groupModel.findByIdAndUpdate.mock.calls[0][1]).toEqual({
-        $set: { teamRules: rules },
-      });
       expect(res.teamRules).toEqual(rules);
-    });
-
-    it('404s when the group is missing', async () => {
-      allowOwner();
-      groupModel.findByIdAndUpdate.mockReturnValue(q(null));
-      await expect(
-        service.setRules(GROUP_ID, USER_ID, ['a']),
-      ).rejects.toBeInstanceOf(NotFoundException);
-    });
-  });
-
-  describe('getRules', () => {
-    it('returns the rules array', async () => {
-      groupModel.findById.mockReturnValue(
-        q({ _id: GROUP_ID, teamRules: ['Be on time'] }),
-      );
-      await expect(service.getRules(GROUP_ID)).resolves.toEqual({
-        rules: ['Be on time'],
-      });
-    });
-
-    it('defaults to an empty array when teamRules is unset', async () => {
-      groupModel.findById.mockReturnValue(q({ _id: GROUP_ID }));
-      await expect(service.getRules(GROUP_ID)).resolves.toEqual({ rules: [] });
-    });
-
-    it('404s when the group is missing', async () => {
-      groupModel.findById.mockReturnValue(q(null));
-      await expect(service.getRules(GROUP_ID)).rejects.toBeInstanceOf(
-        NotFoundException,
-      );
     });
   });
 

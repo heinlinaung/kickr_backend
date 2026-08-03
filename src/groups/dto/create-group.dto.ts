@@ -55,6 +55,21 @@ export class CreateGroupDto {
   @IsMongoId({ each: true })
   locationIds?: string[];
 
+  @ApiProperty({
+    example: [
+      'Be on time — arrive 15-30 minutes before kick-off',
+      'No alcohol before the match\n(drink afterwards if you like)',
+    ],
+    required: false,
+    type: [String],
+    description:
+      'Team rules. No count or length limit; newlines within a rule are preserved.',
+  })
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  teamRules?: string[];
+
   @ApiProperty({ example: 'Thailand', required: false })
   @IsOptional()
   @IsString()

@@ -298,29 +298,10 @@ export class GroupsService {
     return { inviteCode: code, inviteLink: `${base}/g/${code}`, expiresAt };
   }
 
-  async setRules(
-    groupId: string,
-    userId: string,
-    rules: string[],
-  ): Promise<GroupDocument> {
-    await this.assertOwnerOrAdmin(groupId, userId);
-    // No count or length cap (product decision) — rule text is stored verbatim,
-    // including any newlines, so multi-line rules round-trip unchanged.
-    const group = await this.groupModel
-      .findByIdAndUpdate(groupId, { $set: { teamRules: rules } }, { new: true })
-      .lean();
-    if (!group) throw new NotFoundException('Group not found');
-    return group;
-  }
-
-  async getRules(groupId: string): Promise<{ rules: string[] }> {
-    const group = await this.groupModel
-      .findById(groupId)
-      .select('teamRules')
-      .lean();
-    if (!group) throw new NotFoundException('Group not found');
-    return { rules: (group as any).teamRules ?? [] };
-  }
+  // Team rules are handled by create()/update() via the `teamRules` field and
+  // read back on findById() — there are deliberately no setRules/getRules
+  // methods. Rule text is stored verbatim (no count or length cap), so
+  // newlines inside a rule round-trip unchanged.
 
   async listMembers(groupId: string) {
     return this.memberModel

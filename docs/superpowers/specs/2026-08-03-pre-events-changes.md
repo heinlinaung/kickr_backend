@@ -98,6 +98,8 @@ Both free-text and optional, added to `Group`, `CreateGroupDto` and `UpdateGroup
 
 ### 4.2 Rules — reuse `teamRules`, remove the cap
 
+> **Revised 2026-08-03 (post-implementation):** the dedicated `GET`/`POST /groups/:id/rules` routes were **removed** at product request. `teamRules` is now handled purely as a group field on `POST /groups`, `PATCH /groups/:id` and `GET /groups/:id` — one fewer endpoint pair, and rules can be set in the same call that creates the group. `SetGroupRulesDto` and `GroupsService.setRules`/`getRules` are gone; the field was also **added to `CreateGroupDto`**, which previously did not accept it.
+
 **Decision:** reuse the existing `teamRules: string[]`. The sample content (a 6-item Burmese conduct list) does not fit the shipped max-3 cap, so **the cap is removed**.
 
 Remove in both places that enforce it:
@@ -320,7 +322,7 @@ groupRules: string[]    // the parent group's teamRules; [] for events with no g
 
 Populated from `Group.teamRules` via the event's `groupId`. Empty array (never `null`) for public events with no group, so the client can render unconditionally.
 
-Read-only projection — the rules live on the group and are edited through `POST /groups/:id/rules`. Fetched with a `select('teamRules')` projection rather than a full populate.
+Read-only projection — the rules live on the group and are edited through `PATCH /groups/:id` (§4.2). Fetched with a `select('teamRules')` projection rather than a full populate.
 
 Amends the Events spec §4.4 (Event schema — no new stored field; this is a response-time join) and its §6 API surface row for `GET /events/:id`.
 
@@ -418,7 +420,7 @@ All 8 changes built. **238 tests passing across 25 suites**, up from a 189-test 
 |---|---|---|
 | 1 | Optional `name` on signup | `auth/dto/signup.dto.ts`, `auth/auth.service.ts` |
 | 2 | `userRole` + `memberStatus` on group detail | `groups.service.ts` `findById`, `groups.controller.ts` |
-| 3 | `country`/`city` + rules cap removed | `group.schema.ts`, `create-group.dto.ts`, `update-group.dto.ts`, `group-rules.dto.ts`, `groups.service.ts` |
+| 3 | `country`/`city` + rules cap removed, **rules folded into create/update/read** | `group.schema.ts`, `create-group.dto.ts` (gained `teamRules`), `update-group.dto.ts`, `groups.service.ts`, `groups.controller.ts`; `group-rules.dto.ts` **deleted** |
 | 4 | QR role check removed | `groups.service.ts` `getQr`, `groups.controller.ts` |
 | 5 | Admin force-join | `common/guards/admin-key.guard.ts`, `admin/` (module, controller, service, DTO), `.env.example` |
 | 6 | Join-by-code requires approval | `invitations.service.ts` `joinByCode` |
@@ -431,7 +433,9 @@ All 8 changes built. **238 tests passing across 25 suites**, up from a 189-test 
 
 2. **`UpdateGroupDto` enforced the cap too** — a third site beyond the two §4.2 identified (`SetGroupRulesDto` and the service). All three relaxed.
 
-3. **`getMemberRole` could not serve §3.2.** It filters to `status: 'approved'`, so it can never report a pending membership. `findById` queries the member row directly instead, selecting `role status`.
+3. **Rules endpoints removed after the fact.** §4.2 originally kept `GET`/`POST /groups/:id/rules`. Product asked for rules to live in the ordinary group APIs instead, so both routes, `SetGroupRulesDto`, and `setRules`/`getRules` were deleted — and `teamRules` was **added to `CreateGroupDto`**, which had never accepted it (so rules could not be set at creation time at all). Their test coverage was retargeted at `update()`/`findById()` and `CreateGroupDto` rather than dropped.
+
+4. **`getMemberRole` could not serve §3.2.** It filters to `status: 'approved'`, so it can never report a pending membership. `findById` queries the member row directly instead, selecting `role status`.
 
 ### Tests added
 

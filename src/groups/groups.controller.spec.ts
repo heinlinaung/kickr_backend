@@ -15,8 +15,6 @@ describe('GroupsController', () => {
     updateLogo: jest.fn().mockResolvedValue({ _id: 'g1' }),
     search: jest.fn().mockResolvedValue([]),
     getQr: jest.fn().mockResolvedValue({ inviteCode: 'c', inviteLink: 'l' }),
-    getRules: jest.fn().mockResolvedValue({ rules: [] }),
-    setRules: jest.fn().mockResolvedValue({ _id: 'g1' }),
     listLocations: jest.fn().mockResolvedValue([]),
     attachLocation: jest.fn().mockResolvedValue({ _id: 'g1' }),
     detachLocation: jest.fn().mockResolvedValue({ _id: 'g1' }),
@@ -84,21 +82,6 @@ describe('GroupsController', () => {
   it('GET /groups/:id/qr delegates without the caller id (no role check)', async () => {
     await controller.getQr('g1');
     expect(svc.getQr).toHaveBeenCalledWith('g1');
-  });
-
-  describe('rules', () => {
-    it('GET delegates', async () => {
-      await controller.getRules('g1');
-      expect(svc.getRules).toHaveBeenCalledWith('g1');
-    });
-
-    it('POST unwraps the dto to the rules array', async () => {
-      await controller.setRules('g1', user, { rules: ['a', 'b'] });
-      expect(svc.setRules).toHaveBeenCalledWith('g1', 'requester-1', [
-        'a',
-        'b',
-      ]);
-    });
   });
 
   describe('locations', () => {

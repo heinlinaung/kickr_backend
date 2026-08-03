@@ -252,7 +252,7 @@ The same adoption happens on `POST /groups/:id/locations` when you attach one of
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | `GET` | `/groups` | member | Caller's groups; each item includes **`userRole`**. Only approved memberships, so no `memberStatus`. |
-| `POST` | `/groups` | any | Creator becomes `owner`. |
+| `POST` | `/groups` | any | Creator becomes `owner`. Accepts `teamRules`, `country`, `city`. |
 | `GET` | `/groups/search?q=` | any | Public groups only (`isPrivate: false`), matches name **or** handle, max 20. |
 | `GET` | `/groups/:id` | any | Group detail **+ `userRole` / `memberStatus`** for the caller. |
 | `PATCH` | `/groups/:id` | owner/admin | Update name, description, maxPlayers, sportType, handle, teamRules, isPrivate, **country, city**. |
@@ -260,7 +260,6 @@ The same adoption happens on `POST /groups/:id/locations` when you attach one of
 | `POST` | `/groups/:id/wallpaper` | owner/admin | multipart → ImageKit. |
 | `GET` | `/groups/:id/qr` | **any authenticated user** | Stable invite code + link (see §3.5). **No longer owner/admin only.** |
 | `GET` | `/groups/:id/invite-code` | owner/admin | **Rotates** the code (see §3.5). |
-| `GET` / `POST` | `/groups/:id/rules` | any / owner-admin | Team rules — **no count or length limit** (see §3.9). |
 | `GET` / `POST` | `/groups/:id/locations` | any / owner-admin | List (populated) / attach, **max 5**. |
 | `DELETE` | `/groups/:id/locations/:locationId` | owner/admin | Detach only — does **not** delete the location. |
 | `GET` | `/groups/:id/members` | any | Members with populated `userId`. |
@@ -283,6 +282,7 @@ The same adoption happens on `POST /groups/:id/locations` when you attach one of
   "isPrivate": false,
   "country": "Thailand",
   "city": "Bangkok",
+  "teamRules": ["Be on time", "No alcohol before the match"],
   "locationIds": ["6a6b21077d15afe5f7856042"]
 }
 ```
@@ -446,20 +446,25 @@ Uploading again replaces the previous image (the old file is cleaned up server-s
 
 ### 3.9 Team rules — multi-line text, no limits
 
-```
-GET  /groups/:id/rules          → { "rules": [...] }      any member
-POST /groups/:id/rules          → updated group           owner/admin
-```
+**There are no dedicated rules endpoints.** `teamRules` is an ordinary group field:
+
+| Operation | Call |
+|---|---|
+| Read | `GET /groups/:id` → `teamRules` (also on `GET /groups`) |
+| Set on create | `POST /groups` with `teamRules` |
+| Update | `PATCH /groups/:id` with `teamRules` (owner/admin) |
 
 ```json
-{ "rules": ["No smoking", "Arrive 15-30 min early\n(tell the captain if late)"] }
+{ "teamRules": ["No smoking", "Arrive 15-30 min early\n(tell the captain if late)"] }
 ```
 
-**`POST` REPLACES the whole array** — it does not append. To add one rule, send the existing list plus the new entry, or you will silently wipe the others.
+> `GET`/`POST /groups/:id/rules` **existed briefly and have been removed.** Use the group field instead — a call to those paths now falls through to the `:id` wildcard and will not behave as expected.
 
-Three things changed on 2026-08-03:
+**`teamRules` REPLACES the whole array** — it does not append. To add one rule, send the existing list plus the new entry, or you will silently wipe the others.
 
-- **The max-3 cap is gone.** Send as many rules as you like. A 6-item list — previously `400` — now succeeds.
+Three properties to rely on:
+
+- **No count cap.** A 6-item list — once rejected with `400` — now succeeds.
 - **No per-rule length limit.** A rule can be a full paragraph.
 - **Newlines inside a rule are preserved verbatim**, including blank lines (`\n\n`). Non-ASCII (Burmese, emoji) round-trips byte-for-byte.
 
@@ -678,10 +683,10 @@ class GroupInvite {
 | Create group | `POST /locations` (no `groupId` — group doesn't exist yet) → `POST /groups` with `locationIds`; the server adopts them (§2.3) |
 | Group detail — header | `GET /groups/:id` (`logo`, `wallpaper`, `handle`, `country`/`city`; gate admin UI on `userRole` **+ `memberStatus == 'approved'`**) |
 | Group detail — Members tab | `GET /groups/:id/members` |
-| Group detail — rules | `GET /groups/:id/rules` (render `\n` — §3.9) |
+| Group detail — rules | `GET /groups/:id` → `teamRules` (render `\n` — §3.9) |
 | Group detail — map/venues | `GET /groups/:id/locations` (populated) |
 | Group settings — images | `POST /groups/:id/logo`, `POST /groups/:id/wallpaper` |
-| Group settings — rules | `POST /groups/:id/rules` — replaces the whole array, no cap (§3.9) |
+| Group settings — rules | `PATCH /groups/:id` with `teamRules` — replaces the whole array, no cap (§3.9) |
 | Group settings — venues | `POST` / `DELETE /groups/:id/locations[/:locationId]` (max 5) |
 | Invite / share QR | `GET /groups/:id/qr` → render `inviteLink`; "Regenerate" → `GET /groups/:id/invite-code` |
 | Join via QR scan | `POST /groups/join-by-code` → **`pending`**; show "awaiting approval", then poll `GET /groups/:id` → `memberStatus` |
@@ -699,7 +704,7 @@ class GroupInvite {
 - [ ] `logo` ≠ `wallpaper` (crest vs cover). Both are ready-to-use CDN URLs.
 - [ ] `GET /:id/qr` is **stable** and open to **any authenticated user**; `GET /:id/invite-code` **rotates** and stays owner/admin — don't call it on screen load.
 - [ ] Max **5** locations per group. Team rules have **no limit** — render with `white-space: pre-line` so newlines survive (§3.9).
-- [ ] `POST /groups/:id/rules` **replaces** the whole array — resend existing rules when adding one.
+- [ ] `teamRules` on `PATCH /groups/:id` **replaces** the whole array — resend existing rules when adding one. There are **no** `/groups/:id/rules` routes.
 - [ ] **Join-by-code/QR now needs approval** (§3.6). Don't route into the group on success; branch on `status: "pending"`.
 - [ ] On `GET /groups/:id`, check **`memberStatus == 'approved'`**, not just a non-null `userRole` — a pending requester has `userRole: "member"`.
 - [ ] `group.level` is **inert** — nothing reads it server-side; don't gate features on it.
