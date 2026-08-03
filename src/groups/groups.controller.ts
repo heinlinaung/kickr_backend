@@ -119,6 +119,13 @@ export class GroupsController {
     );
   }
 
+  // Self-service: any member (admin/captain/member) may leave. The owner is
+  // refused — see GroupsService.leave.
+  @Post(':id/leave')
+  leave(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.groupsService.leave(id, user._id.toString());
+  }
+
   @Get(':id/members')
   listMembers(@Param('id') id: string) {
     return this.groupsService.listMembers(id);

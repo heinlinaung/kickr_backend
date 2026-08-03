@@ -682,6 +682,70 @@ describe('GroupsService', () => {
     });
   });
 
+  describe('leave', () => {
+    const groupExists = () =>
+      groupModel.findById.mockReturnValue(q({ _id: GROUP_ID }));
+
+    // No role gate: leaving is self-service for everyone except the owner.
+    it.each(['admin', 'captain', 'member'])(
+      'lets a %s leave and deletes their membership row',
+      async (role) => {
+        groupExists();
+        memberModel.findOne.mockResolvedValue({ _id: 'm1', role });
+        memberModel.deleteOne.mockResolvedValue({ deletedCount: 1 });
+
+        const res = await service.leave(GROUP_ID, USER_ID);
+
+        expect(res.message).toMatch(/left the group/i);
+        expect(memberModel.deleteOne).toHaveBeenCalledWith({ _id: 'm1' });
+      },
+    );
+
+    it('refuses the owner — a group must keep an owner', async () => {
+      groupExists();
+      memberModel.findOne.mockResolvedValue({ _id: 'm1', role: 'owner' });
+
+      await expect(service.leave(GROUP_ID, USER_ID)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(memberModel.deleteOne).not.toHaveBeenCalled();
+    });
+
+    it('404s when the caller is not a member', async () => {
+      groupExists();
+      memberModel.findOne.mockResolvedValue(null);
+
+      await expect(service.leave(GROUP_ID, USER_ID)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(memberModel.deleteOne).not.toHaveBeenCalled();
+    });
+
+    it('404s when the group does not exist', async () => {
+      groupModel.findById.mockReturnValue(q(null));
+
+      await expect(service.leave(GROUP_ID, USER_ID)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(memberModel.deleteOne).not.toHaveBeenCalled();
+    });
+
+    // A pending row is a join request, so leaving doubles as cancelling it.
+    it('lets a pending requester withdraw', async () => {
+      groupExists();
+      memberModel.findOne.mockResolvedValue({
+        _id: 'm1',
+        role: 'member',
+        status: 'pending',
+      });
+      memberModel.deleteOne.mockResolvedValue({ deletedCount: 1 });
+
+      await service.leave(GROUP_ID, USER_ID);
+
+      expect(memberModel.deleteOne).toHaveBeenCalledWith({ _id: 'm1' });
+    });
+  });
+
   describe('updateMemberRole', () => {
     /** first findOne is the requester gate, second is the target member */
     const gateThenTarget = (target: any) =>

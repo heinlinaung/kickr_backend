@@ -310,6 +310,37 @@ export class GroupsService {
       .lean();
   }
 
+  /**
+   * The caller leaves the group themselves (self-service, no role check —
+   * any member may leave).
+   *
+   * The owner is refused: a group with no owner would have nobody able to
+   * manage it, and ownership transfer does not exist yet. They must hand
+   * ownership over first (also not built) or delete the group.
+   */
+  async leave(groupId: string, userId: string) {
+    const group = await this.groupModel.findById(groupId).select('_id').lean();
+    if (!group) throw new NotFoundException('Group not found');
+
+    const member = await this.memberModel.findOne({
+      groupId: new Types.ObjectId(groupId),
+      userId: new Types.ObjectId(userId),
+    });
+    // Covers both "never joined" and "request still pending" — a pending row is
+    // deleted too, which doubles as cancelling your own join request.
+    if (!member)
+      throw new NotFoundException('You are not a member of this group');
+
+    if (member.role === 'owner') {
+      throw new ForbiddenException(
+        'The group owner cannot leave the group. Transfer ownership or delete the group instead.',
+      );
+    }
+
+    await this.memberModel.deleteOne({ _id: member._id });
+    return { message: 'You have left the group' };
+  }
+
   async removeMember(
     groupId: string,
     requesterId: string,

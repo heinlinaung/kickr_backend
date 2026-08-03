@@ -264,6 +264,7 @@ The same adoption happens on `POST /groups/:id/locations` when you attach one of
 | `DELETE` | `/groups/:id/locations/:locationId` | owner/admin | Detach only — does **not** delete the location. |
 | `GET` | `/groups/:id/members` | any | Members with populated `userId`. |
 | `PATCH` | `/groups/:id/members/:userId/role` | owner/admin | Set `role` and/or `level`. |
+| `POST` | `/groups/:id/leave` | any member | **Caller leaves the group.** Any role except `owner` (see §3.10). |
 | `DELETE` | `/groups/:id/members/:userId` | owner/admin | Remove member (owner can't be removed). |
 | `POST` | `/groups/:id/invitations` | any | Request to join → `pending`. |
 | `GET` | `/groups/:id/invitations` | owner/admin | Pending requests. |
@@ -473,6 +474,33 @@ Three properties to rely on:
 Structure it as **one array entry per rule** (matching the bulleted design) rather than one big newline-delimited string — then you can render bullets without parsing, and newlines inside an entry handle wrapped sub-clauses.
 
 Since there is no cap, the array is an unbounded write surface: consider a sane client-side limit on your own edit screen.
+
+### 3.10 Leaving a group
+
+```
+POST /groups/:id/leave
+```
+→ `200`
+```json
+{ "data": { "message": "You have left the group" } }
+```
+
+Self-service — **no role check**. An `admin`, `captain` or `member` can leave without anyone's approval; the membership row is deleted outright.
+
+| Case | Status | Message |
+|---|---|---|
+| Left successfully | `200` | `You have left the group` |
+| Caller is the **owner** | `403` | `The group owner cannot leave the group. Transfer ownership or delete the group instead.` |
+| Caller is not a member | `404` | `You are not a member of this group` |
+| Group does not exist | `404` | `Group not found` |
+
+**The owner cannot leave.** A group with no owner would have nobody able to manage it, and ownership transfer does not exist yet (§8). Hide or disable the Leave action for the owner rather than letting them hit the `403`.
+
+**Leaving also withdraws a pending join request.** A `pending` row is deleted the same way, so this doubles as "cancel my request" — no separate endpoint needed. Because `memberStatus` (§3.4) tells you which state the caller is in, you can label the same button "Leave group" or "Cancel request" accordingly.
+
+**Rejoining** goes through the normal flow (§3.6): request to join, or use an invite code — and it needs owner/admin approval again. Leaving is not reversible by the user alone.
+
+> Distinct from `DELETE /groups/:id/members/:userId`, which is an owner/admin **removing someone else**. This endpoint takes no target id — the caller is always the subject, so it cannot be used to remove another member.
 
 ---
 
@@ -691,6 +719,7 @@ class GroupInvite {
 | Invite / share QR | `GET /groups/:id/qr` → render `inviteLink`; "Regenerate" → `GET /groups/:id/invite-code` |
 | Join via QR scan | `POST /groups/join-by-code` → **`pending`**; show "awaiting approval", then poll `GET /groups/:id` → `memberStatus` |
 | Pending requests | `GET /groups/:id/invitations` → `PATCH .../:invId` |
+| Group settings — leave | `POST /groups/:id/leave` (hide for `userRole == 'owner'`) |
 | My saved venues | `GET /locations` |
 
 ---
@@ -715,6 +744,7 @@ class GroupInvite {
 - [ ] You can only **attach** locations you created; editing extends to group staff for group-owned rows.
 - [ ] `handle` must be lowercase-slug and is globally unique (`409`).
 - [ ] Owner's role/level can never be changed (`403`); `owner` isn't an assignable role.
+- [ ] `POST /groups/:id/leave` is self-service for every role **except owner** — hide the action for owners (§3.10). It also cancels a pending join request.
 - [ ] Uploads: field name `file`, images only (JPEG/PNG/WebP), ≤ 10 MB.
 
 ---
@@ -724,6 +754,7 @@ class GroupInvite {
 | Item | Status |
 |---|---|
 | Group **posts** feed and **gallery** | Not implemented (fields/routes absent) |
+| **Ownership transfer** | Not implemented — which is why the owner cannot leave a group (§3.10). Only a full group delete would free them, and that isn't built either. |
 | "Plus one" guest invites | Not implemented — approval semantics still an open product decision |
 | Nearby/geo search (`GET /events?near=`) | Data is in place (`geo` + 2dsphere index) but **no endpoint yet**. `GET /events?region=` (filter by the group's `country`/`city`) **is** available. |
 | `GET /locations/search?q=&near=` | **Not implemented** — list via `GET /locations` or `GET /groups/:id/locations`. |

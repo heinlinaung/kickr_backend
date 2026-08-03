@@ -20,6 +20,7 @@ describe('GroupsController', () => {
     detachLocation: jest.fn().mockResolvedValue({ _id: 'g1' }),
     listMembers: jest.fn().mockResolvedValue([]),
     removeMember: jest.fn().mockResolvedValue({ message: 'Member removed' }),
+    leave: jest.fn().mockResolvedValue({ message: 'You have left the group' }),
     updateMemberRole: jest.fn().mockResolvedValue({ role: 'admin' }),
     generateInviteCode: jest.fn().mockResolvedValue('code-1'),
   };
@@ -140,6 +141,11 @@ describe('GroupsController', () => {
       const dto = { name: 'New' } as any;
       await controller.update('g1', user, dto);
       expect(svc.update).toHaveBeenCalledWith('g1', 'requester-1', dto);
+    });
+
+    it('POST /groups/:id/leave passes only the caller (no target id)', async () => {
+      await controller.leave('g1', user);
+      expect(svc.leave).toHaveBeenCalledWith('g1', 'requester-1');
     });
 
     it('GET /groups/:id/members', async () => {
