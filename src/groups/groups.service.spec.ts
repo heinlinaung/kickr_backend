@@ -256,12 +256,41 @@ describe('GroupsService', () => {
       expect(groupModel.findByIdAndUpdate).not.toHaveBeenCalled();
     });
 
-    it('rejects more than 3 rules', async () => {
+    // The old max-3 cap was removed by product decision: real rule lists are
+    // longer than 3 (the reference screenshot has 6).
+    it('accepts more than 3 rules — the cap was removed', async () => {
       allowOwner();
-      await expect(
-        service.setRules(GROUP_ID, USER_ID, ['a', 'b', 'c', 'd']),
-      ).rejects.toBeInstanceOf(BadRequestException);
-      expect(groupModel.findByIdAndUpdate).not.toHaveBeenCalled();
+      const six = ['a', 'b', 'c', 'd', 'e', 'f'];
+      groupModel.findByIdAndUpdate.mockReturnValue(
+        q({ _id: GROUP_ID, teamRules: six }),
+      );
+
+      const res: any = await service.setRules(GROUP_ID, USER_ID, six);
+
+      expect(res.teamRules).toEqual(six);
+      const patch = groupModel.findByIdAndUpdate.mock.calls[0][1];
+      expect(patch.$set.teamRules).toHaveLength(6);
+    });
+
+    it('stores multi-line and non-ASCII rule text verbatim', async () => {
+      allowOwner();
+      // Mirrors the Burmese reference list: a newline inside one rule must
+      // survive so the client can render it with white-space: pre-line.
+      const rules = [
+        'ပွဲမတိုင်ခင် ( 15-30 ) မိနစ်\nစောပြီး အရောက်လာပေးပါ။',
+        'Line one\n\nLine three',
+      ];
+      groupModel.findByIdAndUpdate.mockReturnValue(
+        q({ _id: GROUP_ID, teamRules: rules }),
+      );
+
+      const res: any = await service.setRules(GROUP_ID, USER_ID, rules);
+
+      const patch = groupModel.findByIdAndUpdate.mock.calls[0][1];
+      expect(patch.$set.teamRules[0]).toBe(rules[0]);
+      expect(patch.$set.teamRules[0]).toContain('\n');
+      expect(patch.$set.teamRules[1]).toContain('\n\n');
+      expect(res.teamRules).toEqual(rules);
     });
 
     it('persists teamRules', async () => {
@@ -311,12 +340,92 @@ describe('GroupsService', () => {
     });
   });
 
-  describe('getQr', () => {
-    it('is owner/admin gated', async () => {
-      memberModel.findOne.mockResolvedValue(null);
-      await expect(service.getQr(GROUP_ID, USER_ID)).rejects.toBeInstanceOf(
-        ForbiddenException,
+  describe('findById', () => {
+    it('404s when the group is missing', async () => {
+      groupModel.findById.mockReturnValue(q(null));
+      await expect(service.findById(GROUP_ID, USER_ID)).rejects.toBeInstanceOf(
+        NotFoundException,
       );
+    });
+
+    it('returns the bare group when no caller is supplied', async () => {
+      groupModel.findById.mockReturnValue(q({ _id: GROUP_ID, name: 'FC' }));
+
+      const res: any = await service.findById(GROUP_ID);
+
+      expect(res.name).toBe('FC');
+      expect(res).not.toHaveProperty('userRole');
+      expect(memberModel.findOne).not.toHaveBeenCalled();
+    });
+
+    it("reports the caller's role and status", async () => {
+      groupModel.findById.mockReturnValue(q({ _id: GROUP_ID, name: 'FC' }));
+      memberModel.findOne.mockReturnValue(
+        q({ role: 'captain', status: 'approved' }),
+      );
+
+      const res: any = await service.findById(GROUP_ID, USER_ID);
+
+      expect(res.userRole).toBe('captain');
+      expect(res.memberStatus).toBe('approved');
+    });
+
+    it('returns nulls for a non-member', async () => {
+      groupModel.findById.mockReturnValue(q({ _id: GROUP_ID }));
+      memberModel.findOne.mockReturnValue(q(null));
+
+      const res: any = await service.findById(GROUP_ID, USER_ID);
+
+      expect(res.userRole).toBeNull();
+      expect(res.memberStatus).toBeNull();
+    });
+
+    // The reason memberStatus exists: a pending request already stores
+    // role 'member', so role alone cannot distinguish it from a real member.
+    it('distinguishes a pending requester from an approved member', async () => {
+      groupModel.findById.mockReturnValue(q({ _id: GROUP_ID }));
+      memberModel.findOne.mockReturnValue(
+        q({ role: 'member', status: 'pending' }),
+      );
+
+      const res: any = await service.findById(GROUP_ID, USER_ID);
+
+      expect(res.userRole).toBe('member');
+      expect(res.memberStatus).toBe('pending');
+    });
+  });
+
+  describe('getQr', () => {
+    // Previously owner/admin gated. That check was deliberately removed: any
+    // authenticated user may fetch the invite link, because join-by-code now
+    // only creates a PENDING request an owner must approve.
+    it('is NOT role gated — a non-member can fetch the QR', async () => {
+      memberModel.findOne.mockResolvedValue(null);
+      groupModel.findById.mockReturnValue(
+        q({
+          inviteCode: 'shared-code',
+          inviteCodeExpiry: new Date(Date.now() + 60 * 60 * 1000),
+        }),
+      );
+
+      const res = await service.getQr(GROUP_ID);
+
+      expect(res.inviteCode).toBe('shared-code');
+    });
+
+    it('mints a code for a non-member when none is valid (no role check)', async () => {
+      memberModel.findOne.mockResolvedValue(null);
+      groupModel.findById
+        .mockReturnValueOnce(q({ _id: GROUP_ID }))
+        .mockReturnValueOnce(
+          q({ inviteCodeExpiry: new Date(Date.now() + 1000) }),
+        );
+      groupModel.findByIdAndUpdate.mockResolvedValue({ _id: GROUP_ID });
+
+      const res = await service.getQr(GROUP_ID);
+
+      expect(res.inviteCode).toBeTruthy();
+      expect(groupModel.findByIdAndUpdate).toHaveBeenCalled();
     });
 
     it('mints a code when the group has none, and returns a link containing it', async () => {
@@ -328,7 +437,7 @@ describe('GroupsService', () => {
         );
       groupModel.findByIdAndUpdate.mockResolvedValue({ _id: GROUP_ID });
 
-      const res = await service.getQr(GROUP_ID, USER_ID);
+      const res = await service.getQr(GROUP_ID);
 
       expect(res.inviteCode).toBeTruthy();
       expect(res.inviteLink).toBe(`http://localhost:3000/g/${res.inviteCode}`);
@@ -345,7 +454,7 @@ describe('GroupsService', () => {
         }),
       );
 
-      const res = await service.getQr(GROUP_ID, USER_ID);
+      const res = await service.getQr(GROUP_ID);
 
       expect(res.inviteCode).toBe('existing-code');
       expect(res.inviteLink).toBe('http://localhost:3000/g/existing-code');
@@ -362,8 +471,8 @@ describe('GroupsService', () => {
         }),
       );
 
-      const a = await service.getQr(GROUP_ID, USER_ID);
-      const b = await service.getQr(GROUP_ID, USER_ID);
+      const a = await service.getQr(GROUP_ID);
+      const b = await service.getQr(GROUP_ID);
       expect(a.inviteCode).toBe(b.inviteCode);
     });
 
@@ -381,7 +490,7 @@ describe('GroupsService', () => {
         );
       groupModel.findByIdAndUpdate.mockResolvedValue({ _id: GROUP_ID });
 
-      const res = await service.getQr(GROUP_ID, USER_ID);
+      const res = await service.getQr(GROUP_ID);
 
       expect(res.inviteCode).not.toBe('old-expired');
       expect(groupModel.findByIdAndUpdate).toHaveBeenCalled();

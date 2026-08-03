@@ -4,7 +4,7 @@
 **Author:** Backend team
 **Parent spec:** [2026-07-28-kickr-spec-v2-changes.md](./2026-07-28-kickr-spec-v2-changes.md)
 **Related:** [2026-08-03-events-feature-spec.md](./2026-08-03-events-feature-spec.md) — §7 below amends that spec
-**Status:** to build — **do this before the Events feature**
+**Status:** ✅ **IMPLEMENTED 2026-08-03** — all 8 changes built, 238 tests green (from a 189 baseline). See §11 for what shipped and the deviations found during implementation.
 **Stack:** NestJS 11 · MongoDB (Mongoose) · AWS Cognito
 
 ---
@@ -391,21 +391,59 @@ Amends the Events spec §4.5 and its §6 API surface row for `GET /events`.
 | 6 | `country`/`city` live **on Group**, overriding parent spec §4.2 |
 | 7 | Join-by-code/QR **requires owner approval** — resolves parent §14 #5 |
 | 8 | Capacity for code-joins is enforced at **approval**, not request (§6b.3) |
-
 | 9 | `name` on signup stays **optional** — confirmed 2026-08-03 |
 | 10 | Response field is **`userRole`** (camelCase) — confirmed 2026-08-03 |
 
-**Flagged for confirmation — none blocking:**
+**Still live after implementation — operational, not blocking:**
 
 1. **Unbounded `teamRules`** (§4.2) — no cap and no length limit is an unbounded write surface; accepted by decision.
-3. **`ADMIN_KEY` is a root-level credential** (§6.2) — anyone holding it can add any user to any group or event.
-4. **§5 must not ship without §6b** (§8 build order) — the pairing is what keeps opened invite codes from becoming self-service entry.
-5. **QR join is now a breaking UX change** (§6b.4) — needs a coordinated client release.
-6. **Notifications gap** (§6b.4) — owners aren't notified of join requests, so approval-gated QR joins may sit unnoticed. Parent §12 covers it; consider pulling forward.
+2. **`ADMIN_KEY` is a root-level credential** (§6.2) — anyone holding it can add any user to any group or event. Ships blank, so the endpoints are disabled until it is set.
+3. **QR join is a breaking UX change** (§6b.4) — scanning no longer grants entry. **Needs a coordinated client release.**
+4. **Notifications gap** (§6b.4) — owners aren't notified of join requests, so approval-gated QR joins may sit unnoticed. Parent §12 covers it; worth pulling forward.
 
-**Parent spec updates this change set requires:**
+**Parent spec updates — ✅ all applied 2026-08-03:**
 
 - §4.2 — country/city now **are** on Group (§4.1 reverses the earlier "derive from Location" decision).
-- §14 #5 — mark **RESOLVED** (approval required on both paths).
-- §13.2 flowchart — currently shows `join-by-code → status: approved (auto)`; that branch now goes to `pending`, merging with the request-to-join path.
-- §4.5 invitations table — the "Owner approval / Fix inconsistency" row is now done.
+- §14 #5 — marked **RESOLVED** (approval required on both paths).
+- §13.2 flowchart — the auto-approve branch now routes to `pending`, merging with the request-to-join path.
+- §4.5 invitations table — the "Owner approval / Fix inconsistency" row marked done.
+
+---
+
+## 11. Implementation record (2026-08-03)
+
+All 8 changes built. **238 tests passing across 25 suites**, up from a 189-test baseline; `nest build` clean; no new lint or prettier violations in touched files.
+
+| # | Change | Where |
+|---|---|---|
+| 1 | Optional `name` on signup | `auth/dto/signup.dto.ts`, `auth/auth.service.ts` |
+| 2 | `userRole` + `memberStatus` on group detail | `groups.service.ts` `findById`, `groups.controller.ts` |
+| 3 | `country`/`city` + rules cap removed | `group.schema.ts`, `create-group.dto.ts`, `update-group.dto.ts`, `group-rules.dto.ts`, `groups.service.ts` |
+| 4 | QR role check removed | `groups.service.ts` `getQr`, `groups.controller.ts` |
+| 5 | Admin force-join | `common/guards/admin-key.guard.ts`, `admin/` (module, controller, service, DTO), `.env.example` |
+| 6 | Join-by-code requires approval | `invitations.service.ts` `joinByCode` |
+| 7 | `groupRules` on event detail | `events.service.ts` `findById`, `events.module.ts` |
+| 8 | `?region=` filter | `events.service.ts` `list`, `events.controller.ts` |
+
+### Deviations from the spec, found while building
+
+1. **`generateInviteCode` was also role-gated** (§5.2 missed this). Removing the check from `getQr` alone would still have 403'd a plain member whenever the group's code was missing or expired, because the mint path called `assertOwnerOrAdmin` itself. Split into a public `generateInviteCode` (still gated — rotating a code invalidates shared links) and a private `mintInviteCode` (ungated, used by `getQr`). `getQr` no longer takes a `userId` at all.
+
+2. **`UpdateGroupDto` enforced the cap too** — a third site beyond the two §4.2 identified (`SetGroupRulesDto` and the service). All three relaxed.
+
+3. **`getMemberRole` could not serve §3.2.** It filters to `status: 'approved'`, so it can never report a pending membership. `findById` queries the member row directly instead, selecting `role status`.
+
+### Tests added
+
+- **Signup name** — supplied / omitted / whitespace-only / surrounding whitespace.
+- **`findById`** — each role, non-member nulls, and pending-vs-approved (the case `memberStatus` exists for).
+- **QR** — the old "is owner/admin gated" test **inverted** rather than deleted, plus a non-member minting path.
+- **Rules** — 6-rule list accepted (previously rejected), and newline/Burmese text preserved verbatim through the service and DTO.
+- **Join-by-code** — pending not approved, `joinedAt` unset, message changed, full group still accepts, invalid/duplicate still reject, and shape parity with `requestToJoin`.
+- **Admin guard** — correct key, missing header, wrong key, wrong-length key (would throw from `timingSafeEqual` without the length pre-check), and fail-closed on unset/blank `ADMIN_KEY`.
+- **Admin service** — approved-status adds, per-user skip split, dedupe, capacity stop mid-batch, all-skipped still 200-shaped, lifecycle bypass, atomic `joinedCount` guard, and cancelled-row reactivation.
+- **Events** — `groupRules` attach / `[]` for groupless / `[]` when unset; region matching country or city, case-insensitivity, no-match short-circuit, whitespace-only ignored, and regex metacharacters treated literally.
+
+### Not done here
+
+Pre-existing and untouched: 5 `bcrypt` type errors in `test/*.e2e-spec.ts` (left from the Cognito migration, present on the base commit) and the repo-wide `no-unsafe-*` lint noise. Neither is caused by or affected by this change set.

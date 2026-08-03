@@ -16,6 +16,7 @@ import {
   GroupMember,
   GroupMemberDocument,
 } from '../groups/schemas/group-member.schema';
+import { Group, GroupDocument } from '../groups/schemas/group.schema';
 import { CreateEventDto } from './dto/create-event.dto';
 import { LocationsService } from '../locations/locations.service';
 
@@ -27,11 +28,36 @@ export class EventsService {
     private playerModel: Model<EventPlayerDocument>,
     @InjectModel(GroupMember.name)
     private memberModel: Model<GroupMemberDocument>,
+    @InjectModel(Group.name)
+    private groupModel: Model<GroupDocument>,
     private readonly locationsService: LocationsService,
   ) {}
 
-  async list(userId: string) {
-    return this.eventModel.find({ isPublic: true }).sort({ date: 1 }).lean();
+  /**
+   * Public event listing.
+   *
+   * `region` filters by the owning GROUP's country or city — one value matches
+   * either granularity, so callers holding "Myanmar" or "Yangon" both work
+   * without knowing which they have. Events with no groupId are excluded when
+   * region is set: they have no group from which to derive a region.
+   */
+  async list(userId: string, region?: string) {
+    const filter: Record<string, unknown> = { isPublic: true };
+
+    if (region?.trim()) {
+      const rx = new RegExp(`^${escapeRegex(region.trim())}$`, 'i');
+      const groups = await this.groupModel
+        .find({ $or: [{ country: rx }, { city: rx }] })
+        .select('_id')
+        .lean();
+
+      // No matching group means no matching events — return early rather than
+      // issuing a $in against an empty array.
+      if (!groups.length) return [];
+      filter.groupId = { $in: groups.map((g) => g._id) };
+    }
+
+    return this.eventModel.find(filter).sort({ date: 1 }).lean();
   }
 
   async create(userId: string, dto: CreateEventDto): Promise<EventDocument> {
@@ -63,10 +89,27 @@ export class EventsService {
     });
   }
 
-  async findById(eventId: string): Promise<EventDocument> {
+  /**
+   * Event detail, with the owning group's rules attached.
+   *
+   * `groupRules` is a read-only projection — the rules live on the Group and are
+   * edited via POST /groups/:id/rules. Always an array (never null) so the
+   * client can render it unconditionally; `[]` for events with no group.
+   */
+  async findById(eventId: string) {
     const event = await this.eventModel.findById(eventId).lean();
     if (!event) throw new NotFoundException('Event not found');
-    return event;
+
+    let groupRules: string[] = [];
+    if (event.groupId) {
+      const group = await this.groupModel
+        .findById(event.groupId)
+        .select('teamRules')
+        .lean();
+      groupRules = (group as { teamRules?: string[] } | null)?.teamRules ?? [];
+    }
+
+    return { ...event, groupRules };
   }
 
   async join(eventId: string, userId: string) {
@@ -162,4 +205,9 @@ export class EventsService {
       .populate('userId', 'name profileImage')
       .lean();
   }
+}
+
+/** Escapes user input so it can be embedded in a RegExp literally. */
+function escapeRegex(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

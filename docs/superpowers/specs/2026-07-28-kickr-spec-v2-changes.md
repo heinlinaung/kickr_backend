@@ -23,7 +23,9 @@ Verified against source. These are **done**, not backlog:
 | **File storage** | ImageKit via shared `ImageKitService` (backend-proxied; stores CDN url + fileId; deletes prior file on replace). Avatar, group logo + wallpaper migrated. |
 | **Player Profile (§4.2/§4.1)** | Implemented: `biography, country, city, dateOfBirth, sports[], preferredSport, footballPosition, privacy{profileVisibility,showStats,showMatchHistory}, inviteCode, highlightVideos[], gallery[]`, plus `GET /users/:id/profile` (privacy-filtered), `GET /users/me/qr`, extended `PATCH /users/me`. Stats are partial (see §2.3). |
 | **Location (§3)** — *shipped 2026-08-03* | `locations` collection with derived GeoJSON + `2dsphere`, CRUD routes, group attach/detach (max 5). **Diverged from spec:** rows may be *group*-owned as well as creator-owned (§3.3). `GET /locations/search` not built (§3.5). |
-| **Groups (§4)** — *shipped 2026-08-03* | `logo/logoFileId`, `sportType`, unique `handle`, `teamRules`, `locations[]`; `captain` role + `level` 1–3; search, QR, rules, member-role and location routes (§4.6). |
+| **Groups (§4)** — *shipped 2026-08-03* | `logo/logoFileId`, `sportType`, unique `handle`, `teamRules` (uncapped), `country`, `city`, `locations[]`; `captain` role + `level` 1–3; search, QR (open to any authenticated user), rules, member-role and location routes (§4.6). Detail returns the caller's `userRole`/`memberStatus`. |
+
+| **Admin endpoints** — *shipped 2026-08-03* | `POST /admin/groups/:groupId/members` and `POST /admin/events/:eventId/players` behind an `x-admin-key` shared secret (`ADMIN_KEY`). Bypass permissions but preserve capacity/duplicate/existence checks; per-user results. Fail closed when the env var is unset. See [pre-events changes](./2026-08-03-pre-events-changes.md) §6. |
 
 Design docs exist for **phone-number sign-in** and **verified email change** (separate specs); not covered here.
 
@@ -41,10 +43,10 @@ The 2026-08-03 status refresh re-verified §2–§4 against `main` at `0b429fc`.
 
 | Spec v2 area | Status today | Action |
 |---|---|---|
-| §4.1 User Management | **Mostly done** | Remaining: `role`, `favouriteTeam`, username autogeneration (§2.2) — **none shipped** |
+| §4.1 User Management | **Mostly done** | Signup now accepts an optional `name` (shipped 2026-08-03). Remaining: `role`, `favouriteTeam`, username autogeneration (§2.2) |
 | §4.2 Player Profile | **Mostly done** | Remaining: real statistics (needs §5 + §8), gallery/highlight **upload routes** |
 | §4.3 Groups | ✅ **Shipped** | Logo, sportType, handle, teamRules, captains + levels, locations all landed (§4.2, §4.3, §4.6). Remaining: Posts feed (§14 #4), group gallery upload |
-| §4.4 Group Invitations | Partial | Search + QR **shipped**; §14 #5 approval inconsistency **resolved by design** ([pre-events §6b](./2026-08-03-pre-events-changes.md)) — to build. Still open: invite-link deep-link format |
+| §4.4 Group Invitations | ✅ **Shipped** | Search + QR shipped; §14 #5 approval inconsistency **fixed 2026-08-03** ([pre-events §6b](./2026-08-03-pre-events-changes.md)). QR is now readable by any authenticated user. Still open: invite-link deep-link format |
 | §4.5 Events | Partial | **Rework** status → 6-state lifecycle; **add** MVP, multi-team fixtures, photos, cover, templates → [detailed spec](./2026-08-03-events-feature-spec.md) |
 | §4.6 Public Events | Partial | **Add** geo discovery (now unblocked — `Location.geo` exists); auto-close-when-full |
 | §4.7 Tournament Management | Data-model only | **Build engine** — bracket gen, league fixtures, standings, winner propagation |
@@ -208,7 +210,7 @@ Remove `locationName`, `latitude`, `longitude` from **both** `Group` and `Event`
 
 ## 4. Groups & Invitations (§4.3, §4.4) — ✅ MOSTLY SHIPPED 2026-08-03
 
-> **AS BUILT.** §4.2 (schema additions), §4.3 (captain role + levels) and all but two rows of §4.6 (routes) shipped. §4.1 below is the *pre-change* state, kept for history. Still outstanding: group Posts (§14 #4), group gallery upload, and the invite-link deep-link format. The §14 #5 approval inconsistency is **resolved by design** and specified in [pre-events changes](./2026-08-03-pre-events-changes.md) §6b (to build).
+> **AS BUILT.** §4.2 (schema additions), §4.3 (captain role + levels) and all but two rows of §4.6 (routes) shipped. §4.1 below is the *pre-change* state, kept for history. Still outstanding: group Posts (§14 #4), group gallery upload, and the invite-link deep-link format. The §14 #5 approval inconsistency was **fixed 2026-08-03** ([pre-events changes](./2026-08-03-pre-events-changes.md) §6b). Group also gained `country`/`city` and lost the max-3 rules cap in that change set.
 
 ### 4.1 Current state — VERIFIED (pre-change, 2026-07-28)
 
@@ -227,7 +229,7 @@ logoFileId: string  // ImageKit fileId for replace/delete
 wallpaperFileId: string            // added alongside, same reason
 sportType: string   // enum football | futsal | padel | basketball
 handle: string      // unique sparse index, trimmed
-teamRules: [string] // max 3 as shipped — CAP BEING REMOVED (see pre-events changes §4.2)
+teamRules: [string] // no cap (max-3 removed 2026-08-03); newlines preserved
 locations: [ObjectId->Location]   // §3.2 — max 5, enforced via GroupsService.MAX_LOCATIONS
 ```
 
@@ -260,14 +262,14 @@ level: 1 | 2 | 3                                  // default 1
 
 ### 4.5 Invitations / join flow (§4.4)
 
-Current **as shipped today**: request-to-join (pending → owner approves), plus `inviteCode` + `join-by-code` (which **auto-approves**, bypassing owner approval). The auto-approve half is being changed — see the table below and [pre-events changes](./2026-08-03-pre-events-changes.md) §6b.
+**As shipped today (2026-08-03):** both join paths create a `pending` row that an owner/admin must approve — request-to-join and `join-by-code` alike. The earlier auto-approve behaviour of `join-by-code` was removed ([pre-events changes](./2026-08-03-pre-events-changes.md) §6b).
 
 | Join method | Status | Action |
 |---|---|---|
 | Team Name search | ✅ **Shipped** | `GET /groups/search?q=` — case-insensitive regex over `name` **and** `handle`, excludes `isPrivate`, limit 20 |
 | Invitation Link | ✅ **Shipped** | `GET /groups/:id/qr` returns `{ inviteCode, inviteLink, expiresAt }`; reuses the unexpired code rather than churning a new one (`f0e254b`) |
 | QR Code | ✅ **Shipped** | Same endpoint — returns the payload; client renders the QR |
-| Owner approval | ✅ **Resolved by design** (to build) | Both paths require approval: `join-by-code` creates a `pending` row instead of auto-approving. Spec'd in [pre-events changes](./2026-08-03-pre-events-changes.md) §6b; §14 #5 closed |
+| Owner approval | ✅ **Shipped 2026-08-03** | Both paths require approval: `join-by-code` creates a `pending` row instead of auto-approving. See [pre-events changes](./2026-08-03-pre-events-changes.md) §6b; §14 #5 closed |
 | Challenge from other team | Missing | Covered by Team Challenge (§10) |
 
 ### 4.6 New/changed routes
@@ -280,7 +282,7 @@ Current **as shipped today**: request-to-join (pending → owner approves), plus
 | PATCH | `/groups/:id` | accept `sportType`, `handle`, `teamRules` — returns **409** on a taken handle (`34fc1a4`) | ✅ shipped |
 | GET | `/groups/:id/qr` | QR/invite-link payload | ✅ shipped |
 | PATCH | `/groups/:id/members/:userId/role` | promote to captain/admin, set `level` | ✅ shipped |
-| GET/POST | `/groups/:id/rules` | team rules — **max 3 as shipped; cap being removed** ([pre-events §4.2](./2026-08-03-pre-events-changes.md)) | ✅ shipped |
+| GET/POST | `/groups/:id/rules` | team rules — **no cap** (max-3 removed 2026-08-03) | ✅ shipped |
 | GET/POST/DELETE | `/groups/:id/locations` | see §3.5, **max 5** | ✅ shipped |
 | GET | `/groups/:id/members`, `/groups/:id/invite-code` | listing + code retrieval | ✅ shipped |
 | DELETE | `/groups/:id/members/:userId` | remove a member | ✅ shipped |
@@ -288,7 +290,7 @@ Current **as shipped today**: request-to-join (pending → owner approves), plus
 | POST | `/groups/:id/gallery` | **NEW** — upload gallery media (ImageKit) | ❌ not built |
 | DELETE | `/groups/:id/rules` | rule removal — POST replaces the whole array as built | ❌ not built |
 
-> **Note on rules:** as built, `POST /groups/:id/rules` **replaces** the entire `teamRules` array (validated at max 3 as shipped; that cap is being removed) rather than appending, so a separate DELETE is unnecessary for the current client. Listed above as not-built for accuracy against the original spec row.
+> **Note on rules:** as built, `POST /groups/:id/rules` **replaces** the entire `teamRules` array (no count or length cap since 2026-08-03) rather than appending, so a separate DELETE is unnecessary for the current client. Listed above as not-built for accuracy against the original spec row.
 
 ---
 
@@ -629,7 +631,7 @@ Applies to avatar, group logo/wallpaper/gallery, event cover/photos, chat attach
 | 2 | OAuth (Google/Facebook) | ✅ RESOLVED — stubs removed; can add via Cognito IdPs later |
 | 3 | Highlight/gallery storage | ✅ RESOLVED — ImageKit. Sub-question: arrays vs a `media` collection if per-item metadata is needed |
 | 4 | **Group Posts vs chat announcements** — separate feed, or pinned messages? | OPEN — nothing built either way |
-| 5 | **Invite-link approval** — should join-by-link/QR still require owner approval? | ✅ RESOLVED 2026-08-03 — **yes, approval required**. Join-by-code now creates a `pending` row like request-to-join. See [pre-events changes](./2026-08-03-pre-events-changes.md) §6b |
+| 5 | **Invite-link approval** — should join-by-link/QR still require owner approval? | ✅ **RESOLVED & SHIPPED 2026-08-03** — yes, approval required. `joinByCode` now creates a `pending` row like request-to-join. See [pre-events changes](./2026-08-03-pre-events-changes.md) §6b/§11 |
 | 6 | **Shuffle strategy** — random buckets of 6, skill/position-balanced, or fixed N colour teams? | ✅ RESOLVED 2026-08-03 — **fixed N colour teams** (`teamCount`, default 4). See the [Events spec](./2026-08-03-events-feature-spec.md) §3 |
 | 7 | **League standings storage** — recomputed collection vs computed-on-read | ✅ RESOLVED for *events* — computed-on-read (Events spec §4.3). Still OPEN for **tournaments** (§6.2) |
 | 8 | **Ratings cardinality** — one per match total, or one per teammate per match? | OPEN |

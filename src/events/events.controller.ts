@@ -5,9 +5,10 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { EventsService } from './events.service';
@@ -21,8 +22,16 @@ export class EventsController {
   constructor(private eventsService: EventsService) {}
 
   @Get()
-  list(@CurrentUser() user: any) {
-    return this.eventsService.list(user._id.toString());
+  @ApiQuery({
+    name: 'region',
+    required: false,
+    example: 'Myanmar',
+    description:
+      "Filters by the owning group's country OR city (case-insensitive). " +
+      'Events with no group are excluded when set.',
+  })
+  list(@CurrentUser() user: any, @Query('region') region?: string) {
+    return this.eventsService.list(user._id.toString(), region);
   }
 
   @Post()

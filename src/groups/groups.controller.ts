@@ -49,8 +49,8 @@ export class GroupsController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.groupsService.findById(id);
+  findOne(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.groupsService.findById(id, user._id.toString());
   }
 
   @Patch(':id')
@@ -84,9 +84,10 @@ export class GroupsController {
     return this.groupsService.updateLogo(id, user._id.toString(), file);
   }
 
+  // Any authenticated user — no role check (see GroupsService.getQr).
   @Get(':id/qr')
-  getQr(@Param('id') id: string, @CurrentUser() user: any) {
-    return this.groupsService.getQr(id, user._id.toString());
+  getQr(@Param('id') id: string) {
+    return this.groupsService.getQr(id);
   }
 
   @Get(':id/rules')
