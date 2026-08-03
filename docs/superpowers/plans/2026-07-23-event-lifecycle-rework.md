@@ -1,5 +1,11 @@
 # Event Lifecycle Rework (§4.5) Implementation Plan
 
+> ⚠️ **SUPERSEDED (2026-08-03)** by [2026-08-03-events-feature-spec.md](../specs/2026-08-03-events-feature-spec.md).
+> This plan predates the v3 change spec: it assumes local-disk uploads (now ImageKit), has no multi-team
+> fixtures (§5.3), and leaves the shuffle strategy open (now locked to fixed N colour teams).
+> Its transition table, DTO shapes and task breakdown remain valid and are carried forward by the new spec.
+> Read the new spec first; use this document only for the task-level detail it still gets right.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the Event's 3-state capacity `status` (`open|full|done`) with the spec's 6-state match lifecycle (`join → before_match → preparation → playing → after_match → done`), make capacity a derived concern, gate join/unjoin on lifecycle state, wire shuffle to the Preparation phase (creating team-chat rooms), and add After-Match results (score + MVP + photos) and event templates/cover image.

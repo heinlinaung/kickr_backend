@@ -8,6 +8,8 @@
 **Stack:** NestJS · MongoDB (Mongoose) · Socket.io · **AWS Cognito** (auth) · **ImageKit** (file storage/CDN)
 
 > **What changed in v3:** all "current state" sections re-verified against source on `main` (the previous version described pre-Cognito code that no longer exists); obsolete email-verification section removed; a new **`Location` collection** (§3, owned by its creator) replaces the three conflicting location models; contradictions in the group/fixture sections resolved.
+>
+> **Status refresh 2026-08-03:** §3 (Location) and most of §4 (Groups) have since **shipped**. This document has been updated in place to mark what landed, record where the implementation deliberately diverged from the spec, and narrow the remaining work. Sections describing shipped work now read as "as built" rather than "to build". Events (§5) is detailed further in [2026-08-03-events-feature-spec.md](./2026-08-03-events-feature-spec.md).
 
 ---
 
@@ -18,8 +20,10 @@ Verified against source. These are **done**, not backlog:
 | Area | State |
 |---|---|
 | **Auth** | AWS Cognito (backend-proxy). **Email + password sign-in** (PR #8). JWKS RS256 verification on HTTP + WebSocket; `token_use=access` enforced on both. Cognito owns registration, confirmation, forgot/reset, refresh. |
-| **File storage** | ImageKit via shared `ImageKitService` (backend-proxied; stores CDN url + fileId; deletes prior file on replace). Avatar migrated. |
+| **File storage** | ImageKit via shared `ImageKitService` (backend-proxied; stores CDN url + fileId; deletes prior file on replace). Avatar, group logo + wallpaper migrated. |
 | **Player Profile (§4.2/§4.1)** | Implemented: `biography, country, city, dateOfBirth, sports[], preferredSport, footballPosition, privacy{profileVisibility,showStats,showMatchHistory}, inviteCode, highlightVideos[], gallery[]`, plus `GET /users/:id/profile` (privacy-filtered), `GET /users/me/qr`, extended `PATCH /users/me`. Stats are partial (see §2.3). |
+| **Location (§3)** — *shipped 2026-08-03* | `locations` collection with derived GeoJSON + `2dsphere`, CRUD routes, group attach/detach (max 5). **Diverged from spec:** rows may be *group*-owned as well as creator-owned (§3.3). `GET /locations/search` not built (§3.5). |
+| **Groups (§4)** — *shipped 2026-08-03* | `logo/logoFileId`, `sportType`, unique `handle`, `teamRules`, `locations[]`; `captain` role + `level` 1–3; search, QR, rules, member-role and location routes (§4.6). |
 
 Design docs exist for **phone-number sign-in** and **verified email change** (separate specs); not covered here.
 
@@ -27,27 +31,31 @@ Design docs exist for **phone-number sign-in** and **verified email change** (se
 
 Every "current state" block below was re-read from `src/` on the branch this doc lives on. Where the previous version's claims were wrong, they are corrected inline.
 
+The 2026-08-03 status refresh re-verified §2–§4 against `main` at `0b429fc`. Blocks marked **AS BUILT** describe code that exists; blocks marked **NOT SHIPPED** are still backlog.
+
 ---
 
 ## 1. Executive Summary — Coverage Matrix
 
+*Status column refreshed 2026-08-03 against `main` @ `0b429fc`.*
+
 | Spec v2 area | Status today | Action |
 |---|---|---|
-| §4.1 User Management | **Mostly done** | Remaining: `role`, `favouriteTeam`, username autogeneration (§2.2) |
+| §4.1 User Management | **Mostly done** | Remaining: `role`, `favouriteTeam`, username autogeneration (§2.2) — **none shipped** |
 | §4.2 Player Profile | **Mostly done** | Remaining: real statistics (needs §5 + §8), gallery/highlight **upload routes** |
-| §4.3 Groups | Partial | **Extend** — logo, sportType, handle, teamRules, captains, locations (§3) |
-| §4.4 Group Invitations | Partial | **Add** join-by-team-name & QR; **fix** invite-link vs approval |
-| §4.5 Events | Partial | **Rework** status → 6-state lifecycle; **add** MVP, multi-team fixtures, photos, cover, templates |
-| §4.6 Public Events | Partial | **Add** geo discovery (enabled by §3 Location); auto-close-when-full |
+| §4.3 Groups | ✅ **Shipped** | Logo, sportType, handle, teamRules, captains + levels, locations all landed (§4.2, §4.3, §4.6). Remaining: Posts feed (§14 #4), group gallery upload |
+| §4.4 Group Invitations | Partial | Search + QR **shipped**; still open: invite-link deep-link format, and the invite-link-vs-approval inconsistency (§14 #5) |
+| §4.5 Events | Partial | **Rework** status → 6-state lifecycle; **add** MVP, multi-team fixtures, photos, cover, templates → [detailed spec](./2026-08-03-events-feature-spec.md) |
+| §4.6 Public Events | Partial | **Add** geo discovery (now unblocked — `Location.geo` exists); auto-close-when-full |
 | §4.7 Tournament Management | Data-model only | **Build engine** — bracket gen, league fixtures, standings, winner propagation |
 | §4.8 Team Challenge | **Missing** | **Build** — new module |
 | §4.9 Group Chat | Partial | **Add** attachment upload transport (ImageKit) |
 | §4.10 Player Ratings | **Missing** | **Build** — new `ratings` module |
 | §4.11 Financial Management | **Missing** | **Build** — new group funds module |
-| **Location (cross-cutting)** | **Missing** | **Build** — new `locations` collection, creator-owned (§3) |
+| **Location (cross-cutting)** | ✅ **Shipped** | Collection, CRUD, geo index, group attach/detach all landed (§3). Remaining: `GET /locations/search` |
 | Future §7 (AI matching, live tracking, push, dark mode, i18n) | Out of scope | Defer |
 
-**Unimplemented feature areas:** Player Ratings (§4.10), Financial Management (§4.11), Team Challenge (§4.8), Location (§3). **Model-without-engine:** Tournaments (§4.7), chat attachments (§4.9).
+**Unimplemented feature areas:** Player Ratings (§4.10), Financial Management (§4.11), Team Challenge (§4.8). **Model-without-engine:** Tournaments (§4.7), chat attachments (§4.9). **Next up:** Events (§5).
 
 ---
 
@@ -62,7 +70,9 @@ Every "current state" block below was re-read from `src/` on the branch this doc
 
 `UpdateProfileDto` accepts: name, username, displayName, phoneNumber, height, weight, biography, country, city, dateOfBirth, sports, preferredSport, footballPosition, privacy. Identity fields (`cognitoSub`, `email`, `emailVerified`, `inviteCode`, `profileImageFileId`) are deliberately **excluded** — the DTO is the write-whitelist.
 
-### 2.2 Remaining additions to `User`
+### 2.2 Remaining additions to `User` — ❌ NOT SHIPPED (re-verified 2026-08-03)
+
+Neither field exists on the schema or in `UpdateProfileDto`; username autogeneration is not implemented either — `auth.service.ts` leaves `username` unset at signup and the user picks one later via `PATCH /users/me`.
 
 ```
 role: string            // enum: player | owner | admin (spec §3 target users)
@@ -93,7 +103,9 @@ favouriteTeam: string   // e.g. 'arsenal', 'manchester-united' — free string o
 
 ---
 
-## 3. Location — NEW collection (cross-cutting), owned by its creator
+## 3. Location — collection (cross-cutting) — ✅ SHIPPED 2026-08-03
+
+> **AS BUILT.** This section shipped, with one deliberate divergence: locations may be **group-owned** in addition to creator-owned. The design rationale below is retained; §3.3 and §3.5 are updated to match the code. Implemented across `src/locations/` (schema, service, controller, DTOs) plus the group attach/detach routes in `src/groups/`.
 
 **Problem being solved.** Location is currently modelled three inconsistent ways: flat `locationName/latitude/longitude` duplicated on `Group` and `Event`; a proposed "multilocation object array" on Group; and a proposed `/groups/:id/maps` sub-resource. A group needs **many** locations, an event needs **one**, and a challenge needs one.
 
@@ -115,10 +127,16 @@ locations/{id}
   url: string               // optional — Google Maps / venue link
   metadata: Mixed           // free-form, location-intrinsic extras:
                             //   e.g. { surface:'grass', indoor:false, pitches:2, parking:true, notes:'...' }
-  createdBy: ObjectId->User // required — OWNER. Only this user may edit/delete.
+  createdBy: ObjectId->User // required — creator. Indexed.
+  groupId: ObjectId->Group | null   // AS BUILT — owning group, or null for personal.
+                                    //   null → creator-only edit/delete
+                                    //   set  → group owner/admin/captain may edit;
+                                    //          owner/admin may delete
   createdAt / updatedAt
 }
 ```
+
+> **Divergence from the original design.** The spec said "only `createdBy` may edit/delete". As built, a location can be handed to a group via `groupId`, which makes "who may manage this venue" survive the creator leaving or going inactive — a group's home ground shouldn't become uneditable because one member created it. Personal rows (`groupId: null`) behave exactly as originally specified. See §3.3.
 
 **Indexes:** `2dsphere` on `geo` (enables §5.7 "events near me"); `createdBy` (list "my locations"); text or prefix index on `name` for search.
 
@@ -136,15 +154,28 @@ locations/{id}
 
 Referrers hold the ref; a location does not point back at its consumers. This is what lets one of the creator's locations be attached to several of their groups/events.
 
-### 3.3 Ownership & reuse (no dedupe)
+### 3.3 Ownership & reuse (no dedupe) — AS BUILT
 
-- **Owner:** `createdBy`. Only the owner may `PATCH`/`DELETE` a location.
-- **Reuse:** the owner may attach the same location to any number of their own groups/events.
-- **No dedupe.** Creating a location always inserts a new row; there is no name/proximity matching against other users' locations. Duplicates across users are expected.
-- **Attach permission:** to attach a location to a group, the caller must be that group's owner/admin **and** the location's `createdBy` (i.e. you attach your own locations). *(If groups should be able to attach a co-member's location, that is a small extension — not assumed here.)*
-- **Detach ≠ delete:** removing a location from a group detaches the ref only; the row survives for the owner's other uses.
+**Permission matrix** (`LocationsService.assertCanEdit` / `assertCanDelete`):
 
-### 3.4 Migration (replaces the flat fields)
+| Row type | Edit (name, pin, url, metadata) | Delete |
+|---|---|---|
+| Personal (`groupId: null`) | creator only | creator only |
+| Group-owned (`groupId` set) | creator, **or** group `owner`/`admin`/`captain` | creator, **or** group `owner`/`admin` |
+
+Deleting is held to a stricter role than editing on purpose: removing a venue the group relies on is a structural change, so captains can correct a pin but not remove the ground.
+
+- **No dedupe.** Creating a location always inserts a new row; there is no name/proximity matching. Duplicates across users are expected and accepted.
+- **Reuse:** a location may be attached to any number of groups/events its manager controls.
+- **Attach permission:** attaching to a group requires group `owner`/`admin`. `EventsService.create` currently requires the stricter `assertOwnedBy` (creator-only) — see the note below.
+- **Detach ≠ delete:** removing a location from a group detaches the ref only. `LocationsService.remove` additionally `$pull`s the id from every `Group.locations` array, so a deleted row leaves no stale ref counting toward the 5-location cap.
+- **Group adoption:** `adoptPersonalLocations` supports the mobile "create location, then create group" flow — on group creation, still-personal rows created by that user are transferred to the new group. Rows already owned by another group are skipped, never reassigned.
+
+> **Known gap (2026-08-03):** `EventsService.create` calls `assertOwnedBy`, not `assertCanEdit`, so a group admin **cannot attach their own group's home ground to a group event** unless they personally created that location row. Tracked in the [Events spec §4.6](./2026-08-03-events-feature-spec.md).
+
+### 3.4 Migration (replaces the flat fields) — ✅ DONE
+
+> **AS BUILT.** Completed in `13a3948` (schema/DTO swap) and `13b2423` (persist `locationId` with an ownership check). All 12 call sites below were updated; the flat fields no longer exist on either schema. A `groupId` backfill script shipped in `c26c2fb` under `scripts/`.
 
 Remove `locationName`, `latitude`, `longitude` from **both** `Group` and `Event` schemas and their DTOs, replacing with the refs in §3.2.
 
@@ -157,41 +188,50 @@ Remove `locationName`, `latitude`, `longitude` from **both** `Group` and `Event`
 
 ### 3.5 Routes
 
-| Method | Path | Description |
-|---|---|---|
-| POST | `/locations` | Create (always inserts; `createdBy` = caller) |
-| GET | `/locations` | List the caller's own locations |
-| GET | `/locations/search?q=&near=&radius=` | Search by name and/or proximity |
-| GET | `/locations/:id` | Detail |
-| PATCH | `/locations/:id` | Update name/lat/lng/url/metadata — **owner only** |
-| DELETE | `/locations/:id` | Delete — **owner only** (detaches from referrers) |
-| GET | `/groups/:id/locations` | Group's locations |
-| POST | `/groups/:id/locations` | Attach a location to a group (max 5; accepts an existing `locationId` or a new location payload) |
-| DELETE | `/groups/:id/locations/:locationId` | Detach (does not delete the Location row) |
+| Method | Path | Description | Status |
+|---|---|---|---|
+| POST | `/locations` | Create (always inserts; `createdBy` = caller; optional `groupId` to make it group-owned, gated to that group's owner/admin) | ✅ shipped |
+| GET | `/locations` | List the caller's own locations | ✅ shipped |
+| GET | `/locations/search?q=&near=&radius=` | Search by name and/or proximity | ❌ **not built** |
+| GET | `/locations/:id` | Detail | ✅ shipped |
+| PATCH | `/locations/:id` | Update name/lat/lng/url/metadata — per the §3.3 matrix | ✅ shipped |
+| DELETE | `/locations/:id` | Delete — per the §3.3 matrix (also `$pull`s the ref from groups) | ✅ shipped |
+| GET | `/groups/:id/locations` | Group's locations | ✅ shipped |
+| POST | `/groups/:id/locations` | Attach a location to a group (max 5; accepts an existing `locationId` or a new location payload) | ✅ shipped |
+| DELETE | `/groups/:id/locations/:locationId` | Detach (does not delete the Location row) | ✅ shipped |
+
+> **Remaining:** `GET /locations/search`. The `2dsphere` index and a `name` index both exist, so this is a service method plus a route — the data layer is ready. Note it is also the last piece the Events geo-discovery work (§5.7) does *not* depend on: that query goes through `Location.geo` directly.
 
 > Detaching from a group must **not** delete the location row — the owner's other groups/events may reference it.
 
 ---
 
-## 4. Groups & Invitations (§4.3, §4.4)
+## 4. Groups & Invitations (§4.3, §4.4) — ✅ MOSTLY SHIPPED 2026-08-03
 
-### 4.1 Current state — VERIFIED
+> **AS BUILT.** §4.2 (schema additions), §4.3 (captain role + levels) and all but two rows of §4.6 (routes) shipped. §4.1 below is the *pre-change* state, kept for history. Still outstanding: group Posts (§14 #4), group gallery upload, invite-link deep-link format, and the §14 #5 approval inconsistency.
+
+### 4.1 Current state — VERIFIED (pre-change, 2026-07-28)
 
 `Group`: `name`, `description`, `ownerId`, `wallpaper`, `locationName`, `latitude`, `longitude`, `isPrivate`, `maxPlayers`, `inviteCode`, `inviteCodeExpiry`.
 `GroupMember`: `groupId`, `userId`, `role` (enum `owner|admin|member`), `status` (enum **`pending|approved`**), `joinedAt`. No separate Invitation collection — pending members ARE the invitations.
 
 > Corrections to the previous version: Group does **not** have `country`/`city` (it has the flat location trio, being replaced per §3). GroupMember status has **no `rejected` value** — reject deletes the row.
 
-### 4.2 Schema additions to `Group`
+### 4.2 Schema additions to `Group` — ✅ SHIPPED
+
+All landed as specified (`f09dbf4`). As built:
 
 ```
 logo: string        // team logo/crest — distinct from `wallpaper` (the cover photo)
 logoFileId: string  // ImageKit fileId for replace/delete
-sportType: string   // enum football | futsal | padel | ... (create-group "Sport Type")
-handle: string      // unique — the "@Bangkok FC" handle in the group_detail screenshot
-teamRules: [string] // §4.3 "Team rules" — max 3 (see §4.6 routes)
-locations: [ObjectId->Location]   // §3.2 — max 5; REPLACES locationName/latitude/longitude
+wallpaperFileId: string            // added alongside, same reason
+sportType: string   // enum football | futsal | padel | basketball
+handle: string      // unique sparse index, trimmed
+teamRules: [string] // max 3, enforced in the service
+locations: [ObjectId->Location]   // §3.2 — max 5, enforced via GroupsService.MAX_LOCATIONS
 ```
+
+Indexes as built: `inviteCode` unique sparse, `handle` unique sparse, `name` text.
 
 Notes:
 - `wallpaper` (existing) = the cover/banner photo. `logo` (new) = the team crest. The screenshots show both.
@@ -199,18 +239,18 @@ Notes:
 - `country`/`city` are **not** added to Group — derive from the referenced `Location` if needed for display/filtering.
 - `isPrivate` (existing) means the group is excluded from search results (§4.5 Team Name search).
 
-### 4.3 GroupMember — captains & member levels
+### 4.3 GroupMember — captains & member levels — ⚠️ PARTIALLY SHIPPED
 
-Extend `role` enum to: `owner | admin | captain | member`.
+**Shipped:** `role` enum extended to `owner | admin | captain | member`; `level: number` (enum `1|2|3`, default 1) added; both settable via `PATCH /groups/:id/members/:userId/role`.
 
-**Member levels (new).** Alongside `role`, add:
 ```
-level: number    // 1 | 2 | 3 — seniority within `member`; default 1
+role: 'owner' | 'admin' | 'captain' | 'member'   // default 'member'
+level: 1 | 2 | 3                                  // default 1
 ```
 
-**"Plus one" rule (new).** A member at the **highest level (3)** may invite a guest ("plus one") to an event; the invite requires approval by `owner`, `admin`, or `captain` before the guest is added.
+**NOT shipped — the "plus one" rule.** The `level` field exists and is settable, but **nothing reads it**: no code grants a level-3 member any capability, and there is no plus-one/guest-invite flow anywhere in the codebase. The field is currently inert storage.
 
-> **Open question (§14 #10):** the previous version wrote `member(eg. 1, 2, 3 level)` without defining the levels. The model above (separate `level` field, 3 = highest, can propose plus-ones) is an **assumption** — confirm the intended semantics: what distinguishes levels 1/2/3, how is level assigned/promoted, and is "plus one" per-event or per-group?
+> **Open question (§14 #10) — still OPEN, now with a shipped field attached to it.** The data model was built on an assumption that was never confirmed. Before building plus-one, confirm: what distinguishes levels 1/2/3, how is level assigned/promoted, and is "plus one" per-event or per-group? If the answer diverges from `1|2|3`, the enum is cheap to change now and expensive after clients depend on it.
 
 ### 4.4 Group sub-content (screenshots: Events / Posts / Members / Gallery tabs)
 
@@ -224,33 +264,43 @@ Current: request-to-join (pending → owner approves), plus `inviteCode` + `join
 
 | Join method | Status | Action |
 |---|---|---|
-| Team Name search | **Missing** | **Add** `GET /groups/search?q=` (excludes `isPrivate`) + request-to-join |
-| Invitation Link | Partial (raw code) | **Change** to a formatted deep link wrapping `inviteCode` |
-| QR Code | Partial | **Add** QR payload endpoint (encodes the invite link); client renders the QR |
-| Owner approval | Present | **Fix inconsistency**: `join-by-code` auto-approves, contradicting "owners approve new members before joining". See §14 #5 |
+| Team Name search | ✅ **Shipped** | `GET /groups/search?q=` — case-insensitive regex over `name` **and** `handle`, excludes `isPrivate`, limit 20 |
+| Invitation Link | ✅ **Shipped** | `GET /groups/:id/qr` returns `{ inviteCode, inviteLink, expiresAt }`; reuses the unexpired code rather than churning a new one (`f0e254b`) |
+| QR Code | ✅ **Shipped** | Same endpoint — returns the payload; client renders the QR |
+| Owner approval | ⚠️ **Still inconsistent** | `join-by-code` continues to auto-approve, contradicting "owners approve new members before joining". **Unresolved — see §14 #5** |
 | Challenge from other team | Missing | Covered by Team Challenge (§10) |
 
 ### 4.6 New/changed routes
 
-| Method | Path | Change |
-|---|---|---|
-| GET | `/groups/search?q=` | **NEW** — search by name/handle; excludes private groups |
-| POST | `/groups/:id/logo` | **NEW** — upload team logo (ImageKit) |
-| PATCH | `/groups/:id` | **CHANGED** — accept `sportType`, `handle`, `teamRules` |
-| GET | `/groups/:id/qr` | **NEW** — QR/invite-link payload |
-| PATCH | `/groups/:id/members/:userId/role` | **NEW** — promote to captain/admin, set `level` |
-| GET/POST | `/groups/:id/posts` | **NEW** (if Posts is a separate feed — §14 #4) |
-| POST | `/groups/:id/gallery` | **NEW** — upload gallery media (ImageKit) |
-| GET/POST/DELETE | `/groups/:id/rules` | **NEW** — team rules, **max 3** |
-| GET/POST/DELETE | `/groups/:id/locations` | **NEW** — see §3.5, **max 5** |
+| Method | Path | Change | Status |
+|---|---|---|---|
+| GET | `/groups/search?q=` | search by name/handle; excludes private groups | ✅ shipped |
+| POST | `/groups/:id/logo` | upload team logo (ImageKit) | ✅ shipped |
+| POST | `/groups/:id/wallpaper` | upload cover photo (ImageKit) | ✅ shipped |
+| PATCH | `/groups/:id` | accept `sportType`, `handle`, `teamRules` — returns **409** on a taken handle (`34fc1a4`) | ✅ shipped |
+| GET | `/groups/:id/qr` | QR/invite-link payload | ✅ shipped |
+| PATCH | `/groups/:id/members/:userId/role` | promote to captain/admin, set `level` | ✅ shipped |
+| GET/POST | `/groups/:id/rules` | team rules, **max 3** | ✅ shipped |
+| GET/POST/DELETE | `/groups/:id/locations` | see §3.5, **max 5** | ✅ shipped |
+| GET | `/groups/:id/members`, `/groups/:id/invite-code` | listing + code retrieval | ✅ shipped |
+| DELETE | `/groups/:id/members/:userId` | remove a member | ✅ shipped |
+| GET/POST | `/groups/:id/posts` | **NEW** (if Posts is a separate feed — §14 #4) | ❌ not built |
+| POST | `/groups/:id/gallery` | **NEW** — upload gallery media (ImageKit) | ❌ not built |
+| DELETE | `/groups/:id/rules` | rule removal — POST replaces the whole array as built | ❌ not built |
+
+> **Note on rules:** as built, `POST /groups/:id/rules` **replaces** the entire `teamRules` array (validated at max 3) rather than appending, so a separate DELETE is unnecessary for the current client. Listed above as not-built for accuracy against the original spec row.
 
 ---
 
-## 5. Events & Lifecycle (§4.5, §4.6)
+## 5. Events & Lifecycle (§4.5, §4.6) — NEXT UP
 
-### 5.1 Current state — VERIFIED
+> **Detailed design:** [2026-08-03-events-feature-spec.md](./2026-08-03-events-feature-spec.md) expands this section into an implementable spec and locks §14 #6 (shuffle strategy → fixed N colour teams) and the fixture format (generic double round-robin). Read that document before implementing; the sections below remain the authoritative statement of *what* is needed.
 
-`Event`: `title`, `description`, `date`, `groupId`, `isPublic`, `createdBy`, `locationName`, `latitude`, `longitude`, `maxPlayers`, `joinedCount`, `sportType`, `skillLevel`, `price`, `status` (**`open|full|done`**), timestamps.
+### 5.1 Current state — VERIFIED (updated 2026-08-03)
+
+`Event`: `title`, `description`, `date`, `groupId`, `isPublic`, `createdBy`, **`locationId`**, `maxPlayers`, `joinedCount`, `sportType`, `skillLevel`, `price`, `status` (**`open|full|done`**), timestamps.
+
+> **Correction (2026-08-03):** the flat `locationName`/`latitude`/`longitude` trio is **gone** — `locationId: ObjectId->Location` replaced it in `13a3948`/`13b2423`. The §5.4 line "REPLACES locationName/latitude/longitude" is therefore already satisfied; only the *other* §5.4 fields remain to build.
 `EventPlayer`: `eventId`, `userId`, `joinedAt`, `team`, `position`, `status` (`joined|cancelled`), `checkInTime`.
 
 The current `status` is a **capacity model** (auto open↔full on join/leave; `done` never set) — NOT the spec lifecycle.
@@ -316,7 +366,7 @@ matches: [{
 ### 5.4 Schema additions to `Event`
 
 ```
-locationId: ObjectId->Location | null   // §3 — REPLACES locationName/latitude/longitude
+locationId: ObjectId->Location | null   // ✅ ALREADY SHIPPED (§5.1) — listed for completeness
 startTime: Date                          // spec separates Match date + Time
 endTime: Date
 coverImage: string                       // event_detail cover
@@ -712,14 +762,16 @@ sequenceDiagram
     end
 ```
 
-### 13.7 Location attach (creator-owned)
+### 13.7 Location attach (creator- or group-owned)
 
 How any collection attaches a location (§3.3). No dedupe — creating always inserts.
+
+> **Updated 2026-08-03:** as built, a location may be group-owned, so the ownership check is the §3.3 permission matrix, not a bare `createdBy` comparison. One exception: `EventsService` still uses the strict creator-only check — the known gap noted in §3.3.
 
 ```mermaid
 flowchart TD
     A["Caller supplies location<br/>(new payload or existing locationId)"] --> B{locationId given?}
-    B -->|yes| C["validate exists<br/>AND createdBy == caller"] --> H
+    B -->|yes| C["validate exists AND caller may manage it<br/>(creator, or group owner/admin/captain)"] --> H
     B -->|no| D["POST /locations {name, lat, lng, url, metadata}"]
     D --> G["always INSERT a new row<br/>createdBy = caller<br/>geo derived from lat/lng (2dsphere)"] --> H
 
@@ -763,31 +815,38 @@ sequenceDiagram
 
 ## 14. Open Decisions
 
+*Refreshed 2026-08-03.*
+
 | # | Decision | Status |
 |---|---|---|
 | 1 | Email verification | ✅ RESOLVED — Cognito |
 | 2 | OAuth (Google/Facebook) | ✅ RESOLVED — stubs removed; can add via Cognito IdPs later |
 | 3 | Highlight/gallery storage | ✅ RESOLVED — ImageKit. Sub-question: arrays vs a `media` collection if per-item metadata is needed |
-| 4 | **Group Posts vs chat announcements** — separate feed, or pinned messages? | OPEN |
-| 5 | **Invite-link approval** — should join-by-link/QR still require owner approval? (currently auto-approves) | OPEN |
-| 6 | **Shuffle strategy** — random buckets of 6, skill/position-balanced, or fixed N colour teams? Note §5.3 assumes colour teams | OPEN |
-| 7 | **League standings storage** — recomputed collection vs computed-on-read | OPEN |
+| 4 | **Group Posts vs chat announcements** — separate feed, or pinned messages? | OPEN — nothing built either way |
+| 5 | **Invite-link approval** — should join-by-link/QR still require owner approval? (currently auto-approves) | OPEN — **the inconsistency shipped**; search/QR landed around it without resolving the semantics |
+| 6 | **Shuffle strategy** — random buckets of 6, skill/position-balanced, or fixed N colour teams? | ✅ RESOLVED 2026-08-03 — **fixed N colour teams** (`teamCount`, default 4). See the [Events spec](./2026-08-03-events-feature-spec.md) §3 |
+| 7 | **League standings storage** — recomputed collection vs computed-on-read | ✅ RESOLVED for *events* — computed-on-read (Events spec §4.3). Still OPEN for **tournaments** (§6.2) |
 | 8 | **Ratings cardinality** — one per match total, or one per teammate per match? | OPEN |
 | 9 | Chat/video upload limits & storage | ✅ RESOLVED — ImageKit |
-| 10 | **Member levels & "plus one"** — what do levels 1/2/3 mean, how are they assigned, is plus-one per-event or per-group? (§4.3) | OPEN |
+| 10 | **Member levels & "plus one"** — what do levels 1/2/3 mean, how are they assigned, is plus-one per-event or per-group? (§4.3) | OPEN — **and now urgent**: the `level` enum shipped on an unconfirmed assumption and is inert. Cheaper to change before clients depend on it |
+| 11 | **Location ownership model** (new) — group-owned locations were added beyond the original creator-only design (§3.3) | ✅ RESOLVED by implementation — documented in §3.3; flagged here because it changed a stated design decision |
 
 ---
 
 ## 15. Suggested Build Order
 
-1. **Location collection (§3)** — foundational; unblocks group multi-location, event geo discovery, and challenge location. Do first because Group/Event schema changes depend on it.
-2. **Group field extensions (§4)** — logo, sportType, handle, rules, captains/levels, locations.
-3. **Event lifecycle rework (§5)** — biggest behavioural change; unblocks ratings, stats, team chats. *(Plan already written: `2026-07-23-event-lifecycle-rework.md`.)*
-4. **Multi-team fixtures (§5.3)** — extends the lifecycle work; do in the same pass as shuffle.
+*Progress marked 2026-08-03.*
+
+1. ~~**Location collection (§3)**~~ — ✅ **DONE**. Foundational; unblocked group multi-location and event geo discovery. *(Remaining scrap: `GET /locations/search`.)*
+2. ~~**Group field extensions (§4)**~~ — ✅ **DONE**. Logo, sportType, handle, rules, captains/levels, locations. *(Remaining scrap: Posts, gallery upload.)*
+3. **Event lifecycle rework (§5)** — ⬅️ **NEXT**. Biggest behavioural change; unblocks ratings, stats, team chats. *(Spec: [2026-08-03-events-feature-spec.md](./2026-08-03-events-feature-spec.md). The older `2026-07-23-event-lifecycle-rework.md` plan is superseded by it.)*
+4. **Multi-team fixtures (§5.3)** — extends the lifecycle work; do in the same pass as shuffle. Folded into the Events spec above.
 5. **Player Ratings (§8)** — depends on `after_match`; then wire the stubbed profile stats.
 6. **Tournament engine (§6)** — self-contained.
 7. **Team Challenge (§10)** + **Financial (§11)** — independent modules.
 8. **Chat attachments (§9)** + **Notification triggers (§12)** + gallery/highlight upload routes (§2.4).
+
+**Small leftovers worth batching** (each is hours, not days, and none blocks the critical path): `GET /locations/search`; `role` + `favouriteTeam` on User; username autogeneration (§2.2); the `EventsService` location-permission fix (§3.3); group gallery upload.
 
 Future §7 items (AI matching, live tracking, GPS check-in, push, dark mode, i18n, referee management, badges) remain **out of scope**.
 
@@ -795,19 +854,22 @@ Future §7 items (AI matching, live tracking, GPS check-in, push, dark mode, i18
 
 ## 16. Collections — target vs current
 
+*"Current" column re-verified 2026-08-03 against `main` @ `0b429fc`.*
+
 | Collection | Current | After changes |
 |---|---|---|
-| users | ✅ (add role, favouriteTeam) | ✅ |
-| notifications | ✅ | ✅ (more triggers) |
-| groups | ✅ (extend; locations ref) | ✅ |
-| group_members | ✅ | ✅ (+captain role, +level) |
-| messages | ✅ | ✅ (+attachments) |
-| events | ✅ (rework status; +matches[], locationId) | ✅ |
+| users | ✅ — `role`/`favouriteTeam` **still missing** | ✅ |
+| notifications | ✅ — shuffle is still the only trigger | ✅ (more triggers) |
+| groups | ✅ — **extended**: logo, sportType, handle, teamRules, locations[] | ✅ |
+| group_members | ✅ — **extended**: captain role + level 1–3 | ✅ |
+| messages | ✅ — still `{groupId, senderId, text}` only | ✅ (+attachments) |
+| events | ✅ — `locationId` landed; status rework + `matches[]` outstanding | ✅ |
 | tournaments / teams / matches | ✅ (add engine) | ✅ |
-| **locations** | ❌ | ✅ **new** (§3) |
+| **locations** | ✅ **shipped** (§3) — incl. `groupId` ownership | ✅ |
 | ratings | ❌ | ✅ **new** (§8) |
 | challenges | ❌ | ✅ **new** (§10) |
 | group_funds / fund_transactions | ❌ | ✅ **new** (§11) |
 | event_templates | ❌ | ✅ **new** (§5.5) |
+| event_likes / event_team_chats | ❌ | ✅ **new** — added by the [Events spec](./2026-08-03-events-feature-spec.md) §4.4 |
 | group_posts | ❌ | maybe (§14 #4) |
 | tournament_standings | ❌ | maybe (§14 #7) |
