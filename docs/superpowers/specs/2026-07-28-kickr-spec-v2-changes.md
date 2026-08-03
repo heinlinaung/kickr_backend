@@ -23,7 +23,9 @@ Verified against source. These are **done**, not backlog:
 | **File storage** | ImageKit via shared `ImageKitService` (backend-proxied; stores CDN url + fileId; deletes prior file on replace). Avatar, group logo + wallpaper migrated. |
 | **Player Profile (§4.2/§4.1)** | Implemented: `biography, country, city, dateOfBirth, sports[], preferredSport, footballPosition, privacy{profileVisibility,showStats,showMatchHistory}, inviteCode, highlightVideos[], gallery[]`, plus `GET /users/:id/profile` (privacy-filtered), `GET /users/me/qr`, extended `PATCH /users/me`. Stats are partial (see §2.3). |
 | **Location (§3)** — *shipped 2026-08-03* | `locations` collection with derived GeoJSON + `2dsphere`, CRUD routes, group attach/detach (max 5). **Diverged from spec:** rows may be *group*-owned as well as creator-owned (§3.3). `GET /locations/search` not built (§3.5). |
-| **Groups (§4)** — *shipped 2026-08-03* | `logo/logoFileId`, `sportType`, unique `handle`, `teamRules`, `locations[]`; `captain` role + `level` 1–3; search, QR, rules, member-role and location routes (§4.6). |
+| **Groups (§4)** — *shipped 2026-08-03* | `logo/logoFileId`, `sportType`, unique `handle`, `teamRules` (uncapped), `country`, `city`, `locations[]`; `captain` role + `level` 1–3; search, QR (open to any authenticated user), rules, member-role and location routes (§4.6). Detail returns the caller's `userRole`/`memberStatus`. |
+
+| **Admin endpoints** — *shipped 2026-08-03* | `POST /admin/groups/:groupId/members` and `POST /admin/events/:eventId/players` behind an `x-admin-key` shared secret (`ADMIN_KEY`). Bypass permissions but preserve capacity/duplicate/existence checks; per-user results. Fail closed when the env var is unset. See [pre-events changes](./2026-08-03-pre-events-changes.md) §6. |
 
 Design docs exist for **phone-number sign-in** and **verified email change** (separate specs); not covered here.
 
@@ -41,10 +43,10 @@ The 2026-08-03 status refresh re-verified §2–§4 against `main` at `0b429fc`.
 
 | Spec v2 area | Status today | Action |
 |---|---|---|
-| §4.1 User Management | **Mostly done** | Remaining: `role`, `favouriteTeam`, username autogeneration (§2.2) — **none shipped** |
+| §4.1 User Management | **Mostly done** | Signup now accepts an optional `name` (shipped 2026-08-03). Remaining: `role`, `favouriteTeam`, username autogeneration (§2.2) |
 | §4.2 Player Profile | **Mostly done** | Remaining: real statistics (needs §5 + §8), gallery/highlight **upload routes** |
 | §4.3 Groups | ✅ **Shipped** | Logo, sportType, handle, teamRules, captains + levels, locations all landed (§4.2, §4.3, §4.6). Remaining: Posts feed (§14 #4), group gallery upload |
-| §4.4 Group Invitations | Partial | Search + QR **shipped**; still open: invite-link deep-link format, and the invite-link-vs-approval inconsistency (§14 #5) |
+| §4.4 Group Invitations | ✅ **Shipped** | Search + QR shipped; §14 #5 approval inconsistency **fixed 2026-08-03** ([pre-events §6b](./2026-08-03-pre-events-changes.md)). QR is now readable by any authenticated user. Still open: invite-link deep-link format |
 | §4.5 Events | Partial | **Rework** status → 6-state lifecycle; **add** MVP, multi-team fixtures, photos, cover, templates → [detailed spec](./2026-08-03-events-feature-spec.md) |
 | §4.6 Public Events | Partial | **Add** geo discovery (now unblocked — `Location.geo` exists); auto-close-when-full |
 | §4.7 Tournament Management | Data-model only | **Build engine** — bracket gen, league fixtures, standings, winner propagation |
@@ -208,7 +210,7 @@ Remove `locationName`, `latitude`, `longitude` from **both** `Group` and `Event`
 
 ## 4. Groups & Invitations (§4.3, §4.4) — ✅ MOSTLY SHIPPED 2026-08-03
 
-> **AS BUILT.** §4.2 (schema additions), §4.3 (captain role + levels) and all but two rows of §4.6 (routes) shipped. §4.1 below is the *pre-change* state, kept for history. Still outstanding: group Posts (§14 #4), group gallery upload, invite-link deep-link format, and the §14 #5 approval inconsistency.
+> **AS BUILT.** §4.2 (schema additions), §4.3 (captain role + levels) and all but two rows of §4.6 (routes) shipped. §4.1 below is the *pre-change* state, kept for history. Still outstanding: group Posts (§14 #4), group gallery upload, and the invite-link deep-link format. The §14 #5 approval inconsistency was **fixed 2026-08-03** ([pre-events changes](./2026-08-03-pre-events-changes.md) §6b). Group also gained `country`/`city` and lost the max-3 rules cap in that change set.
 
 ### 4.1 Current state — VERIFIED (pre-change, 2026-07-28)
 
@@ -227,7 +229,7 @@ logoFileId: string  // ImageKit fileId for replace/delete
 wallpaperFileId: string            // added alongside, same reason
 sportType: string   // enum football | futsal | padel | basketball
 handle: string      // unique sparse index, trimmed
-teamRules: [string] // max 3, enforced in the service
+teamRules: [string] // no cap (max-3 removed 2026-08-03); newlines preserved
 locations: [ObjectId->Location]   // §3.2 — max 5, enforced via GroupsService.MAX_LOCATIONS
 ```
 
@@ -236,7 +238,7 @@ Indexes as built: `inviteCode` unique sparse, `handle` unique sparse, `name` tex
 Notes:
 - `wallpaper` (existing) = the cover/banner photo. `logo` (new) = the team crest. The screenshots show both.
 - `homeGround` is **not** added — it is subsumed by `locations` (§3). *(The previous version listed it and simultaneously annotated "should remove"; resolved here as: removed.)*
-- `country`/`city` are **not** added to Group — derive from the referenced `Location` if needed for display/filtering.
+- ~~`country`/`city` are **not** added to Group — derive from the referenced `Location`.~~ **REVERSED 2026-08-03:** `country` and `city` **are** being added to Group as optional free-text fields. A team's country/city is a property of the team, not of any one pitch it plays on, and the new `GET /events?region=` filter needs it on the group directly rather than via a `Group.locations[] → Location` join on every query. See [pre-events changes](./2026-08-03-pre-events-changes.md) §4.1.
 - `isPrivate` (existing) means the group is excluded from search results (§4.5 Team Name search).
 
 ### 4.3 GroupMember — captains & member levels — ⚠️ PARTIALLY SHIPPED
@@ -260,14 +262,14 @@ level: 1 | 2 | 3                                  // default 1
 
 ### 4.5 Invitations / join flow (§4.4)
 
-Current: request-to-join (pending → owner approves), plus `inviteCode` + `join-by-code` (which **auto-approves**, bypassing owner approval).
+**As shipped today (2026-08-03):** both join paths create a `pending` row that an owner/admin must approve — request-to-join and `join-by-code` alike. The earlier auto-approve behaviour of `join-by-code` was removed ([pre-events changes](./2026-08-03-pre-events-changes.md) §6b).
 
 | Join method | Status | Action |
 |---|---|---|
 | Team Name search | ✅ **Shipped** | `GET /groups/search?q=` — case-insensitive regex over `name` **and** `handle`, excludes `isPrivate`, limit 20 |
 | Invitation Link | ✅ **Shipped** | `GET /groups/:id/qr` returns `{ inviteCode, inviteLink, expiresAt }`; reuses the unexpired code rather than churning a new one (`f0e254b`) |
 | QR Code | ✅ **Shipped** | Same endpoint — returns the payload; client renders the QR |
-| Owner approval | ⚠️ **Still inconsistent** | `join-by-code` continues to auto-approve, contradicting "owners approve new members before joining". **Unresolved — see §14 #5** |
+| Owner approval | ✅ **Shipped 2026-08-03** | Both paths require approval: `join-by-code` creates a `pending` row instead of auto-approving. See [pre-events changes](./2026-08-03-pre-events-changes.md) §6b; §14 #5 closed |
 | Challenge from other team | Missing | Covered by Team Challenge (§10) |
 
 ### 4.6 New/changed routes
@@ -280,7 +282,7 @@ Current: request-to-join (pending → owner approves), plus `inviteCode` + `join
 | PATCH | `/groups/:id` | accept `sportType`, `handle`, `teamRules` — returns **409** on a taken handle (`34fc1a4`) | ✅ shipped |
 | GET | `/groups/:id/qr` | QR/invite-link payload | ✅ shipped |
 | PATCH | `/groups/:id/members/:userId/role` | promote to captain/admin, set `level` | ✅ shipped |
-| GET/POST | `/groups/:id/rules` | team rules, **max 3** | ✅ shipped |
+| GET/POST | `/groups/:id/rules` | team rules — **no cap** (max-3 removed 2026-08-03) | ✅ shipped |
 | GET/POST/DELETE | `/groups/:id/locations` | see §3.5, **max 5** | ✅ shipped |
 | GET | `/groups/:id/members`, `/groups/:id/invite-code` | listing + code retrieval | ✅ shipped |
 | DELETE | `/groups/:id/members/:userId` | remove a member | ✅ shipped |
@@ -288,7 +290,7 @@ Current: request-to-join (pending → owner approves), plus `inviteCode` + `join
 | POST | `/groups/:id/gallery` | **NEW** — upload gallery media (ImageKit) | ❌ not built |
 | DELETE | `/groups/:id/rules` | rule removal — POST replaces the whole array as built | ❌ not built |
 
-> **Note on rules:** as built, `POST /groups/:id/rules` **replaces** the entire `teamRules` array (validated at max 3) rather than appending, so a separate DELETE is unnecessary for the current client. Listed above as not-built for accuracy against the original spec row.
+> **Note on rules:** as built, `POST /groups/:id/rules` **replaces** the entire `teamRules` array (no count or length cap since 2026-08-03) rather than appending, so a separate DELETE is unnecessary for the current client. Listed above as not-built for accuracy against the original spec row.
 
 ---
 
@@ -575,192 +577,33 @@ End-to-end flows for the main journeys. These encode the gating rules stated els
 
 Email + password sign-in. A PreSignUp Lambda auto-confirms users (bypassing email-code delivery); Cognito remains the identity source of truth, Mongo holds the profile.
 
-```mermaid
-sequenceDiagram
-    actor U as User (Flutter)
-    participant API as NestJS API
-    participant CG as AWS Cognito
-    participant L as PreSignUp Lambda
-    participant DB as MongoDB
-
-    U->>API: POST /auth/signup {email, name, password}
-    API->>API: generate username from name (§2.2)
-    API->>CG: SignUp (+ SECRET_HASH)
-    CG->>L: PreSignUp trigger
-    L-->>CG: autoConfirmUser = true
-    CG-->>API: UserSub (cognitoSub)
-    API->>DB: create User {cognitoSub, username, name, email}
-    Note over API,DB: dual-write: if this fails the<br/>Cognito user is orphaned (§ known gap)
-    API-->>U: 201 { message }
-
-    U->>API: POST /auth/login {email, password}
-    API->>CG: AdminInitiateAuth (ADMIN_USER_PASSWORD_AUTH)
-    CG-->>API: accessToken / idToken / refreshToken
-    API->>DB: findOne({ email }) → profile
-    API-->>U: 200 { tokens, user }
-
-    U->>API: GET /users/me  (Bearer accessToken)
-    API->>CG: fetch JWKS (cached)
-    API->>API: verify RS256 + issuer + token_use=access
-    API->>DB: findOne({ cognitoSub: claims.sub })
-    API-->>U: 200 { profile }
-```
+📊 **Diagram:** [`spec-v2-13-1-user-signup-login.mmd`](../diagrams/spec-v2-13-1-user-signup-login.mmd) — mermaid source (GitHub renders it on open).
 
 ### 13.2 Group creation → member invitation → approval
 
-Covers all three join paths (§4.5). Note the open question on whether invite-link joins should require approval (§14 #5) — shown as the *current* auto-approve behaviour.
+Covers all three join paths (§4.5).
 
-```mermaid
-flowchart TD
-    A[Owner: POST /groups] --> B[Group created<br/>owner = GroupMember role:owner]
-    B --> C{How does a new member join?}
+> **Updated 2026-08-03:** §14 #5 is resolved — invite-link/QR joins now require approval too, so both paths converge on `status: pending`. The diagram below reflects the target behaviour; the auto-approve branch it previously showed is being removed ([pre-events changes](./2026-08-03-pre-events-changes.md) §6b).
 
-    C -->|Search by name| D[GET /groups/search?q=<br/>excludes isPrivate]
-    D --> E[POST /groups/:id/invitations<br/>request to join]
-    C -->|QR / invite link| F[GET /groups/:id/qr → code]
-    F --> G[POST /groups/join-by-code]
-
-    E --> H[GroupMember status: pending]
-    G --> I[["status: approved<br/>(auto — see §14 #5)"]]
-
-    H --> J{Owner/Admin reviews<br/>PATCH /groups/:id/invitations/:id}
-    J -->|approve| K[status: approved<br/>joinedAt set<br/>capacity checked vs maxPlayers]
-    J -->|reject| L[member row deleted]
-
-    K --> M[Notification to requester]
-    I --> M
-    L --> N[Notification: rejected]
-
-    K --> O{Promotion?}
-    O -->|PATCH members/:userId/role| P[role: captain / admin<br/>or level 1→3]
-```
+📊 **Diagram:** [`spec-v2-13-2-group-join-approval.mmd`](../diagrams/spec-v2-13-2-group-join-approval.mmd) — mermaid source (GitHub renders it on open).
 
 ### 13.3 Event lifecycle (creation → done)
 
 The 6-state machine from §5.2. Transitions are manual and organizer-gated; capacity is derived, not a state.
 
-```mermaid
-stateDiagram-v2
-    [*] --> join: POST /events (organizer)
-
-    join --> before_match: PATCH /status
-    before_match --> join: reopen registration
-    before_match --> preparation: PATCH /status
-    preparation --> before_match: revert
-    preparation --> playing: PATCH /status
-    playing --> after_match: PATCH /status
-    after_match --> done: PATCH /status
-    done --> [*]
-
-    note right of join
-        join / unjoin allowed
-        blocked when joinedCount >= maxPlayers
-    end note
-
-    note right of preparation
-        shuffle runs here →
-        teams assigned, fixtures
-        generated, team chats open
-    end note
-
-    note right of after_match
-        results + MVP + photos
-        ratings accepted ONLY here
-    end note
-
-    note right of done
-        team chats archived
-        history + stats retained
-    end note
-```
+📊 **Diagram:** [`spec-v2-13-3-event-lifecycle.mmd`](../diagrams/spec-v2-13-3-event-lifecycle.mmd) — mermaid source (GitHub renders it on open).
 
 ### 13.4 Team shuffle & fixture generation (preparation)
 
-```mermaid
-sequenceDiagram
-    actor O as Organizer
-    participant API as Events/Shuffle
-    participant DB as MongoDB
-    participant CH as Chat
-    participant N as Notifications
-
-    O->>API: PATCH /events/:id/status {preparation}
-    API->>API: assert legal transition + organizer
-    API-->>O: status = preparation
-
-    O->>API: POST /events/:id/shuffle
-    API->>API: reject unless status == preparation
-    API->>DB: load EventPlayers (status: joined)
-    API->>API: Fisher-Yates → assign teams (§14 #6)
-    API->>DB: bulkWrite EventPlayer.team
-
-    alt more than 2 teams
-        API->>API: generate double round-robin matches[]
-        API->>DB: save Event.matches (scores null)
-    end
-
-    API->>CH: create EventTeamChat per team
-    API->>N: notify each player of their team
-    API-->>O: { teams, fixtures }
-
-    Note over API,DB: fixtures immutable after this —<br/>only scores may be entered later
-```
+📊 **Diagram:** [`spec-v2-13-4-team-shuffle-fixtures.mmd`](../diagrams/spec-v2-13-4-team-shuffle-fixtures.mmd) — mermaid source (GitHub renders it on open).
 
 ### 13.5 Match results, MVP & ratings (playing → after_match)
 
-```mermaid
-flowchart LR
-    A[status: playing] --> B["PATCH /events/:id/matches/:matchNumber<br/>{scoreA, scoreB}"]
-    B --> C{all fixtures played?}
-    C -->|no| B
-    C -->|yes| D[PATCH /status → after_match]
-
-    D --> E[POST /events/:id/result<br/>mvpUserId]
-    D --> F[POST /events/:id/photos<br/>→ ImageKit]
-    D --> G[POST /events/:id/ratings<br/>stars 1-5 + comment]
-
-    G --> H{unique eventId+raterId+rateeId}
-    H -->|duplicate| I[409 conflict]
-    H -->|ok| J[rating stored]
-
-    J --> K[feeds profile avgRating]
-    E --> L[feeds profile mvpCount]
-    B --> M[standings derived on read<br/>win 3 / draw 1 / loss 0]
-
-    D --> N[PATCH /status → done<br/>team chats archived]
-```
+📊 **Diagram:** [`spec-v2-13-5-match-results-mvp-ratings.mmd`](../diagrams/spec-v2-13-5-match-results-mvp-ratings.mmd) — mermaid source (GitHub renders it on open).
 
 ### 13.6 Team challenge (group vs group)
 
-```mermaid
-sequenceDiagram
-    actor A as Group A owner
-    participant API as Challenges
-    participant DB as MongoDB
-    participant N as Notifications
-    actor B as Group B owner
-
-    A->>API: POST /challenges {toGroupId, proposedDate, locationId, numberOfPlayers}
-    API->>DB: Challenge status = pending
-    API->>N: notify Group B owner/admins
-    N-->>B: "Group A challenged you"
-
-    B->>API: GET /challenges?groupId=B
-    B->>API: PATCH /challenges/:id {accepted | rejected}
-
-    alt accepted
-        API->>DB: status = accepted, respondedBy
-        opt spawn match
-            API->>DB: create Event (locationId, date, maxPlayers)
-            API->>DB: challenge.resultingEventId = event._id
-        end
-        API->>N: notify Group A "accepted"
-        Note over API: event then follows the<br/>normal lifecycle (§13.3)
-    else rejected
-        API->>DB: status = rejected
-        API->>N: notify Group A "declined"
-    end
-```
+📊 **Diagram:** [`spec-v2-13-6-team-challenge.mmd`](../diagrams/spec-v2-13-6-team-challenge.mmd) — mermaid source (GitHub renders it on open).
 
 ### 13.7 Location attach (creator- or group-owned)
 
@@ -768,48 +611,13 @@ How any collection attaches a location (§3.3). No dedupe — creating always in
 
 > **Updated 2026-08-03:** as built, a location may be group-owned, so the ownership check is the §3.3 permission matrix, not a bare `createdBy` comparison. One exception: `EventsService` still uses the strict creator-only check — the known gap noted in §3.3.
 
-```mermaid
-flowchart TD
-    A["Caller supplies location<br/>(new payload or existing locationId)"] --> B{locationId given?}
-    B -->|yes| C["validate exists AND caller may manage it<br/>(creator, or group owner/admin/captain)"] --> H
-    B -->|no| D["POST /locations {name, lat, lng, url, metadata}"]
-    D --> G["always INSERT a new row<br/>createdBy = caller<br/>geo derived from lat/lng (2dsphere)"] --> H
-
-    H["referrer stores the ref"]
-    H --> I["Group.locations[] (max 5)<br/>caller must be group owner/admin"]
-    H --> J[Event.locationId]
-    H --> K[Challenge.locationId]
-
-    I --> L["DELETE detaches only —<br/>row survives for the owner's other uses"]
-    J --> M["enables GET /events?near=&radius=<br/>via $near on Location.geo"]
-
-    N["No dedupe: two users adding the same<br/>pitch create two rows — intended"] -.-> G
-```
+📊 **Diagram:** [`spec-v2-13-7-location-attach.mmd`](../diagrams/spec-v2-13-7-location-attach.mmd) — mermaid source (GitHub renders it on open).
 
 ### 13.8 File upload (ImageKit, backend-proxied)
 
 Applies to avatar, group logo/wallpaper/gallery, event cover/photos, chat attachments, highlight videos.
 
-```mermaid
-sequenceDiagram
-    actor U as Client
-    participant API as NestJS route
-    participant M as multer (memory)
-    participant IK as ImageKit
-    participant DB as MongoDB
-
-    U->>API: POST .../upload (multipart file)
-    API->>M: buffer in memory (MIME + size checked)
-    Note over M: image routes → multerMemoryImageOptions<br/>video routes → multerMemoryVideoOptions (§9.3)
-    API->>IK: upload(buffer, fileName, folder)
-    IK-->>API: { url, fileId }
-    opt entity had a previous file
-        API->>IK: deleteFile(prevFileId)
-        Note over API,IK: best-effort — failure logged,<br/>does not fail the request
-    end
-    API->>DB: store url + fileId on the entity
-    API-->>U: 200 { entity with CDN url }
-```
+📊 **Diagram:** [`spec-v2-13-8-file-upload-imagekit.mmd`](../diagrams/spec-v2-13-8-file-upload-imagekit.mmd) — mermaid source (GitHub renders it on open).
 
 ---
 
@@ -823,7 +631,7 @@ sequenceDiagram
 | 2 | OAuth (Google/Facebook) | ✅ RESOLVED — stubs removed; can add via Cognito IdPs later |
 | 3 | Highlight/gallery storage | ✅ RESOLVED — ImageKit. Sub-question: arrays vs a `media` collection if per-item metadata is needed |
 | 4 | **Group Posts vs chat announcements** — separate feed, or pinned messages? | OPEN — nothing built either way |
-| 5 | **Invite-link approval** — should join-by-link/QR still require owner approval? (currently auto-approves) | OPEN — **the inconsistency shipped**; search/QR landed around it without resolving the semantics |
+| 5 | **Invite-link approval** — should join-by-link/QR still require owner approval? | ✅ **RESOLVED & SHIPPED 2026-08-03** — yes, approval required. `joinByCode` now creates a `pending` row like request-to-join. See [pre-events changes](./2026-08-03-pre-events-changes.md) §6b/§11 |
 | 6 | **Shuffle strategy** — random buckets of 6, skill/position-balanced, or fixed N colour teams? | ✅ RESOLVED 2026-08-03 — **fixed N colour teams** (`teamCount`, default 4). See the [Events spec](./2026-08-03-events-feature-spec.md) §3 |
 | 7 | **League standings storage** — recomputed collection vs computed-on-read | ✅ RESOLVED for *events* — computed-on-read (Events spec §4.3). Still OPEN for **tournaments** (§6.2) |
 | 8 | **Ratings cardinality** — one per match total, or one per teammate per match? | OPEN |

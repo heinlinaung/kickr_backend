@@ -6,7 +6,6 @@ import {
   IsBoolean,
   IsIn,
   IsArray,
-  ArrayMaxSize,
   Matches,
   MinLength,
 } from 'class-validator';
@@ -56,11 +55,21 @@ export class UpdateGroupDto {
     example: ['Be on time', 'No slide tackles'],
     required: false,
     type: [String],
-    description: 'max 3 rules',
+    description:
+      'Team rules. No count or length limit; newlines within a rule are preserved.',
   })
   @IsOptional()
   @IsArray()
-  @ArrayMaxSize(3)
   @IsString({ each: true })
   teamRules?: string[];
+
+  @ApiProperty({ example: 'Thailand', required: false })
+  @IsOptional()
+  @IsString()
+  country?: string;
+
+  @ApiProperty({ example: 'Bangkok', required: false })
+  @IsOptional()
+  @IsString()
+  city?: string;
 }

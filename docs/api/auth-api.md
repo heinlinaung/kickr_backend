@@ -85,7 +85,7 @@ None require an `Authorization` header. All are `POST`.
 
 `POST /auth/signup`
 ```json
-{ "email": "player@example.com", "password": "Password123!" }
+{ "email": "player@example.com", "password": "Password123!", "name": "Thar Htet" }
 ```
 → `201`
 ```json
@@ -93,6 +93,13 @@ None require an `Authorization` header. All are `POST`.
 ```
 
 Validation: `email` must be a valid email · `password` **min 8 chars**, and must satisfy the Cognito pool policy (**uppercase + lowercase + number + symbol**). A policy failure comes back as `400` with Cognito's wording, so surface `message` directly.
+
+**`name` is optional** (2–60 chars). Send it if you collect a display name on the signup form:
+
+- **Supplied** → stored as the profile `name`, with surrounding whitespace trimmed.
+- **Omitted, empty, or whitespace-only** → falls back to the email's local part (`player@example.com` → `player`).
+
+It stays optional deliberately, so older app builds that post only `email` + `password` keep working. Sending `name: ""` or `"   "` is *not* an error — it just takes the fallback — so validate on the client if a real name is required by your UX.
 
 ### 3.2 Users are auto-confirmed — no email code needed
 
@@ -112,7 +119,7 @@ That means:
 
 ### 3.4 Profile created alongside
 
-Signup creates the Cognito identity **and** a Mongo profile linked by `cognitoSub`. Currently `name` is defaulted from the email prefix and **`username` is `null`** — see §8.
+Signup creates the Cognito identity **and** a Mongo profile linked by `cognitoSub`. `name` comes from the request when supplied, else the email prefix (§3.1). **`username` is still `null`** — see §8.
 
 ---
 
@@ -313,7 +320,8 @@ There is **no logout endpoint**. Logging out is a client-side action: clear the 
 
 | Item | Reality |
 |---|---|
-| **`user.username` is `null`** | Auto-generating a username from the display name is specified but **not implemented**. `name` is defaulted from the email prefix. Don't show `username` as the primary handle yet; it is editable via `PATCH /users/me`. |
+| **`user.username` is `null`** | Auto-generating a username from the display name is specified but **not implemented**. Don't show `username` as the primary handle yet; it is editable via `PATCH /users/me`. (`name` *can* now be set at signup — see §3.1.) |
+| `role`, `favouriteTeam` on the profile | Specified but **not implemented**. |
 | `emailVerified` is `false` | Cognito owns real verification; this Mongo field isn't synced and nothing gates on it. **Ignore it.** |
 | Phone-number sign-in | Design doc only — not implemented. Sign-in is email. |
 | Verified email change | Design doc only — not implemented. |
@@ -368,6 +376,7 @@ Forgot password: `POST /auth/forgot-password { email }` → user gets a code →
 - [ ] Single-flight the refresh call so parallel 401s don't stampede.
 - [ ] On refresh `401`: clear storage → login screen.
 - [ ] Skip the confirmation-code screen in the signup happy path (auto-confirm is on).
+- [ ] Send `name` on signup if you collect one — optional, 2–60 chars; blank/whitespace silently falls back to the email prefix.
 - [ ] Same generic error for wrong-password and unknown-email.
 - [ ] Never reveal account existence on forgot-password.
 - [ ] Handle `message` being a **string or a list**.

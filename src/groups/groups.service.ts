@@ -100,10 +100,36 @@ export class GroupsService {
     return group;
   }
 
-  async findById(groupId: string): Promise<GroupDocument> {
+  /**
+   * Group detail. When `userId` is supplied the response carries the caller's
+   * own membership so the client can render role-gated UI without a second
+   * request.
+   *
+   * `memberStatus` is returned alongside `userRole` because the role alone is
+   * ambiguous: a pending join request already stores `role: 'member'`, so
+   * without the status an unapproved requester looks like a full member.
+   */
+  async findById(groupId: string, userId?: string) {
     const group = await this.groupModel.findById(groupId).lean();
     if (!group) throw new NotFoundException('Group not found');
-    return group;
+
+    if (!userId) return group;
+
+    // Queried directly rather than via getMemberRole(), which filters to
+    // approved rows and so cannot report a pending membership.
+    const member = await this.memberModel
+      .findOne({
+        groupId: new Types.ObjectId(groupId),
+        userId: new Types.ObjectId(userId),
+      })
+      .select('role status')
+      .lean();
+
+    return {
+      ...group,
+      userRole: member?.role ?? null,
+      memberStatus: member?.status ?? null,
+    };
   }
 
   async update(
@@ -230,15 +256,14 @@ export class GroupsService {
    * Use `generateInviteCode` directly to deliberately rotate (invalidating any
    * previously shared QR).
    */
-  async getQr(
-    groupId: string,
-    userId: string,
-  ): Promise<{
+  async getQr(groupId: string): Promise<{
     inviteCode: string;
     inviteLink: string;
     expiresAt: Date | null;
   }> {
-    await this.assertOwnerOrAdmin(groupId, userId);
+    // Deliberately NOT role-gated: any authenticated user may fetch a group's
+    // invite link. Safe because join-by-code creates a *pending* request that an
+    // owner/admin must approve — the code is not a bearer token for entry.
     const group = await this.groupModel
       .findById(groupId)
       .select('inviteCode inviteCodeExpiry')
@@ -257,7 +282,7 @@ export class GroupsService {
       code = existingCode;
       expiresAt = existingExpiry ? new Date(existingExpiry) : null;
     } else {
-      code = await this.generateInviteCode(groupId, userId);
+      code = await this.mintInviteCode(groupId);
       const refreshed = await this.groupModel
         .findById(groupId)
         .select('inviteCodeExpiry')
@@ -276,9 +301,8 @@ export class GroupsService {
     rules: string[],
   ): Promise<GroupDocument> {
     await this.assertOwnerOrAdmin(groupId, userId);
-    if (rules.length > 3) {
-      throw new BadRequestException('A group may have at most 3 rules');
-    }
+    // No count or length cap (product decision) — rule text is stored verbatim,
+    // including any newlines, so multi-line rules round-trip unchanged.
     const group = await this.groupModel
       .findByIdAndUpdate(groupId, { $set: { teamRules: rules } }, { new: true })
       .lean();
@@ -324,8 +348,18 @@ export class GroupsService {
     return { message: 'Member removed' };
   }
 
+  /** Owner/admin-gated: rotating the code invalidates any link already shared. */
   async generateInviteCode(groupId: string, userId: string): Promise<string> {
     await this.assertOwnerOrAdmin(groupId, userId);
+    return this.mintInviteCode(groupId);
+  }
+
+  /**
+   * Ungated code minting, used by getQr so a plain member can fetch a QR for a
+   * group whose code is missing or expired. Kept private and separate from
+   * generateInviteCode so the explicit rotate endpoint keeps its role check.
+   */
+  private async mintInviteCode(groupId: string): Promise<string> {
     const code = uuidv4();
     await this.groupModel.findByIdAndUpdate(groupId, {
       $set: {

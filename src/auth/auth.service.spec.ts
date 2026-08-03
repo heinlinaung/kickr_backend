@@ -59,6 +59,52 @@ describe('AuthService (Cognito proxy)', () => {
     expect(res.message).not.toMatch(/check your email/i);
   });
 
+  describe('signup name', () => {
+    beforeEach(() => {
+      cognito.signUp.mockResolvedValue('sub-abc');
+      userModel.create.mockResolvedValue({});
+    });
+
+    const nameFromCreate = () =>
+      (userModel.create.mock.calls[0][0] as { name: string }).name;
+
+    it('uses the supplied name when present', async () => {
+      await service.signup({
+        email: 'alice@b.com',
+        password: 'Password123!',
+        name: 'Thar Htet',
+      });
+      expect(nameFromCreate()).toBe('Thar Htet');
+    });
+
+    it('falls back to the email local part when omitted', async () => {
+      await service.signup({
+        email: 'alice@b.com',
+        password: 'Password123!',
+      });
+      expect(nameFromCreate()).toBe(defaultNameFromEmail('alice@b.com'));
+    });
+
+    it('falls back when the name is only whitespace', async () => {
+      await service.signup({
+        email: 'alice@b.com',
+        password: 'Password123!',
+        name: '   ',
+      });
+      // Without the trim this would persist a blank display name.
+      expect(nameFromCreate()).toBe('alice');
+    });
+
+    it('trims surrounding whitespace off a real name', async () => {
+      await service.signup({
+        email: 'alice@b.com',
+        password: 'Password123!',
+        name: '  Thar Htet  ',
+      });
+      expect(nameFromCreate()).toBe('Thar Htet');
+    });
+  });
+
   it('signup: lowercases the email before Cognito and Mongo see it', async () => {
     cognito.signUp.mockResolvedValue('sub-abc');
     userModel.create.mockResolvedValue({});

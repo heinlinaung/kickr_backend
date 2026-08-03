@@ -95,13 +95,19 @@ describe('CreateGroupDto', () => {
 });
 
 describe('UpdateGroupDto', () => {
-  it('rejects 4 teamRules, accepts 3', async () => {
-    expect(
-      await expectRejected(UpdateGroupDto, { teamRules: ['a', 'b', 'c', 'd'] }),
-    ).toContain('teamRules');
+  it('accepts more than 3 teamRules — the cap was removed', async () => {
+    const six = ['a', 'b', 'c', 'd', 'e', 'f'];
+    const out: any = await run(UpdateGroupDto, { teamRules: six });
+    expect(out.teamRules).toEqual(six);
+  });
 
-    const out: any = await run(UpdateGroupDto, { teamRules: ['a', 'b', 'c'] });
-    expect(out.teamRules).toEqual(['a', 'b', 'c']);
+  it('accepts country and city', async () => {
+    const out: any = await run(UpdateGroupDto, {
+      country: 'Myanmar',
+      city: 'Yangon',
+    });
+    expect(out.country).toBe('Myanmar');
+    expect(out.city).toBe('Yangon');
   });
 
   it('rejects non-string rule entries', async () => {
@@ -148,13 +154,26 @@ describe('UpdateMemberRoleDto', () => {
 });
 
 describe('SetGroupRulesDto', () => {
-  it('requires rules and caps them at 3', async () => {
+  it('requires rules', async () => {
     expect(await expectRejected(SetGroupRulesDto, {})).toContain('rules');
-    expect(
-      await expectRejected(SetGroupRulesDto, { rules: ['a', 'b', 'c', 'd'] }),
-    ).toContain('rules');
+  });
 
-    const out: any = await run(SetGroupRulesDto, { rules: ['a', 'b'] });
-    expect(out.rules).toEqual(['a', 'b']);
+  it('accepts any number of rules — the max-3 cap was removed', async () => {
+    const six = ['a', 'b', 'c', 'd', 'e', 'f'];
+    const out: any = await run(SetGroupRulesDto, { rules: six });
+    expect(out.rules).toEqual(six);
+  });
+
+  it('preserves newlines and non-ASCII text in a rule', async () => {
+    const rules = ['ပွဲမတိုင်ခင် ( 15-30 ) မိနစ်\nစောပြီး', 'a\n\nb'];
+    const out: any = await run(SetGroupRulesDto, { rules });
+    expect(out.rules[0]).toBe(rules[0]);
+    expect(out.rules[1]).toBe('a\n\nb');
+  });
+
+  it('still rejects non-string entries', async () => {
+    expect(
+      await expectRejected(SetGroupRulesDto, { rules: ['ok', 42] }),
+    ).toContain('rules');
   });
 });

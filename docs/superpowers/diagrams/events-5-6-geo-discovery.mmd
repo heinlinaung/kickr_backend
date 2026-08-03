@@ -1,0 +1,12 @@
+%% 5.6 Geo discovery
+%% Source of truth for this diagram. Rendered from ../specs/2026-08-03-events-feature-spec.md §5.6
+%% Edit here, not in the spec — the spec links to this file.
+flowchart TD
+    A["GET /events?near=lat,lng&radius=5000"] --> B["parse near; clamp radius<br/>default 10km, max 100km"]
+    B --> C["$geoNear on locations.geo<br/>(2dsphere — already exists)"]
+    C --> D["$lookup events where<br/>locationId == location._id"]
+    D --> E["filter isPublic: true<br/>AND status: 'join'"]
+    E --> F["$sort by distance"]
+    F --> G["events + distance in metres"]
+
+    H["same pitch may exist as several rows,<br/>one per creator/group (parent §3)"] -.->|"apparent duplicates<br/>are accepted"| G

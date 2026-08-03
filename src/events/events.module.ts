@@ -8,6 +8,7 @@ import {
   GroupMember,
   GroupMemberSchema,
 } from '../groups/schemas/group-member.schema';
+import { Group, GroupSchema } from '../groups/schemas/group.schema';
 import { LocationsModule } from '../locations/locations.module';
 
 @Module({
@@ -16,6 +17,8 @@ import { LocationsModule } from '../locations/locations.module';
       { name: Event.name, schema: EventSchema },
       { name: EventPlayer.name, schema: EventPlayerSchema },
       { name: GroupMember.name, schema: GroupMemberSchema },
+      // Needed for the group's rules on event detail and the ?region= filter.
+      { name: Group.name, schema: GroupSchema },
     ]),
     LocationsModule,
   ],

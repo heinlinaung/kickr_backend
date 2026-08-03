@@ -1,0 +1,42 @@
+%% 5.1 Full event lifecycle — state machine
+%% Source of truth for this diagram. Rendered from ../specs/2026-08-03-events-feature-spec.md §5.1
+%% Edit here, not in the spec — the spec links to this file.
+stateDiagram-v2
+    [*] --> join: POST /events (organizer)
+
+    join --> before_match: PATCH /status
+    before_match --> join: reopen registration
+    before_match --> preparation: PATCH /status
+    preparation --> before_match: revert
+    preparation --> playing: PATCH /status
+    playing --> after_match: PATCH /status
+    after_match --> done: PATCH /status
+    done --> [*]
+
+    note right of join
+        join / unjoin allowed
+        blocked when joinedCount >= maxPlayers
+        (no 'full' status — derived)
+    end note
+
+    note right of preparation
+        shuffle runs here:
+        colour teams assigned,
+        fixtures generated,
+        team chats created
+    end note
+
+    note right of playing
+        per-fixture scores entered
+        standings derived on read
+    end note
+
+    note right of after_match
+        MVP + photos
+        ratings accepted ONLY here (§8, separate)
+    end note
+
+    note right of done
+        terminal — team chats archived
+        edit/delete rejected
+    end note

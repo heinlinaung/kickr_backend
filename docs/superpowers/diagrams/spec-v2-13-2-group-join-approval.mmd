@@ -1,0 +1,24 @@
+%% 13.2 Group creation → member invitation → approval
+%% Source of truth for this diagram. Rendered from ../specs/2026-07-28-kickr-spec-v2-changes.md §13.2
+%% Edit here, not in the spec — the spec links to this file.
+flowchart TD
+    A[Owner: POST /groups] --> B[Group created<br/>owner = GroupMember role:owner]
+    B --> C{How does a new member join?}
+
+    C -->|Search by name| D[GET /groups/search?q=<br/>excludes isPrivate]
+    D --> E[POST /groups/:id/invitations<br/>request to join]
+    C -->|QR / invite link| F[GET /groups/:id/qr → code<br/>any authenticated user]
+    F --> G[POST /groups/join-by-code]
+
+    E --> H[GroupMember status: pending]
+    G --> H
+
+    H --> J{Owner/Admin reviews<br/>PATCH /groups/:id/invitations/:id}
+    J -->|approve| K[status: approved<br/>joinedAt set<br/>capacity checked vs maxPlayers]
+    J -->|reject| L[member row deleted]
+
+    K --> M[Notification to requester]
+    L --> N[Notification: rejected]
+
+    K --> O{Promotion?}
+    O -->|PATCH members/:userId/role| P[role: captain / admin<br/>or level 1→3]

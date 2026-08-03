@@ -1,0 +1,27 @@
+%% 5.7 Illegal transition — the rejection path
+%% Source of truth for this diagram. Rendered from ../specs/2026-08-03-events-feature-spec.md §5.7
+%% Edit here, not in the spec — the spec links to this file.
+sequenceDiagram
+    actor U as Caller
+    participant API as Events API
+    participant LC as events.lifecycle (pure)
+    participant DB as MongoDB
+
+    U->>API: PATCH /events/:id/status {to}
+    API->>DB: load event
+    alt caller is not the organizer
+        API-->>U: 403 Forbidden
+    else
+        API->>LC: canTransition(event.status, to)
+        alt illegal (e.g. join → playing, or anything out of done)
+            LC-->>API: false
+            API-->>U: 409 Conflict — illegal transition
+        else legal
+            LC-->>API: true
+            API->>DB: set status
+            opt to == 'done'
+                API->>DB: archive EventTeamChat rows
+            end
+            API-->>U: 200 { event }
+        end
+    end

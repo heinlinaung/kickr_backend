@@ -1,0 +1,53 @@
+%% 5.2 Organizer happy path — create to archive
+%% Source of truth for this diagram. Rendered from ../specs/2026-08-03-events-feature-spec.md §5.2
+%% Edit here, not in the spec — the spec links to this file.
+sequenceDiagram
+    actor O as Organizer
+    participant API as Events API
+    participant DB as MongoDB
+    participant IK as ImageKit
+    participant N as Notifications
+
+    O->>API: POST /events {title, date, teamCount: 4, locationId?, templateId?}
+    opt templateId supplied
+        API->>DB: load EventTemplate
+        API->>API: template fills omitted fields only
+    end
+    API->>DB: insert Event {status: 'join'}
+    API-->>O: 201 { event }
+
+    O->>API: POST /events/:id/cover (multipart)
+    API->>IK: upload → { url, fileId }
+    API->>DB: set coverImage + coverImageFileId
+    Note over API,IK: replacing later best-effort deletes the prior fileId
+
+    Note over O,DB: players join while status == 'join' (§5.3)
+
+    O->>API: PATCH /events/:id/status {before_match}
+    API->>API: canTransition('join','before_match') ✓
+    API-->>O: registration closed
+
+    O->>API: PATCH /events/:id/status {preparation}
+    O->>API: POST /events/:id/shuffle
+    API->>API: assert status == 'preparation'
+    API->>DB: assign Red/Yellow/Blue/Black
+    API->>DB: generate matches[] — 12 fixtures, scores null
+    API->>DB: create EventTeamChat per team
+    API->>N: notify each player of their team
+    API-->>O: { teams, fixtures }
+
+    O->>API: PATCH /events/:id/status {playing}
+    loop each of the 12 fixtures
+        O->>API: PATCH /events/:id/matches/:matchNumber {scoreA, scoreB}
+        API->>DB: set scores + playedAt
+    end
+
+    O->>API: PATCH /events/:id/status {after_match}
+    O->>API: POST /events/:id/result {mvpUserId}
+    API->>API: assert MVP is a joined player
+    O->>API: POST /events/:id/photos (multipart)
+    API->>IK: upload → { url, fileId }
+
+    O->>API: PATCH /events/:id/status {done}
+    API->>DB: EventTeamChat.archived = true
+    Note over API,DB: history + stats retained —<br/>feeds profile mvpCount (parent §2.3)

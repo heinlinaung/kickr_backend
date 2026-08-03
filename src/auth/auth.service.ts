@@ -35,12 +35,13 @@ export class AuthService {
     // left without a profile. Recovery is an idempotent re-signup / retry — we do
     // not compensate with AdminDeleteUser here (own failure modes). See Task 7.
     //
-    // Signup collects only email + password, but `name` is required on the
-    // schema, so seed it from the email's local part. Users rename themselves
-    // (and pick a `username`) later via PATCH /users/me.
+    // `name` is optional on the DTO but required on the schema. Use what the
+    // user typed when present, else seed from the email's local part. The trim
+    // matters: a whitespace-only name would otherwise persist as a blank
+    // display name instead of falling back.
     await this.userModel.create({
       cognitoSub: sub,
-      name: defaultNameFromEmail(email),
+      name: dto.name?.trim() || defaultNameFromEmail(email),
       email,
     });
     return {

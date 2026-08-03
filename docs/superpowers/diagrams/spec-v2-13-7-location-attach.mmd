@@ -1,0 +1,18 @@
+%% 13.7 Location attach (creator- or group-owned)
+%% Source of truth for this diagram. Rendered from ../specs/2026-07-28-kickr-spec-v2-changes.md §13.7
+%% Edit here, not in the spec — the spec links to this file.
+flowchart TD
+    A["Caller supplies location<br/>(new payload or existing locationId)"] --> B{locationId given?}
+    B -->|yes| C["validate exists AND caller may manage it<br/>(creator, or group owner/admin/captain)"] --> H
+    B -->|no| D["POST /locations {name, lat, lng, url, metadata}"]
+    D --> G["always INSERT a new row<br/>createdBy = caller<br/>geo derived from lat/lng (2dsphere)"] --> H
+
+    H["referrer stores the ref"]
+    H --> I["Group.locations[] (max 5)<br/>caller must be group owner/admin"]
+    H --> J[Event.locationId]
+    H --> K[Challenge.locationId]
+
+    I --> L["DELETE detaches only —<br/>row survives for the owner's other uses"]
+    J --> M["enables GET /events?near=&radius=<br/>via $near on Location.geo"]
+
+    N["No dedupe: two users adding the same<br/>pitch create two rows — intended"] -.-> G

@@ -55,6 +55,16 @@ export class CreateGroupDto {
   @IsMongoId({ each: true })
   locationIds?: string[];
 
+  @ApiProperty({ example: 'Thailand', required: false })
+  @IsOptional()
+  @IsString()
+  country?: string;
+
+  @ApiProperty({ example: 'Bangkok', required: false })
+  @IsOptional()
+  @IsString()
+  city?: string;
+
   @ApiProperty({ example: false, required: false })
   @IsOptional()
   @IsBoolean()

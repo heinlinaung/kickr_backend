@@ -1,0 +1,33 @@
+%% 5.4 Shuffle → colour teams → fixture generation
+%% Source of truth for this diagram. Rendered from ../specs/2026-08-03-events-feature-spec.md §5.4
+%% Edit here, not in the spec — the spec links to this file.
+sequenceDiagram
+    actor O as Organizer
+    participant API as Shuffle
+    participant DB as MongoDB
+    participant CH as Chat
+    participant N as Notifications
+
+    O->>API: POST /events/:id/shuffle
+    API->>API: assert organizer (createdBy, or group owner/admin)
+    API->>API: reject unless status == 'preparation'
+
+    API->>DB: load EventPlayers (status: 'joined')
+    API->>API: Fisher-Yates shuffle
+    API->>API: deal round-robin across first `teamCount` colours
+    Note over API: sizes differ by at most one
+    API->>DB: bulkWrite EventPlayer.team
+
+    API->>API: double round-robin over teams used
+    Note over API: leg 1 (i,j) then leg 2 (j,i)<br/>N=4 → 12 matches, 6 per team
+    API->>DB: save Event.matches (all scores null)
+
+    API->>CH: upsert EventTeamChat per team
+    API->>N: notify each player of their colour
+    API-->>O: { teams, fixtures }
+
+    opt re-shuffle while still in preparation
+        O->>API: POST /events/:id/shuffle
+        API->>DB: teams AND fixtures regenerated
+        Note over API,DB: safe — scores cannot exist yet<br/>(entry requires 'playing')
+    end

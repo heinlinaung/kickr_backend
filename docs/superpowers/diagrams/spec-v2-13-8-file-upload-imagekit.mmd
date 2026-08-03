@@ -1,0 +1,21 @@
+%% 13.8 File upload (ImageKit, backend-proxied)
+%% Source of truth for this diagram. Rendered from ../specs/2026-07-28-kickr-spec-v2-changes.md §13.8
+%% Edit here, not in the spec — the spec links to this file.
+sequenceDiagram
+    actor U as Client
+    participant API as NestJS route
+    participant M as multer (memory)
+    participant IK as ImageKit
+    participant DB as MongoDB
+
+    U->>API: POST .../upload (multipart file)
+    API->>M: buffer in memory (MIME + size checked)
+    Note over M: image routes → multerMemoryImageOptions<br/>video routes → multerMemoryVideoOptions (§9.3)
+    API->>IK: upload(buffer, fileName, folder)
+    IK-->>API: { url, fileId }
+    opt entity had a previous file
+        API->>IK: deleteFile(prevFileId)
+        Note over API,IK: best-effort — failure logged,<br/>does not fail the request
+    end
+    API->>DB: store url + fileId on the entity
+    API-->>U: 200 { entity with CDN url }

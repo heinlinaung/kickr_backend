@@ -3,7 +3,7 @@
 **Audience:** Flutter developers integrating the KickR mobile app.
 **Base URL (local):** `http://localhost:3000`
 **Swagger UI:** `http://localhost:3000/api-docs` · **OpenAPI JSON:** `/api-docs-json`
-**Status:** implemented and verified end-to-end against Cognito + MongoDB Atlas + ImageKit. Last updated 2026-08-02 (group-owned locations).
+**Status:** implemented and verified end-to-end against Cognito + MongoDB Atlas + ImageKit. Last updated **2026-08-03** — ⚠️ includes a **breaking change to join-by-code/QR** (§3.6), plus `userRole` on group detail, `country`/`city`, uncapped team rules, and open QR access.
 **See also:** [Auth API](./auth-api.md) — login, refresh, and how to obtain the access token these endpoints require.
 
 ---
@@ -222,6 +222,8 @@ The same adoption happens on `POST /groups/:id/locations` when you attach one of
   "wallpaper": "https://ik.imagekit.io/kickr/groups/...-wallpaper-...",
   "wallpaperFileId": "...",
   "teamRules": ["No late", "Bring bib", "Respect"],
+  "country": "Thailand",
+  "city": "Bangkok",
   "locations": ["6a6b21077d15afe5f7856042", "6a6b21227d15afe5f7856045"],
   "isPrivate": false,
   "maxPlayers": 22,
@@ -232,10 +234,18 @@ The same adoption happens on `POST /groups/:id/locations` when you attach one of
 }
 ```
 
-**Two field notes that bite:**
+`GET /groups/:id` additionally returns the **caller's own membership** (see §3.4):
+
+```json
+{ "userRole": "captain", "memberStatus": "approved" }
+```
+
+**Four field notes that bite:**
 
 1. **`logo` vs `wallpaper`** — `logo` is the team crest (small, circular in the UI); `wallpaper` is the cover/banner photo. Both are full ImageKit CDN URLs, ready to pass straight to `Image.network`. The `*FileId` fields are for server-side replace/delete — ignore them in the app.
 2. **`locations` on the group object is a list of ID strings, NOT objects.** To render names/coords, call `GET /groups/:id/locations`, which returns them **populated**. Don't try to read `.name` off the group's `locations`.
+3. **`teamRules` entries may contain newlines and are unlimited in count and length.** See §3.9 — this needs specific handling or long rules render as one run-on paragraph.
+4. **`country` / `city` are optional free text** and may be absent on older groups. They describe where the *team* is based (not a pitch), and drive the `GET /events?region=` filter.
 
 ### 3.2 Endpoints
 
@@ -244,13 +254,13 @@ The same adoption happens on `POST /groups/:id/locations` when you attach one of
 | `GET` | `/groups` | member | Caller's groups; each item includes `myRole`. |
 | `POST` | `/groups` | any | Creator becomes `owner`. |
 | `GET` | `/groups/search?q=` | any | Public groups only (`isPrivate: false`), matches name **or** handle, max 20. |
-| `GET` | `/groups/:id` | any | Group detail. |
-| `PATCH` | `/groups/:id` | owner/admin | Update name, description, maxPlayers, sportType, handle, teamRules, isPrivate. |
+| `GET` | `/groups/:id` | any | Group detail **+ `userRole` / `memberStatus`** for the caller. |
+| `PATCH` | `/groups/:id` | owner/admin | Update name, description, maxPlayers, sportType, handle, teamRules, isPrivate, **country, city**. |
 | `POST` | `/groups/:id/logo` | owner/admin | multipart → ImageKit. |
 | `POST` | `/groups/:id/wallpaper` | owner/admin | multipart → ImageKit. |
-| `GET` | `/groups/:id/qr` | owner/admin | Stable invite code + link (see §3.5). |
+| `GET` | `/groups/:id/qr` | **any authenticated user** | Stable invite code + link (see §3.5). **No longer owner/admin only.** |
 | `GET` | `/groups/:id/invite-code` | owner/admin | **Rotates** the code (see §3.5). |
-| `GET` / `POST` | `/groups/:id/rules` | any / owner-admin | Team rules, **max 3**. |
+| `GET` / `POST` | `/groups/:id/rules` | any / owner-admin | Team rules — **no count or length limit** (see §3.9). |
 | `GET` / `POST` | `/groups/:id/locations` | any / owner-admin | List (populated) / attach, **max 5**. |
 | `DELETE` | `/groups/:id/locations/:locationId` | owner/admin | Detach only — does **not** delete the location. |
 | `GET` | `/groups/:id/members` | any | Members with populated `userId`. |
@@ -259,7 +269,7 @@ The same adoption happens on `POST /groups/:id/locations` when you attach one of
 | `POST` | `/groups/:id/invitations` | any | Request to join → `pending`. |
 | `GET` | `/groups/:id/invitations` | owner/admin | Pending requests. |
 | `PATCH` | `/groups/:id/invitations/:invId` | owner/admin | `{ "action": "approved" \| "rejected" }`. |
-| `POST` | `/groups/join-by-code` | any | `{ "code": "<inviteCode>" }` — **auto-approves** (see §3.6). |
+| `POST` | `/groups/join-by-code` | any | `{ "code": "<inviteCode>" }` → **`pending`, requires approval** (see §3.6). ⚠️ **Changed** — no longer auto-approves. |
 
 ### 3.3 Creating a group
 
@@ -271,6 +281,8 @@ The same adoption happens on `POST /groups/:id/locations` when you attach one of
   "handle": "bangkok-fc",
   "maxPlayers": 22,
   "isPrivate": false,
+  "country": "Thailand",
+  "city": "Bangkok",
   "locationIds": ["6a6b21077d15afe5f7856042"]
 }
 ```
@@ -283,7 +295,8 @@ Validation rules to enforce **client-side** so users get instant feedback:
 | `handle` | lowercase letters/digits/`.`/`-`/`_` only, **unique** | `handle must be lowercase alphanumeric, dot, dash or underscore` / `409` on duplicate |
 | `sportType` | one of `football`, `futsal`, `padel`, `basketball` | `sportType must be one of the following values: ...` |
 | `locationIds` | max 5, each a valid ObjectId **owned by the caller** | `400` / `403` if not yours |
-| `teamRules` | max 3 strings | `rules must contain no more than 3 elements` |
+| `teamRules` | any number of strings, any length | only non-string entries are rejected |
+| `country`, `city` | optional free text | — |
 
 > **Removed fields:** `locationName`, `latitude`, `longitude` no longer exist. Sending them returns `400 property locationName should not exist` (strict whitelist). Use `locationIds` / the locations endpoints instead.
 
@@ -320,6 +333,24 @@ Both optional, but send at least one (`400` otherwise). Constraints:
 
 > ⚠️ Path has two ids: `:id` is the **group**, `:userId` is the **target member**. The requester is taken from the token.
 
+**`level` is currently inert.** It is stored and settable, but **nothing in the backend reads it** — no capability depends on it, and the "plus one" guest-invite feature it was designed for does not exist (§8). Show it if you like, but don't gate any UI on it yet; the semantics may still change.
+
+#### The caller's own role — `GET /groups/:id`
+
+Group detail includes the caller's membership, so you don't need a second call to decide what to render:
+
+```json
+{ "userRole": "captain", "memberStatus": "approved" }
+```
+
+| `userRole` | `memberStatus` | Meaning |
+|---|---|---|
+| `"owner"` / `"admin"` / `"captain"` / `"member"` | `"approved"` | A real member — gate admin UI on `userRole`. |
+| `"member"` | `"pending"` | **Requested to join, NOT yet a member.** Show the waiting state. |
+| `null` | `null` | Not a member at all — show Join / Request. |
+
+> ⚠️ **You must check `memberStatus`, not just `userRole`.** A pending requester already has `userRole: "member"`, so treating a non-null role as "is a member" will show group content to someone who was never approved, and every member-only call will `403`.
+
 ### 3.5 Group QR / invite link
 
 ```
@@ -333,18 +364,41 @@ GET /groups/:id/qr
 }
 ```
 
+- **Any authenticated user can call this now** — it is no longer owner/admin only, so you can show a "Share / Invite" affordance to ordinary members. (Safe because join-by-code requires approval, §3.6 — the code is not a bearer token for entry.)
 - **The code is stable.** Calling this repeatedly returns the *same* code while it's valid, so a screenshotted or printed QR keeps working. Render the QR from `inviteLink`.
 - `expiresAt` is when it stops working (24 h from minting) — show it, and re-fetch after expiry.
-- **`GET /groups/:id/invite-code` ROTATES the code**, immediately invalidating any previously shared QR. Only call it from an explicit "Regenerate invite" action, never on screen load.
+- **`GET /groups/:id/invite-code` ROTATES the code**, immediately invalidating any previously shared QR. It is still **owner/admin only**. Call it only from an explicit "Regenerate invite" action, never on screen load.
 
 ### 3.6 Joining a group
 
-Two paths, with **different approval behaviour** — surface this in the UI:
+> ⚠️ **BREAKING CHANGE (2026-08-03).** Join-by-code/QR used to join immediately. **It now creates a pending request that an owner/admin must approve**, exactly like request-to-join. If your build still navigates the user into the group after a successful `join-by-code`, they will land in a group they are not yet a member of — every member-only call will then `403`.
 
-1. **Request to join** — `POST /groups/:id/invitations` → status `pending`, waits for owner/admin approval. Use after finding a group via `GET /groups/search`.
-2. **Join by code/QR** — `POST /groups/join-by-code` with `{ "code": "..." }` → **joins immediately (auto-approved)**, no approval step.
+Both paths now behave identically — **both end in `pending`**:
 
-Capacity is enforced against `maxPlayers` on approval/join.
+1. **Request to join** — `POST /groups/:id/invitations`. Use after finding a group via `GET /groups/search`.
+2. **Join by code/QR** — `POST /groups/join-by-code` with `{ "code": "..." }`.
+
+`join-by-code` returns:
+
+```json
+{
+  "data": {
+    "message": "Join request sent. Waiting for approval.",
+    "groupId": "6a6b21217d15afe5f7856043",
+    "status": "pending"
+  }
+}
+```
+
+**Branch on `status`, not on the message string** — the wording may change, the field will not.
+
+**What the UI must do after either call:** show a "request sent — waiting for approval" state. Do **not** route into the group. The user becomes a real member only once an owner/admin calls `PATCH /groups/:id/invitations/:invId` with `{"action":"approved"}`.
+
+**Detecting approval:** poll `GET /groups/:id` and check `memberStatus` (§3.4) — `pending` → still waiting, `approved` → let them in. There are **no push notifications for this yet** (see §8), so the requester gets no signal unless you poll or they refresh.
+
+**Capacity is checked at approval, not at request time.** A request against a full group still succeeds with `pending`; the `400 Group is full` surfaces to the *approver* instead. So a successful join-by-code is **not** a guarantee of a free slot.
+
+**Errors unchanged:** `400` invalid/expired code · `409` already a member or a request is already pending.
 
 ### 3.7 Attaching locations to a group
 
@@ -389,6 +443,31 @@ Future<Map<String, dynamic>> uploadGroupLogo({
 ```
 
 Uploading again replaces the previous image (the old file is cleaned up server-side). Omitting the file → `400 File is required`.
+
+### 3.9 Team rules — multi-line text, no limits
+
+```
+GET  /groups/:id/rules          → { "rules": [...] }      any member
+POST /groups/:id/rules          → updated group           owner/admin
+```
+
+```json
+{ "rules": ["No smoking", "Arrive 15-30 min early\n(tell the captain if late)"] }
+```
+
+**`POST` REPLACES the whole array** — it does not append. To add one rule, send the existing list plus the new entry, or you will silently wipe the others.
+
+Three things changed on 2026-08-03:
+
+- **The max-3 cap is gone.** Send as many rules as you like. A 6-item list — previously `400` — now succeeds.
+- **No per-rule length limit.** A rule can be a full paragraph.
+- **Newlines inside a rule are preserved verbatim**, including blank lines (`\n\n`). Non-ASCII (Burmese, emoji) round-trips byte-for-byte.
+
+> ⚠️ **You must render with `white-space: pre-line` — or the equivalent.** Flutter's `Text` already honours `\n`, but if you render rules into HTML (a `WebView`, or any web build) newlines **collapse** and a carefully formatted rule list appears as one run-on paragraph. This is the single most likely place for this feature to look broken while the API is behaving correctly. The server stores exactly what you send.
+
+Structure it as **one array entry per rule** (matching the bulleted design) rather than one big newline-delimited string — then you can render bullets without parsing, and newlines inside an entry handle wrapped sub-clauses.
+
+Since there is no cap, the array is an unbounded write surface: consider a sane client-side limit on your own edit screen.
 
 ---
 
@@ -467,9 +546,13 @@ class Group {
   final String? wallpaper;   // ImageKit URL — cover photo
   final List<String> teamRules;
   final List<String> locationIds; // IDs only; fetch /groups/:id/locations to populate
+  final String? country;     // optional, e.g. 'Thailand'
+  final String? city;        // optional, e.g. 'Bangkok'
   final bool isPrivate;
   final int maxPlayers;
   final String? myRole;      // present on GET /groups
+  final String? userRole;    // present on GET /groups/:id — caller's role
+  final String? memberStatus;// present on GET /groups/:id — 'pending' | 'approved'
 
   Group({
     required this.id,
@@ -484,8 +567,18 @@ class Group {
     this.wallpaper,
     this.teamRules = const [],
     this.locationIds = const [],
+    this.country,
+    this.city,
     this.myRole,
+    this.userRole,
+    this.memberStatus,
   });
+
+  /// True only for an APPROVED membership. A pending requester also has
+  /// userRole == 'member', so never infer membership from the role alone.
+  bool get isMember => memberStatus == 'approved';
+  bool get isPendingApproval => memberStatus == 'pending';
+  bool get canManage => isMember && (userRole == 'owner' || userRole == 'admin');
 
   factory Group.fromJson(Map<String, dynamic> j) => Group(
         id: j['_id'] as String,
@@ -500,7 +593,11 @@ class Group {
         locationIds: List<String>.from((j['locations'] as List?) ?? const []),
         isPrivate: (j['isPrivate'] as bool?) ?? false,
         maxPlayers: (j['maxPlayers'] as num?)?.toInt() ?? 22,
+        country: j['country'] as String?,
+        city: j['city'] as String?,
         myRole: j['myRole'] as String?,
+        userRole: j['userRole'] as String?,
+        memberStatus: j['memberStatus'] as String?,
       );
 
   bool get canManage => myRole == 'owner' || myRole == 'admin';
@@ -579,15 +676,15 @@ class GroupInvite {
 | My groups | `GET /groups` (use `myRole` to gate admin UI) |
 | Group discovery / search | `GET /groups/search?q=` |
 | Create group | `POST /locations` (no `groupId` — group doesn't exist yet) → `POST /groups` with `locationIds`; the server adopts them (§2.3) |
-| Group detail — header | `GET /groups/:id` (`logo`, `wallpaper`, `handle`) |
+| Group detail — header | `GET /groups/:id` (`logo`, `wallpaper`, `handle`, `country`/`city`; gate admin UI on `userRole` **+ `memberStatus == 'approved'`**) |
 | Group detail — Members tab | `GET /groups/:id/members` |
-| Group detail — rules | `GET /groups/:id/rules` |
+| Group detail — rules | `GET /groups/:id/rules` (render `\n` — §3.9) |
 | Group detail — map/venues | `GET /groups/:id/locations` (populated) |
 | Group settings — images | `POST /groups/:id/logo`, `POST /groups/:id/wallpaper` |
-| Group settings — rules | `POST /groups/:id/rules` (max 3) |
+| Group settings — rules | `POST /groups/:id/rules` — replaces the whole array, no cap (§3.9) |
 | Group settings — venues | `POST` / `DELETE /groups/:id/locations[/:locationId]` (max 5) |
 | Invite / share QR | `GET /groups/:id/qr` → render `inviteLink`; "Regenerate" → `GET /groups/:id/invite-code` |
-| Join via QR scan | `POST /groups/join-by-code` |
+| Join via QR scan | `POST /groups/join-by-code` → **`pending`**; show "awaiting approval", then poll `GET /groups/:id` → `memberStatus` |
 | Pending requests | `GET /groups/:id/invitations` → `PATCH .../:invId` |
 | My saved venues | `GET /locations` |
 
@@ -600,8 +697,12 @@ class GroupInvite {
 - [ ] `geo.coordinates` is `[lng, lat]`; display from `lat`/`lng`. Never send `geo`.
 - [ ] `group.locations` = **ID strings**; use `GET /groups/:id/locations` for objects.
 - [ ] `logo` ≠ `wallpaper` (crest vs cover). Both are ready-to-use CDN URLs.
-- [ ] `GET /:id/qr` is **stable**; `GET /:id/invite-code` **rotates** — don't call it on screen load.
-- [ ] Max **5** locations per group, max **3** team rules.
+- [ ] `GET /:id/qr` is **stable** and open to **any authenticated user**; `GET /:id/invite-code` **rotates** and stays owner/admin — don't call it on screen load.
+- [ ] Max **5** locations per group. Team rules have **no limit** — render with `white-space: pre-line` so newlines survive (§3.9).
+- [ ] `POST /groups/:id/rules` **replaces** the whole array — resend existing rules when adding one.
+- [ ] **Join-by-code/QR now needs approval** (§3.6). Don't route into the group on success; branch on `status: "pending"`.
+- [ ] On `GET /groups/:id`, check **`memberStatus == 'approved'`**, not just a non-null `userRole` — a pending requester has `userRole: "member"`.
+- [ ] `group.level` is **inert** — nothing reads it server-side; don't gate features on it.
 - [ ] Locations are **not deduplicated** — the same pitch may exist many times, once per creator.
 - [ ] Check `location.groupId` before showing Edit/Delete: personal = creator only; group-owned = owner/admin/captain edit, owner/admin delete.
 - [ ] `groupId` is **optional on create** — omit for personal, set it (as group owner/admin) for group-owned. It sets ownership only; it does **not** attach the location to the group.
@@ -619,8 +720,10 @@ class GroupInvite {
 |---|---|
 | Group **posts** feed and **gallery** | Not implemented (fields/routes absent) |
 | "Plus one" guest invites | Not implemented — approval semantics still an open product decision |
-| Nearby/geo search (`GET /events?near=`) | Data is in place (`geo` + 2dsphere index) but **no endpoint yet** |
-| Whether join-by-code *should* require approval | Open decision — currently auto-approves |
+| Nearby/geo search (`GET /events?near=`) | Data is in place (`geo` + 2dsphere index) but **no endpoint yet**. `GET /events?region=` (filter by the group's `country`/`city`) **is** available. |
+| `GET /locations/search?q=&near=` | **Not implemented** — list via `GET /locations` or `GET /groups/:id/locations`. |
+| Notifications for join requests/approvals | **Not implemented** — the requester and the owner get no push/in-app signal. Poll `GET /groups/:id` → `memberStatus` (§3.6). |
 | `role` on the **User** profile, `favouriteTeam` | Not implemented |
+| Auto-generated `username` | Not implemented (`username` is `null`). `name` **can** now be set at signup — see [auth-api §3.1](./auth-api.md). |
 
 Events currently accept a `locationId` on create but there is no endpoint to change an event's location afterwards.

@@ -193,7 +193,57 @@ No video upload is needed for this spec, so `multerMemoryVideoOptions` (parent �
 
 ---
 
-## 5. API surface
+## 5. Scenario design
+
+End-to-end flows for the journeys this spec introduces. Same convention as the parent spec's §13: **where a diagram and the prose in §4 disagree, §4 is authoritative** — the diagrams are a reading aid, not a second source of truth.
+
+Diagrams cover the failure paths as well as the happy ones, because most of the behaviour being added here *is* gate enforcement.
+
+### 5.1 Full event lifecycle — state machine
+
+The 6 states from §4.1, with the actions each one permits. Capacity is derived, so a full event stays in `join`.
+
+📊 **Diagram:** [`events-5-1-event-lifecycle-states.mmd`](../diagrams/events-5-1-event-lifecycle-states.mmd) — mermaid source (GitHub renders it on open).
+
+### 5.2 Organizer happy path — create to archive
+
+The whole journey in one pass, 4 colour teams. Note where each of the four build-order steps contributes.
+
+📊 **Diagram:** [`events-5-2-organizer-happy-path.mmd`](../diagrams/events-5-2-organizer-happy-path.mmd) — mermaid source (GitHub renders it on open).
+
+### 5.3 Join / unjoin gating
+
+Two independent guards: the lifecycle state, and the atomic capacity check. The capacity check is the existing `findOneAndUpdate` + `$expr` — only its status condition changes (`open` → `join`).
+
+📊 **Diagram:** [`events-5-3-join-unjoin-gating.mmd`](../diagrams/events-5-3-join-unjoin-gating.mmd) — mermaid source (GitHub renders it on open).
+
+### 5.4 Shuffle → colour teams → fixture generation
+
+The `preparation`-only operation. Re-running it inside `preparation` is legal and regenerates everything.
+
+📊 **Diagram:** [`events-5-4-shuffle-colour-teams-fixtures.mmd`](../diagrams/events-5-4-shuffle-colour-teams-fixtures.mmd) — mermaid source (GitHub renders it on open).
+
+### 5.5 Score entry & standings
+
+Standings are never stored. Every read recomputes from `matches[]`, skipping fixtures with a `null` score.
+
+📊 **Diagram:** [`events-5-5-score-entry-standings.mmd`](../diagrams/events-5-5-score-entry-standings.mmd) — mermaid source (GitHub renders it on open).
+
+### 5.6 Geo discovery
+
+`$geoNear` must be the first aggregation stage, so the pipeline starts from `locations` and looks *up* to events — not the reverse.
+
+📊 **Diagram:** [`events-5-6-geo-discovery.mmd`](../diagrams/events-5-6-geo-discovery.mmd) — mermaid source (GitHub renders it on open).
+
+### 5.7 Illegal transition — the rejection path
+
+Every `PATCH /status` goes through the pure transition table. This is the single most-exercised guard in the spec, so it gets its own flow.
+
+📊 **Diagram:** [`events-5-7-illegal-transition.mmd`](../diagrams/events-5-7-illegal-transition.mmd) — mermaid source (GitHub renders it on open).
+
+---
+
+## 6. API surface
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
@@ -224,7 +274,7 @@ Error contract: `403` wrong actor, `404` unknown event/match, `409` illegal tran
 
 ---
 
-## 6. Build order
+## 7. Build order
 
 Each step is independently shippable and leaves the suite green.
 
@@ -237,7 +287,7 @@ Steps 1 and 2 are the load-bearing ones — ratings (§8) and the profile stats 
 
 ---
 
-## 7. Testing
+## 8. Testing
 
 Follows the repo's existing pattern (`*.spec.ts` beside the source, `test/` for e2e).
 
@@ -248,7 +298,7 @@ Follows the repo's existing pattern (`*.spec.ts` beside the source, `test/` for 
 
 ---
 
-## 8. Risks & open questions
+## 9. Risks & open questions
 
 | Risk | Mitigation |
 |---|---|

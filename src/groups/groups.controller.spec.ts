@@ -81,9 +81,9 @@ describe('GroupsController', () => {
     });
   });
 
-  it('GET /groups/:id/qr delegates', async () => {
-    await controller.getQr('g1', user);
-    expect(svc.getQr).toHaveBeenCalledWith('g1', 'requester-1');
+  it('GET /groups/:id/qr delegates without the caller id (no role check)', async () => {
+    await controller.getQr('g1');
+    expect(svc.getQr).toHaveBeenCalledWith('g1');
   });
 
   describe('rules', () => {
@@ -148,9 +148,9 @@ describe('GroupsController', () => {
       expect(svc.create).toHaveBeenCalledWith('requester-1', dto);
     });
 
-    it('GET /groups/:id', async () => {
-      await controller.findOne('g1');
-      expect(svc.findById).toHaveBeenCalledWith('g1');
+    it('GET /groups/:id passes the caller so the response can carry userRole', async () => {
+      await controller.findOne('g1', user);
+      expect(svc.findById).toHaveBeenCalledWith('g1', 'requester-1');
     });
 
     it('PATCH /groups/:id', async () => {

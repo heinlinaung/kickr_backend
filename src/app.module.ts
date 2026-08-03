@@ -15,6 +15,7 @@ import { ChatModule } from './chat/chat.module';
 import { EventsModule } from './events/events.module';
 import { TournamentsModule } from './tournaments/tournaments.module';
 import { ShuffleModule } from './shuffle/shuffle.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { ShuffleModule } from './shuffle/shuffle.module';
     ShuffleModule,
     InvitationsModule,
     ChatModule,
+    AdminModule,
   ],
   providers: [
     {

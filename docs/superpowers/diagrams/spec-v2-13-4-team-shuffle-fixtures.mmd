@@ -1,0 +1,30 @@
+%% 13.4 Team shuffle & fixture generation (preparation)
+%% Source of truth for this diagram. Rendered from ../specs/2026-07-28-kickr-spec-v2-changes.md §13.4
+%% Edit here, not in the spec — the spec links to this file.
+sequenceDiagram
+    actor O as Organizer
+    participant API as Events/Shuffle
+    participant DB as MongoDB
+    participant CH as Chat
+    participant N as Notifications
+
+    O->>API: PATCH /events/:id/status {preparation}
+    API->>API: assert legal transition + organizer
+    API-->>O: status = preparation
+
+    O->>API: POST /events/:id/shuffle
+    API->>API: reject unless status == preparation
+    API->>DB: load EventPlayers (status: joined)
+    API->>API: Fisher-Yates → assign teams (§14 #6)
+    API->>DB: bulkWrite EventPlayer.team
+
+    alt more than 2 teams
+        API->>API: generate double round-robin matches[]
+        API->>DB: save Event.matches (scores null)
+    end
+
+    API->>CH: create EventTeamChat per team
+    API->>N: notify each player of their team
+    API-->>O: { teams, fixtures }
+
+    Note over API,DB: fixtures immutable after this —<br/>only scores may be entered later
