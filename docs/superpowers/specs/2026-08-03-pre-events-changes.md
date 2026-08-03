@@ -4,25 +4,26 @@
 **Author:** Backend team
 **Parent spec:** [2026-07-28-kickr-spec-v2-changes.md](./2026-07-28-kickr-spec-v2-changes.md)
 **Related:** [2026-08-03-events-feature-spec.md](./2026-08-03-events-feature-spec.md) — §7 below amends that spec
-**Status:** ✅ **IMPLEMENTED 2026-08-03** — all 8 changes built, 238 tests green (from a 189 baseline). See §11 for what shipped and the deviations found during implementation.
+**Status:** ✅ **IMPLEMENTED** — all 9 changes built (#9 added after the first eight), **242 tests green** from a 189 baseline. See §11 for what shipped, the deviations found during implementation, and the two follow-up revisions (rules routes removed, then the field renamed).
 **Stack:** NestJS 11 · MongoDB (Mongoose) · AWS Cognito
 
 ---
 
 ## 1. Scope
 
-Eight changes requested ahead of the Events work. Six touch existing modules; two amend the Events spec.
+Nine changes requested ahead of the Events work (#9 added after the first eight shipped). Seven touch existing modules; two amend the Events spec.
 
 | # | Change | Area | Size |
 |---|---|---|---|
 | 1 | Sign up with a user-supplied `name` | Auth | S |
 | 2 | Group detail returns the caller's `userRole` | Groups | S |
-| 3 | Group gains `country`, `city`; `teamRules` cap removed | Groups | S |
+| 3 | Group gains `country`, `city`; rules uncapped, folded into create/update/read, field renamed to `rules` | Groups | S |
 | 4 | Drop the role check on `GET /groups/:id/qr` | Groups | XS |
 | 5 | Admin force-join endpoints (group + event) | New `admin` module | M |
 | 6 | **Join-by-code/QR requires approval** (no auto-approve) | Invitations | S |
 | 7 | Event detail returns the group's rules | Events | XS |
 | 8 | `GET /events?region=` filter by group country/city | Events | S |
+| 9 | **`POST /groups/:id/leave`** — members leave a group (owner cannot) | Groups | S |
 
 Items 1–6 are independent and can ship in any order. Items 7–8 are folded into the Events build.
 
@@ -79,7 +80,7 @@ memberStatus: 'pending' | 'approved' | null
 
 Implementation: `findById(groupId, userId)` calls the existing `getMemberRole` and returns `{ ...group, userRole, memberStatus }`. The controller already has `@CurrentUser()` available on sibling routes.
 
-**Field name:** `userRole` (camelCase), matching every other field in the API (`maxPlayers`, `inviteCode`, `teamRules`). The request wrote `userrole`; camelCase **confirmed by product 2026-08-03**.
+**Field name:** `userRole` (camelCase), matching every other field in the API (`maxPlayers`, `inviteCode`, `rules`). The request wrote `userrole`; camelCase **confirmed by product 2026-08-03**.
 
 ---
 
@@ -96,7 +97,7 @@ Both free-text and optional, added to `Group`, `CreateGroupDto` and `UpdateGroup
 
 > **Reversal of an earlier decision.** Parent spec §4.2 explicitly said country/city are **not** added to Group and should be derived from the referenced `Location`. That is now overridden: a group's country/city is a property of the *team*, not of any one pitch it plays on, and §7's region filter needs it on the group directly — deriving it through `Group.locations[] → Location` for every event query is a multi-stage join for data that is one string. The parent spec should be updated to reflect this.
 
-### 4.2 Rules — reuse `teamRules`, remove the cap
+### 4.2 Rules — reuse the existing field, remove the cap, rename to `rules`
 
 > **Revised 2026-08-03 (post-implementation), twice:**
 > 1. The dedicated `GET`/`POST /groups/:id/rules` routes were **removed** at product request. `teamRules` is now handled purely as a group field on `POST /groups`, `PATCH /groups/:id` and `GET /groups/:id` — one fewer endpoint pair, and rules can be set in the same call that creates the group. `SetGroupRulesDto` and `GroupsService.setRules`/`getRules` are gone; the field was also **added to `CreateGroupDto`**, which previously did not accept it.
@@ -106,13 +107,14 @@ Both free-text and optional, added to `Group`, `CreateGroupDto` and `UpdateGroup
 
 **Decision:** reuse the existing `teamRules: string[]`. The sample content (a 6-item Burmese conduct list) does not fit the shipped max-3 cap, so **the cap is removed**.
 
-Remove in both places that enforce it:
-- `SetGroupRulesDto` — drop `@ArrayMaxSize(3)`
-- `GroupsService.setRules` — drop the `rules.length > 3` check and its `BadRequestException`
+The cap was enforced in **three** places (one more than originally listed), all relaxed:
+- `SetGroupRulesDto` — `@ArrayMaxSize(3)` *(file since deleted, see above)*
+- `UpdateGroupDto` — `@ArrayMaxSize(3)` **(missed by the original spec)**
+- `GroupsService.setRules` — the `rules.length > 3` check *(method since deleted)*
 
-No per-rule length limit (explicitly decided). Also update the DTO's `description: 'max 3 rules'` and its `example`, which currently document the removed cap.
+No per-rule length limit (explicitly decided).
 
-**Unbounded-array note:** with no cap and no length limit, a client can post an arbitrarily large `teamRules` array and grow the group document without bound. Accepted per explicit decision. Mongo's 16 MB document ceiling is the only backstop; if abuse becomes a concern, a generous cap (e.g. 50 rules) is an additive change requiring no migration.
+**Unbounded-array note:** with no cap and no length limit, a client can post an arbitrarily large `rules` array and grow the group document without bound. Accepted per explicit decision. Mongo's 16 MB document ceiling is the only backstop; if abuse becomes a concern, a generous cap (e.g. 50 rules) is an additive change requiring no migration.
 
 ### 4.3 Newline preservation — verified
 
@@ -122,7 +124,7 @@ Multi-line rule text **round-trips intact**. Verified empirically for both the B
 |---|---|
 | JSON request body | Newlines arrive as the escape sequence `\n`; the body parser restores real newlines |
 | `class-validator` | `@IsString()` only validates; no transform. No `@Transform`/trim on this DTO |
-| Mongoose `[String]` | `teamRules` has **no `trim: true`** (unlike `Group.handle`), so nothing is stripped |
+| Mongoose `[String]` | `rules` has **no `trim: true`** (unlike `Group.handle`), so nothing is stripped |
 | JSON response | Re-escaped to `\n`; the client parses back to real newlines |
 
 Interior blank lines (`\n\n`), emoji, and Burmese script are all preserved byte-for-byte.
@@ -312,6 +314,51 @@ Keeping it at request time would be wrong in both directions:
 
 ---
 
+## 6c. Leave a group — `POST /groups/:id/leave`
+
+*(Requested after §1–§8 shipped; numbered 6c to keep the existing §7–§11 cross-references intact. It is change #9 in the §1 table.)*
+
+### 6c.1 Requirement
+
+A group member may remove themselves. Allowed for `admin`, `captain` and `member`; **the `owner` may not**.
+
+### 6c.2 Design
+
+```
+POST /groups/:id/leave        → 200 { message: 'You have left the group' }
+```
+
+- **No role check.** Leaving needs nobody's approval, so unlike every other member-management route this one is not gated on `assertOwnerOrAdmin`. The role is read only to reject the owner.
+- **No target id in the path or body.** The subject is always the caller (`@CurrentUser()`), so the endpoint cannot be repurposed to remove someone else — that stays `DELETE /groups/:id/members/:userId` (owner/admin).
+- Deletes the `GroupMember` row outright, matching what `removeMember` does. There is no soft-leave state.
+
+| Case | Status | Message |
+|---|---|---|
+| Success | `200` | `You have left the group` |
+| Caller is the **owner** | `403` | `The group owner cannot leave the group. Transfer ownership or delete the group instead.` |
+| Caller is not a member | `404` | `You are not a member of this group` |
+| Group missing | `404` | `Group not found` |
+
+### 6c.3 Two decisions the requirement did not cover
+
+1. **A `pending` join request is also deleted.** A pending row already stores `role: 'member'`, so it falls inside the allowed set. Rather than 404 such a caller, leaving withdraws the request — which means this endpoint doubles as "cancel my join request" and no separate route is needed. Paired with `memberStatus` (§3.2) the client can label one button "Leave group" or "Cancel request".
+
+2. **The owner's block is currently permanent, not a formality.** Refusing the owner assumes they have another way out — and they do not: **ownership transfer does not exist, and neither does group delete.** So an owner cannot leave their own group under any flow today. If that matters, ownership transfer is the missing piece; it is out of scope here but recorded in the API doc's "not built yet" table.
+
+### 6c.4 Consequences
+
+| Area | Effect |
+|---|---|
+| **Client** | Hide or disable the Leave action when `userRole == 'owner'` rather than surfacing the `403`. |
+| **Rejoining** | Goes through the normal flow (§6b) — request or invite code, with owner approval again. Leaving is not reversible by the user alone. |
+| **Notifications** | None. Owners are not told when someone leaves (the same gap as join requests, §6b.4). |
+
+### 6c.5 Testing
+
+Each of `admin`/`captain`/`member` can leave; the owner is refused; non-member and missing-group both 404; a pending requester can withdraw. Every rejected path asserts **no delete happened**.
+
+---
+
 ## 7. Amendments to the Events spec
 
 Both items amend [2026-08-03-events-feature-spec.md](./2026-08-03-events-feature-spec.md) and should be folded into its build, not tracked separately.
@@ -321,12 +368,12 @@ Both items amend [2026-08-03-events-feature-spec.md](./2026-08-03-events-feature
 `GET /events/:id` response gains:
 
 ```
-groupRules: string[]    // the parent group's teamRules; [] for events with no groupId
+groupRules: string[]    // the parent group's `rules`; [] for events with no groupId
 ```
 
-Populated from `Group.teamRules` via the event's `groupId`. Empty array (never `null`) for public events with no group, so the client can render unconditionally.
+Populated from `Group.rules` via the event's `groupId`. Empty array (never `null`) for public events with no group, so the client can render unconditionally.
 
-Read-only projection — the rules live on the group and are edited through `PATCH /groups/:id` (§4.2). Fetched with a `select('teamRules')` projection rather than a full populate.
+Read-only projection — the rules live on the group and are edited through `PATCH /groups/:id` (§4.2). Fetched with a `select('rules')` projection rather than a full populate.
 
 Amends the Events spec §4.4 (Event schema — no new stored field; this is a response-time join) and its §6 API surface row for `GET /events/:id`.
 
@@ -360,6 +407,7 @@ Amends the Events spec §4.5 and its §6 API surface row for `GET /events`.
 5. **QR role check removal** (§5) — one line.
 6. **Admin endpoints** (§6) — the only item needing a new module, guard, and env var.
 7. **Events amendments** (§7) — build with the Events feature, not before.
+8. **Leave a group** (§6c) — independent of everything above.
 
 **Ordering constraints:**
 - **Steps 4 and 5 ship together.** §5 opens invite codes to every authenticated user; §6b is what stops that from being self-service entry. Shipping 5 before 4 leaves a real hole. If they must be split, do **4 first**.
@@ -380,6 +428,7 @@ Amends the Events spec §4.5 and its §6 API surface row for `GET /events`.
 - **Admin guard** — no header → 401; wrong key → 403; unset `ADMIN_KEY` → rejected even with a matching header.
 - **Admin add** — mixed batch yields correct `added`/`skipped` split; duplicate ids deduped; capacity stop mid-batch; `joinedCount` matches the real `EventPlayer` count afterwards; re-running the same call is a no-op.
 - **Region filter** — matches on country and on city; case-insensitive; groupless events excluded; combines with `near=`.
+- **Leave** (§6c.5) — each non-owner role leaves; owner 403s; non-member/missing group 404; pending requester withdraws; no delete on rejected paths.
 
 ---
 
@@ -390,7 +439,7 @@ Amends the Events spec §4.5 and its §6 API surface row for `GET /events`.
 | # | Decision |
 |---|---|
 | 1 | `name` on signup is **optional** — required would break shipped clients |
-| 2 | Reuse `teamRules`; **remove the max-3 cap**, no per-rule length limit |
+| 2 | Reuse the existing rules field; **remove the max-3 cap**, no per-rule length limit; renamed `teamRules` → `rules` |
 | 3 | Admin endpoints bypass permissions but **keep data integrity** (capacity, existence, duplicates) |
 | 4 | Per-user results with **200 overall**; non-atomic and re-runnable |
 | 5 | QR readable by **any authenticated user** |
@@ -399,10 +448,12 @@ Amends the Events spec §4.5 and its §6 API surface row for `GET /events`.
 | 8 | Capacity for code-joins is enforced at **approval**, not request (§6b.3) |
 | 9 | `name` on signup stays **optional** — confirmed 2026-08-03 |
 | 10 | Response field is **`userRole`** (camelCase) — confirmed 2026-08-03 |
+| 11 | Rules field **renamed `teamRules` → `rules`** to match the API text; migration script required |
+| 12 | Leaving is **self-service, no approval**; owner refused; a pending request is withdrawn by the same call (§6c) |
 
 **Still live after implementation — operational, not blocking:**
 
-1. **Unbounded `teamRules`** (§4.2) — no cap and no length limit is an unbounded write surface; accepted by decision.
+1. **Unbounded `rules`** (§4.2) — no cap and no length limit is an unbounded write surface; accepted by decision.
 2. **`ADMIN_KEY` is a root-level credential** (§6.2) — anyone holding it can add any user to any group or event. Ships blank, so the endpoints are disabled until it is set.
 3. **QR join is a breaking UX change** (§6b.4) — scanning no longer grants entry. **Needs a coordinated client release.**
 4. **Notifications gap** (§6b.4) — owners aren't notified of join requests, so approval-gated QR joins may sit unnoticed. Parent §12 covers it; worth pulling forward.
@@ -424,12 +475,13 @@ All 8 changes built. **238 tests passing across 25 suites**, up from a 189-test 
 |---|---|---|
 | 1 | Optional `name` on signup | `auth/dto/signup.dto.ts`, `auth/auth.service.ts` |
 | 2 | `userRole` + `memberStatus` on group detail | `groups.service.ts` `findById`, `groups.controller.ts` |
-| 3 | `country`/`city` + rules cap removed, **rules folded into create/update/read** | `group.schema.ts`, `create-group.dto.ts` (gained `teamRules`), `update-group.dto.ts`, `groups.service.ts`, `groups.controller.ts`; `group-rules.dto.ts` **deleted** |
+| 3 | `country`/`city`; rules uncapped, folded into create/update/read, renamed `teamRules` → `rules` | `group.schema.ts`, `create-group.dto.ts` (gained the field), `update-group.dto.ts`, `groups.service.ts`, `groups.controller.ts`; `group-rules.dto.ts` **deleted**; `scripts/rename-group-team-rules.ts` **added** |
 | 4 | QR role check removed | `groups.service.ts` `getQr`, `groups.controller.ts` |
 | 5 | Admin force-join | `common/guards/admin-key.guard.ts`, `admin/` (module, controller, service, DTO), `.env.example` |
 | 6 | Join-by-code requires approval | `invitations.service.ts` `joinByCode` |
 | 7 | `groupRules` on event detail | `events.service.ts` `findById`, `events.module.ts` |
 | 8 | `?region=` filter | `events.service.ts` `list`, `events.controller.ts` |
+| 9 | `POST /groups/:id/leave` | `groups.service.ts` `leave`, `groups.controller.ts` |
 
 ### Deviations from the spec, found while building
 
@@ -437,7 +489,7 @@ All 8 changes built. **238 tests passing across 25 suites**, up from a 189-test 
 
 2. **`UpdateGroupDto` enforced the cap too** — a third site beyond the two §4.2 identified (`SetGroupRulesDto` and the service). All three relaxed.
 
-3. **Rules endpoints removed after the fact.** §4.2 originally kept `GET`/`POST /groups/:id/rules`. Product asked for rules to live in the ordinary group APIs instead, so both routes, `SetGroupRulesDto`, and `setRules`/`getRules` were deleted — and `teamRules` was **added to `CreateGroupDto`**, which had never accepted it (so rules could not be set at creation time at all). Their test coverage was retargeted at `update()`/`findById()` and `CreateGroupDto` rather than dropped.
+3. **Rules endpoints removed after the fact, then the field renamed.** §4.2 originally kept `GET`/`POST /groups/:id/rules`. Product asked for rules to live in the ordinary group APIs instead, so both routes, `SetGroupRulesDto`, and `setRules`/`getRules` were deleted — and the field was **added to `CreateGroupDto`**, which had never accepted it (so rules could not be set at creation time at all). It was then renamed `teamRules` → `rules` to match the API text, which required a data migration (`scripts/rename-group-team-rules.ts`) because existing documents keep the old key and the new schema does not read it. Test coverage was retargeted at `update()`/`findById()` and `CreateGroupDto` rather than dropped.
 
 4. **`getMemberRole` could not serve §3.2.** It filters to `status: 'approved'`, so it can never report a pending membership. `findById` queries the member row directly instead, selecting `role status`.
 

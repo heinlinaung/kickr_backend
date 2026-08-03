@@ -284,7 +284,8 @@ level: 1 | 2 | 3                                  // default 1
 | GET/POST | `/groups/:id/rules` | ~~team rules~~ — **REMOVED 2026-08-03**; rules are the `rules` field on create/update/read | ❌ removed |
 | GET/POST/DELETE | `/groups/:id/locations` | see §3.5, **max 5** | ✅ shipped |
 | GET | `/groups/:id/members`, `/groups/:id/invite-code` | listing + code retrieval | ✅ shipped |
-| DELETE | `/groups/:id/members/:userId` | remove a member | ✅ shipped |
+| DELETE | `/groups/:id/members/:userId` | remove a member (owner/admin; owner can't be removed) | ✅ shipped |
+| POST | `/groups/:id/leave` | **NEW** — caller leaves the group; any role except `owner` ([pre-events §6c](./2026-08-03-pre-events-changes.md)) | ✅ shipped |
 | GET/POST | `/groups/:id/posts` | **NEW** (if Posts is a separate feed — §14 #4) | ❌ not built |
 | POST | `/groups/:id/gallery` | **NEW** — upload gallery media (ImageKit) | ❌ not built |
 | DELETE | `/groups/:id/rules` | never built, and no longer applicable | ❌ n/a |
