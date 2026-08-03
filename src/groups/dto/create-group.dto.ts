@@ -68,7 +68,7 @@ export class CreateGroupDto {
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
-  teamRules?: string[];
+  rules?: string[];
 
   @ApiProperty({ example: 'Thailand', required: false })
   @IsOptional()

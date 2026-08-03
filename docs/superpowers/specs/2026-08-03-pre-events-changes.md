@@ -98,7 +98,11 @@ Both free-text and optional, added to `Group`, `CreateGroupDto` and `UpdateGroup
 
 ### 4.2 Rules — reuse `teamRules`, remove the cap
 
-> **Revised 2026-08-03 (post-implementation):** the dedicated `GET`/`POST /groups/:id/rules` routes were **removed** at product request. `teamRules` is now handled purely as a group field on `POST /groups`, `PATCH /groups/:id` and `GET /groups/:id` — one fewer endpoint pair, and rules can be set in the same call that creates the group. `SetGroupRulesDto` and `GroupsService.setRules`/`getRules` are gone; the field was also **added to `CreateGroupDto`**, which previously did not accept it.
+> **Revised 2026-08-03 (post-implementation), twice:**
+> 1. The dedicated `GET`/`POST /groups/:id/rules` routes were **removed** at product request. `teamRules` is now handled purely as a group field on `POST /groups`, `PATCH /groups/:id` and `GET /groups/:id` — one fewer endpoint pair, and rules can be set in the same call that creates the group. `SetGroupRulesDto` and `GroupsService.setRules`/`getRules` are gone; the field was also **added to `CreateGroupDto`**, which previously did not accept it.
+> 2. The schema field was **renamed `teamRules` -> `rules`** so the stored name matches the API text. A one-off migration ships as `scripts/rename-group-team-rules.ts` (dry-run by default) because existing documents still carry `teamRules`, which the new schema does not read.
+>
+> References to `teamRules` elsewhere in this document describe the pre-rename state and are left as written.
 
 **Decision:** reuse the existing `teamRules: string[]`. The sample content (a 6-item Burmese conduct list) does not fit the shipped max-3 cap, so **the cap is removed**.
 

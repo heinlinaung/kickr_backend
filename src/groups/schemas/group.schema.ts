@@ -46,7 +46,7 @@ export class Group {
   // entry are preserved, so do NOT add `trim: true` here or leading/trailing
   // newlines in a rule would be stripped.
   @Prop({ type: [String], default: [] })
-  teamRules: string[];
+  rules: string[];
 
   @Prop({ type: [{ type: Types.ObjectId, ref: 'Location' }], default: [] })
   locations: Types.ObjectId[];

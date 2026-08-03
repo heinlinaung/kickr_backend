@@ -123,7 +123,7 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
         'Arrive 15 min early\n(or tell the captain)',
       ];
       eventModel.findById.mockReturnValue(q({ _id: 'e1', groupId: GROUP_ID }));
-      groupModel.findById.mockReturnValue(q({ teamRules: rules }));
+      groupModel.findById.mockReturnValue(q({ rules: rules }));
 
       const res: any = await service.findById('e1');
 

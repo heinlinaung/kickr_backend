@@ -2,7 +2,7 @@ import { GroupSchema } from './group.schema';
 import { GroupMemberSchema } from './group-member.schema';
 
 describe('Group schema (v2 extensions)', () => {
-  it('adds logo/sportType/handle/teamRules/locations', () => {
+  it('adds logo/sportType/handle/rules/locations', () => {
     const paths = Object.keys(GroupSchema.paths);
     expect(paths).toEqual(
       expect.arrayContaining([
@@ -11,7 +11,7 @@ describe('Group schema (v2 extensions)', () => {
         'wallpaperFileId',
         'sportType',
         'handle',
-        'teamRules',
+        'rules',
         'locations',
       ]),
     );

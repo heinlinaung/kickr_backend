@@ -249,11 +249,11 @@ describe('GroupsService', () => {
 
   // Rules have no dedicated setRules/getRules any more — they go through
   // update() and are read back from findById() like any other group field.
-  describe('teamRules via update()', () => {
+  describe('rules via update()', () => {
     it('is owner/admin gated', async () => {
       memberModel.findOne.mockResolvedValue(null);
       await expect(
-        service.update(GROUP_ID, USER_ID, { teamRules: ['a'] }),
+        service.update(GROUP_ID, USER_ID, { rules: ['a'] }),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(groupModel.findByIdAndUpdate).not.toHaveBeenCalled();
     });
@@ -264,14 +264,14 @@ describe('GroupsService', () => {
       allowOwner();
       const six = ['a', 'b', 'c', 'd', 'e', 'f'];
       groupModel.findByIdAndUpdate.mockReturnValue(
-        q({ _id: GROUP_ID, teamRules: six }),
+        q({ _id: GROUP_ID, rules: six }),
       );
 
       const res: any = await service.update(GROUP_ID, USER_ID, {
-        teamRules: six,
+        rules: six,
       });
 
-      expect(res.teamRules).toEqual(six);
+      expect(res.rules).toEqual(six);
     });
 
     it('stores multi-line and non-ASCII rule text verbatim', async () => {
@@ -283,28 +283,26 @@ describe('GroupsService', () => {
         'Line one\n\nLine three',
       ];
       groupModel.findByIdAndUpdate.mockReturnValue(
-        q({ _id: GROUP_ID, teamRules: rules }),
+        q({ _id: GROUP_ID, rules: rules }),
       );
 
       const res: any = await service.update(GROUP_ID, USER_ID, {
-        teamRules: rules,
+        rules: rules,
       });
 
-      expect(res.teamRules[0]).toBe(rules[0]);
-      expect(res.teamRules[0]).toContain('\n');
-      expect(res.teamRules[1]).toContain('\n\n');
+      expect(res.rules[0]).toBe(rules[0]);
+      expect(res.rules[0]).toContain('\n');
+      expect(res.rules[1]).toContain('\n\n');
     });
 
     it('is readable back from findById', async () => {
       const rules = ['Be on time', 'No slide tackles'];
-      groupModel.findById.mockReturnValue(
-        q({ _id: GROUP_ID, teamRules: rules }),
-      );
+      groupModel.findById.mockReturnValue(q({ _id: GROUP_ID, rules: rules }));
       memberModel.findOne.mockReturnValue(q(null));
 
       const res: any = await service.findById(GROUP_ID, USER_ID);
 
-      expect(res.teamRules).toEqual(rules);
+      expect(res.rules).toEqual(rules);
     });
   });
 

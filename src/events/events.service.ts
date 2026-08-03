@@ -93,7 +93,7 @@ export class EventsService {
    * Event detail, with the owning group's rules attached.
    *
    * `groupRules` is a read-only projection — the rules live on the Group and are
-   * edited via POST /groups/:id/rules. Always an array (never null) so the
+   * edited via PATCH /groups/:id. Always an array (never null) so the
    * client can render it unconditionally; `[]` for events with no group.
    */
   async findById(eventId: string) {
@@ -104,9 +104,9 @@ export class EventsService {
     if (event.groupId) {
       const group = await this.groupModel
         .findById(event.groupId)
-        .select('teamRules')
+        .select('rules')
         .lean();
-      groupRules = (group as { teamRules?: string[] } | null)?.teamRules ?? [];
+      groupRules = (group as { rules?: string[] } | null)?.rules ?? [];
     }
 
     return { ...event, groupRules };

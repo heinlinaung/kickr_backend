@@ -221,7 +221,7 @@ The same adoption happens on `POST /groups/:id/locations` when you attach one of
   "logoFileId": "6a6b21375c7cd75eb84a157d",
   "wallpaper": "https://ik.imagekit.io/kickr/groups/...-wallpaper-...",
   "wallpaperFileId": "...",
-  "teamRules": ["No late", "Bring bib", "Respect"],
+  "rules": ["No late", "Bring bib", "Respect"],
   "country": "Thailand",
   "city": "Bangkok",
   "locations": ["6a6b21077d15afe5f7856042", "6a6b21227d15afe5f7856045"],
@@ -244,7 +244,7 @@ The same adoption happens on `POST /groups/:id/locations` when you attach one of
 
 1. **`logo` vs `wallpaper`** — `logo` is the team crest (small, circular in the UI); `wallpaper` is the cover/banner photo. Both are full ImageKit CDN URLs, ready to pass straight to `Image.network`. The `*FileId` fields are for server-side replace/delete — ignore them in the app.
 2. **`locations` on the group object is a list of ID strings, NOT objects.** To render names/coords, call `GET /groups/:id/locations`, which returns them **populated**. Don't try to read `.name` off the group's `locations`.
-3. **`teamRules` entries may contain newlines and are unlimited in count and length.** See §3.9 — this needs specific handling or long rules render as one run-on paragraph.
+3. **`rules` entries may contain newlines and are unlimited in count and length.** See §3.9 — this needs specific handling or long rules render as one run-on paragraph.
 4. **`country` / `city` are optional free text** and may be absent on older groups. They describe where the *team* is based (not a pitch), and drive the `GET /events?region=` filter.
 
 ### 3.2 Endpoints
@@ -252,10 +252,10 @@ The same adoption happens on `POST /groups/:id/locations` when you attach one of
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | `GET` | `/groups` | member | Caller's groups; each item includes **`userRole`**. Only approved memberships, so no `memberStatus`. |
-| `POST` | `/groups` | any | Creator becomes `owner`. Accepts `teamRules`, `country`, `city`. |
+| `POST` | `/groups` | any | Creator becomes `owner`. Accepts `rules`, `country`, `city`. |
 | `GET` | `/groups/search?q=` | any | Public groups only (`isPrivate: false`), matches name **or** handle, max 20. |
 | `GET` | `/groups/:id` | any | Group detail **+ `userRole` / `memberStatus`** for the caller. |
-| `PATCH` | `/groups/:id` | owner/admin | Update name, description, maxPlayers, sportType, handle, teamRules, isPrivate, **country, city**. |
+| `PATCH` | `/groups/:id` | owner/admin | Update name, description, maxPlayers, sportType, handle, rules, isPrivate, **country, city**. |
 | `POST` | `/groups/:id/logo` | owner/admin | multipart → ImageKit. |
 | `POST` | `/groups/:id/wallpaper` | owner/admin | multipart → ImageKit. |
 | `GET` | `/groups/:id/qr` | **any authenticated user** | Stable invite code + link (see §3.5). **No longer owner/admin only.** |
@@ -282,7 +282,7 @@ The same adoption happens on `POST /groups/:id/locations` when you attach one of
   "isPrivate": false,
   "country": "Thailand",
   "city": "Bangkok",
-  "teamRules": ["Be on time", "No alcohol before the match"],
+  "rules": ["Be on time", "No alcohol before the match"],
   "locationIds": ["6a6b21077d15afe5f7856042"]
 }
 ```
@@ -295,7 +295,7 @@ Validation rules to enforce **client-side** so users get instant feedback:
 | `handle` | lowercase letters/digits/`.`/`-`/`_` only, **unique** | `handle must be lowercase alphanumeric, dot, dash or underscore` / `409` on duplicate |
 | `sportType` | one of `football`, `futsal`, `padel`, `basketball` | `sportType must be one of the following values: ...` |
 | `locationIds` | max 5, each a valid ObjectId **owned by the caller** | `400` / `403` if not yours |
-| `teamRules` | any number of strings, any length | only non-string entries are rejected |
+| `rules` | any number of strings, any length | only non-string entries are rejected |
 | `country`, `city` | optional free text | — |
 
 > **Removed fields:** `locationName`, `latitude`, `longitude` no longer exist. Sending them returns `400 property locationName should not exist` (strict whitelist). Use `locationIds` / the locations endpoints instead.
@@ -446,21 +446,21 @@ Uploading again replaces the previous image (the old file is cleaned up server-s
 
 ### 3.9 Team rules — multi-line text, no limits
 
-**There are no dedicated rules endpoints.** `teamRules` is an ordinary group field:
+**There are no dedicated rules endpoints.** `rules` is an ordinary group field:
 
 | Operation | Call |
 |---|---|
-| Read | `GET /groups/:id` → `teamRules` (also on `GET /groups`) |
-| Set on create | `POST /groups` with `teamRules` |
-| Update | `PATCH /groups/:id` with `teamRules` (owner/admin) |
+| Read | `GET /groups/:id` → `rules` (also on `GET /groups`) |
+| Set on create | `POST /groups` with `rules` |
+| Update | `PATCH /groups/:id` with `rules` (owner/admin) |
 
 ```json
-{ "teamRules": ["No smoking", "Arrive 15-30 min early\n(tell the captain if late)"] }
+{ "rules": ["No smoking", "Arrive 15-30 min early\n(tell the captain if late)"] }
 ```
 
 > `GET`/`POST /groups/:id/rules` **existed briefly and have been removed.** Use the group field instead — a call to those paths now falls through to the `:id` wildcard and will not behave as expected.
 
-**`teamRules` REPLACES the whole array** — it does not append. To add one rule, send the existing list plus the new entry, or you will silently wipe the others.
+**`rules` REPLACES the whole array** — it does not append. To add one rule, send the existing list plus the new entry, or you will silently wipe the others.
 
 Three properties to rely on:
 
@@ -549,7 +549,7 @@ class Group {
   final String ownerId;
   final String? logo;        // ImageKit URL — team crest
   final String? wallpaper;   // ImageKit URL — cover photo
-  final List<String> teamRules;
+  final List<String> rules;
   final List<String> locationIds; // IDs only; fetch /groups/:id/locations to populate
   final String? country;     // optional, e.g. 'Thailand'
   final String? city;        // optional, e.g. 'Bangkok'
@@ -569,7 +569,7 @@ class Group {
     this.sportType,
     this.logo,
     this.wallpaper,
-    this.teamRules = const [],
+    this.rules = const [],
     this.locationIds = const [],
     this.country,
     this.city,
@@ -597,7 +597,7 @@ class Group {
         ownerId: j['ownerId'] as String,
         logo: j['logo'] as String?,
         wallpaper: j['wallpaper'] as String?,
-        teamRules: List<String>.from((j['teamRules'] as List?) ?? const []),
+        rules: List<String>.from((j['rules'] as List?) ?? const []),
         locationIds: List<String>.from((j['locations'] as List?) ?? const []),
         isPrivate: (j['isPrivate'] as bool?) ?? false,
         maxPlayers: (j['maxPlayers'] as num?)?.toInt() ?? 22,
@@ -683,10 +683,10 @@ class GroupInvite {
 | Create group | `POST /locations` (no `groupId` — group doesn't exist yet) → `POST /groups` with `locationIds`; the server adopts them (§2.3) |
 | Group detail — header | `GET /groups/:id` (`logo`, `wallpaper`, `handle`, `country`/`city`; gate admin UI on `userRole` **+ `memberStatus == 'approved'`**) |
 | Group detail — Members tab | `GET /groups/:id/members` |
-| Group detail — rules | `GET /groups/:id` → `teamRules` (render `\n` — §3.9) |
+| Group detail — rules | `GET /groups/:id` → `rules` (render `\n` — §3.9) |
 | Group detail — map/venues | `GET /groups/:id/locations` (populated) |
 | Group settings — images | `POST /groups/:id/logo`, `POST /groups/:id/wallpaper` |
-| Group settings — rules | `PATCH /groups/:id` with `teamRules` — replaces the whole array, no cap (§3.9) |
+| Group settings — rules | `PATCH /groups/:id` with `rules` — replaces the whole array, no cap (§3.9) |
 | Group settings — venues | `POST` / `DELETE /groups/:id/locations[/:locationId]` (max 5) |
 | Invite / share QR | `GET /groups/:id/qr` → render `inviteLink`; "Regenerate" → `GET /groups/:id/invite-code` |
 | Join via QR scan | `POST /groups/join-by-code` → **`pending`**; show "awaiting approval", then poll `GET /groups/:id` → `memberStatus` |
@@ -704,7 +704,7 @@ class GroupInvite {
 - [ ] `logo` ≠ `wallpaper` (crest vs cover). Both are ready-to-use CDN URLs.
 - [ ] `GET /:id/qr` is **stable** and open to **any authenticated user**; `GET /:id/invite-code` **rotates** and stays owner/admin — don't call it on screen load.
 - [ ] Max **5** locations per group. Team rules have **no limit** — render with `white-space: pre-line` so newlines survive (§3.9).
-- [ ] `teamRules` on `PATCH /groups/:id` **replaces** the whole array — resend existing rules when adding one. There are **no** `/groups/:id/rules` routes.
+- [ ] `rules` on `PATCH /groups/:id` **replaces** the whole array — resend existing rules when adding one. There are **no** `/groups/:id/rules` routes.
 - [ ] **Join-by-code/QR now needs approval** (§3.6). Don't route into the group on success; branch on `status: "pending"`.
 - [ ] On `GET /groups/:id`, check **`memberStatus == 'approved'`**, not just a non-null `userRole` — a pending requester has `userRole: "member"`.
 - [ ] `group.level` is **inert** — nothing reads it server-side; don't gate features on it.

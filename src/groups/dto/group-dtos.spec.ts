@@ -94,10 +94,10 @@ describe('CreateGroupDto', () => {
 });
 
 describe('UpdateGroupDto', () => {
-  it('accepts more than 3 teamRules — the cap was removed', async () => {
+  it('accepts more than 3 rules — the cap was removed', async () => {
     const six = ['a', 'b', 'c', 'd', 'e', 'f'];
-    const out: any = await run(UpdateGroupDto, { teamRules: six });
-    expect(out.teamRules).toEqual(six);
+    const out: any = await run(UpdateGroupDto, { rules: six });
+    expect(out.rules).toEqual(six);
   });
 
   it('accepts country and city', async () => {
@@ -110,9 +110,9 @@ describe('UpdateGroupDto', () => {
   });
 
   it('rejects non-string rule entries', async () => {
-    expect(
-      await expectRejected(UpdateGroupDto, { teamRules: ['a', 5] }),
-    ).toContain('teamRules');
+    expect(await expectRejected(UpdateGroupDto, { rules: ['a', 5] })).toContain(
+      'rules',
+    );
   });
 
   it('accepts sportType/handle/isPrivate', async () => {
@@ -152,11 +152,11 @@ describe('UpdateMemberRoleDto', () => {
   });
 });
 
-describe('CreateGroupDto — teamRules', () => {
+describe('CreateGroupDto — rules', () => {
   it('accepts any number of rules (no cap)', async () => {
     const six = ['a', 'b', 'c', 'd', 'e', 'f'];
-    const out: any = await run(CreateGroupDto, { name: 'FC', teamRules: six });
-    expect(out.teamRules).toEqual(six);
+    const out: any = await run(CreateGroupDto, { name: 'FC', rules: six });
+    expect(out.rules).toEqual(six);
   });
 
   it('preserves newlines and non-ASCII text in a rule', async () => {
@@ -166,23 +166,23 @@ describe('CreateGroupDto — teamRules', () => {
     ];
     const out: any = await run(CreateGroupDto, {
       name: 'FC',
-      teamRules: rules,
+      rules: rules,
     });
-    expect(out.teamRules[0]).toBe(rules[0]);
-    expect(out.teamRules[1]).toBe('a\n\nb');
+    expect(out.rules[0]).toBe(rules[0]);
+    expect(out.rules[1]).toBe('a\n\nb');
   });
 
   it('rejects non-string entries', async () => {
     expect(
       await expectRejected(CreateGroupDto, {
         name: 'FC',
-        teamRules: ['ok', 42],
+        rules: ['ok', 42],
       }),
-    ).toContain('teamRules');
+    ).toContain('rules');
   });
 
   it('is optional', async () => {
     const out: any = await run(CreateGroupDto, { name: 'FC' });
-    expect(out.teamRules).toBeUndefined();
+    expect(out.rules).toBeUndefined();
   });
 });

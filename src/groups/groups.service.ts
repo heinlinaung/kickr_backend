@@ -298,7 +298,7 @@ export class GroupsService {
     return { inviteCode: code, inviteLink: `${base}/g/${code}`, expiresAt };
   }
 
-  // Team rules are handled by create()/update() via the `teamRules` field and
+  // Group rules are handled by create()/update() via the `rules` field and
   // read back on findById() — there are deliberately no setRules/getRules
   // methods. Rule text is stored verbatim (no count or length cap), so
   // newlines inside a rule round-trip unchanged.

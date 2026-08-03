@@ -89,7 +89,7 @@ export class GroupsController {
     return this.groupsService.getQr(id);
   }
 
-  // Team rules have no dedicated routes: they are just the `teamRules` field on
+  // Group rules have no dedicated routes: they are just the `rules` field on
   // POST /groups, PATCH /groups/:id and GET /groups/:id.
 
   @Get(':id/locations')
