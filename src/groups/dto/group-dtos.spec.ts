@@ -2,7 +2,6 @@ import { BadRequestException, ValidationPipe } from '@nestjs/common';
 import { CreateGroupDto } from './create-group.dto';
 import { UpdateGroupDto } from './update-group.dto';
 import { UpdateMemberRoleDto } from './update-member-role.dto';
-import { SetGroupRulesDto } from './group-rules.dto';
 
 // Mirrors the global pipe configured in src/main.ts
 const pipe = new ValidationPipe({
@@ -95,10 +94,10 @@ describe('CreateGroupDto', () => {
 });
 
 describe('UpdateGroupDto', () => {
-  it('accepts more than 3 teamRules — the cap was removed', async () => {
+  it('accepts more than 3 rules — the cap was removed', async () => {
     const six = ['a', 'b', 'c', 'd', 'e', 'f'];
-    const out: any = await run(UpdateGroupDto, { teamRules: six });
-    expect(out.teamRules).toEqual(six);
+    const out: any = await run(UpdateGroupDto, { rules: six });
+    expect(out.rules).toEqual(six);
   });
 
   it('accepts country and city', async () => {
@@ -111,9 +110,9 @@ describe('UpdateGroupDto', () => {
   });
 
   it('rejects non-string rule entries', async () => {
-    expect(
-      await expectRejected(UpdateGroupDto, { teamRules: ['a', 5] }),
-    ).toContain('teamRules');
+    expect(await expectRejected(UpdateGroupDto, { rules: ['a', 5] })).toContain(
+      'rules',
+    );
   });
 
   it('accepts sportType/handle/isPrivate', async () => {
@@ -153,27 +152,37 @@ describe('UpdateMemberRoleDto', () => {
   });
 });
 
-describe('SetGroupRulesDto', () => {
-  it('requires rules', async () => {
-    expect(await expectRejected(SetGroupRulesDto, {})).toContain('rules');
-  });
-
-  it('accepts any number of rules — the max-3 cap was removed', async () => {
+describe('CreateGroupDto — rules', () => {
+  it('accepts any number of rules (no cap)', async () => {
     const six = ['a', 'b', 'c', 'd', 'e', 'f'];
-    const out: any = await run(SetGroupRulesDto, { rules: six });
+    const out: any = await run(CreateGroupDto, { name: 'FC', rules: six });
     expect(out.rules).toEqual(six);
   });
 
   it('preserves newlines and non-ASCII text in a rule', async () => {
-    const rules = ['ပွဲမတိုင်ခင် ( 15-30 ) မိနစ်\nစောပြီး', 'a\n\nb'];
-    const out: any = await run(SetGroupRulesDto, { rules });
+    const rules = [
+      '\u1015\u103d\u1032\u1019\u1010\u102d\u102f\u1004\u103a\u1001\u1004\u103a ( 15-30 ) \u1019\u102d\u1014\u1005\u103a\n\u1005\u1031\u102c\u1015\u103c\u102e\u1038',
+      'a\n\nb',
+    ];
+    const out: any = await run(CreateGroupDto, {
+      name: 'FC',
+      rules: rules,
+    });
     expect(out.rules[0]).toBe(rules[0]);
     expect(out.rules[1]).toBe('a\n\nb');
   });
 
-  it('still rejects non-string entries', async () => {
+  it('rejects non-string entries', async () => {
     expect(
-      await expectRejected(SetGroupRulesDto, { rules: ['ok', 42] }),
+      await expectRejected(CreateGroupDto, {
+        name: 'FC',
+        rules: ['ok', 42],
+      }),
     ).toContain('rules');
+  });
+
+  it('is optional', async () => {
+    const out: any = await run(CreateGroupDto, { name: 'FC' });
+    expect(out.rules).toBeUndefined();
   });
 });

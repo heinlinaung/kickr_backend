@@ -221,7 +221,7 @@ The same adoption happens on `POST /groups/:id/locations` when you attach one of
   "logoFileId": "6a6b21375c7cd75eb84a157d",
   "wallpaper": "https://ik.imagekit.io/kickr/groups/...-wallpaper-...",
   "wallpaperFileId": "...",
-  "teamRules": ["No late", "Bring bib", "Respect"],
+  "rules": ["No late", "Bring bib", "Respect"],
   "country": "Thailand",
   "city": "Bangkok",
   "locations": ["6a6b21077d15afe5f7856042", "6a6b21227d15afe5f7856045"],
@@ -244,27 +244,27 @@ The same adoption happens on `POST /groups/:id/locations` when you attach one of
 
 1. **`logo` vs `wallpaper`** — `logo` is the team crest (small, circular in the UI); `wallpaper` is the cover/banner photo. Both are full ImageKit CDN URLs, ready to pass straight to `Image.network`. The `*FileId` fields are for server-side replace/delete — ignore them in the app.
 2. **`locations` on the group object is a list of ID strings, NOT objects.** To render names/coords, call `GET /groups/:id/locations`, which returns them **populated**. Don't try to read `.name` off the group's `locations`.
-3. **`teamRules` entries may contain newlines and are unlimited in count and length.** See §3.9 — this needs specific handling or long rules render as one run-on paragraph.
+3. **`rules` entries may contain newlines and are unlimited in count and length.** See §3.9 — this needs specific handling or long rules render as one run-on paragraph.
 4. **`country` / `city` are optional free text** and may be absent on older groups. They describe where the *team* is based (not a pitch), and drive the `GET /events?region=` filter.
 
 ### 3.2 Endpoints
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| `GET` | `/groups` | member | Caller's groups; each item includes `myRole`. |
-| `POST` | `/groups` | any | Creator becomes `owner`. |
+| `GET` | `/groups` | member | Caller's groups; each item includes **`userRole`**. Only approved memberships, so no `memberStatus`. |
+| `POST` | `/groups` | any | Creator becomes `owner`. Accepts `rules`, `country`, `city`. |
 | `GET` | `/groups/search?q=` | any | Public groups only (`isPrivate: false`), matches name **or** handle, max 20. |
 | `GET` | `/groups/:id` | any | Group detail **+ `userRole` / `memberStatus`** for the caller. |
-| `PATCH` | `/groups/:id` | owner/admin | Update name, description, maxPlayers, sportType, handle, teamRules, isPrivate, **country, city**. |
+| `PATCH` | `/groups/:id` | owner/admin | Update name, description, maxPlayers, sportType, handle, rules, isPrivate, **country, city**. |
 | `POST` | `/groups/:id/logo` | owner/admin | multipart → ImageKit. |
 | `POST` | `/groups/:id/wallpaper` | owner/admin | multipart → ImageKit. |
 | `GET` | `/groups/:id/qr` | **any authenticated user** | Stable invite code + link (see §3.5). **No longer owner/admin only.** |
 | `GET` | `/groups/:id/invite-code` | owner/admin | **Rotates** the code (see §3.5). |
-| `GET` / `POST` | `/groups/:id/rules` | any / owner-admin | Team rules — **no count or length limit** (see §3.9). |
 | `GET` / `POST` | `/groups/:id/locations` | any / owner-admin | List (populated) / attach, **max 5**. |
 | `DELETE` | `/groups/:id/locations/:locationId` | owner/admin | Detach only — does **not** delete the location. |
 | `GET` | `/groups/:id/members` | any | Members with populated `userId`. |
 | `PATCH` | `/groups/:id/members/:userId/role` | owner/admin | Set `role` and/or `level`. |
+| `POST` | `/groups/:id/leave` | any member | **Caller leaves the group.** Any role except `owner` (see §3.10). |
 | `DELETE` | `/groups/:id/members/:userId` | owner/admin | Remove member (owner can't be removed). |
 | `POST` | `/groups/:id/invitations` | any | Request to join → `pending`. |
 | `GET` | `/groups/:id/invitations` | owner/admin | Pending requests. |
@@ -283,6 +283,7 @@ The same adoption happens on `POST /groups/:id/locations` when you attach one of
   "isPrivate": false,
   "country": "Thailand",
   "city": "Bangkok",
+  "rules": ["Be on time", "No alcohol before the match"],
   "locationIds": ["6a6b21077d15afe5f7856042"]
 }
 ```
@@ -295,7 +296,7 @@ Validation rules to enforce **client-side** so users get instant feedback:
 | `handle` | lowercase letters/digits/`.`/`-`/`_` only, **unique** | `handle must be lowercase alphanumeric, dot, dash or underscore` / `409` on duplicate |
 | `sportType` | one of `football`, `futsal`, `padel`, `basketball` | `sportType must be one of the following values: ...` |
 | `locationIds` | max 5, each a valid ObjectId **owned by the caller** | `400` / `403` if not yours |
-| `teamRules` | any number of strings, any length | only non-string entries are rejected |
+| `rules` | any number of strings, any length | only non-string entries are rejected |
 | `country`, `city` | optional free text | — |
 
 > **Removed fields:** `locationName`, `latitude`, `longitude` no longer exist. Sending them returns `400 property locationName should not exist` (strict whitelist). Use `locationIds` / the locations endpoints instead.
@@ -446,20 +447,25 @@ Uploading again replaces the previous image (the old file is cleaned up server-s
 
 ### 3.9 Team rules — multi-line text, no limits
 
-```
-GET  /groups/:id/rules          → { "rules": [...] }      any member
-POST /groups/:id/rules          → updated group           owner/admin
-```
+**There are no dedicated rules endpoints.** `rules` is an ordinary group field:
+
+| Operation | Call |
+|---|---|
+| Read | `GET /groups/:id` → `rules` (also on `GET /groups`) |
+| Set on create | `POST /groups` with `rules` |
+| Update | `PATCH /groups/:id` with `rules` (owner/admin) |
 
 ```json
 { "rules": ["No smoking", "Arrive 15-30 min early\n(tell the captain if late)"] }
 ```
 
-**`POST` REPLACES the whole array** — it does not append. To add one rule, send the existing list plus the new entry, or you will silently wipe the others.
+> `GET`/`POST /groups/:id/rules` **existed briefly and have been removed.** Use the group field instead — a call to those paths now falls through to the `:id` wildcard and will not behave as expected.
 
-Three things changed on 2026-08-03:
+**`rules` REPLACES the whole array** — it does not append. To add one rule, send the existing list plus the new entry, or you will silently wipe the others.
 
-- **The max-3 cap is gone.** Send as many rules as you like. A 6-item list — previously `400` — now succeeds.
+Three properties to rely on:
+
+- **No count cap.** A 6-item list — once rejected with `400` — now succeeds.
 - **No per-rule length limit.** A rule can be a full paragraph.
 - **Newlines inside a rule are preserved verbatim**, including blank lines (`\n\n`). Non-ASCII (Burmese, emoji) round-trips byte-for-byte.
 
@@ -468,6 +474,33 @@ Three things changed on 2026-08-03:
 Structure it as **one array entry per rule** (matching the bulleted design) rather than one big newline-delimited string — then you can render bullets without parsing, and newlines inside an entry handle wrapped sub-clauses.
 
 Since there is no cap, the array is an unbounded write surface: consider a sane client-side limit on your own edit screen.
+
+### 3.10 Leaving a group
+
+```
+POST /groups/:id/leave
+```
+→ `200`
+```json
+{ "data": { "message": "You have left the group" } }
+```
+
+Self-service — **no role check**. An `admin`, `captain` or `member` can leave without anyone's approval; the membership row is deleted outright.
+
+| Case | Status | Message |
+|---|---|---|
+| Left successfully | `200` | `You have left the group` |
+| Caller is the **owner** | `403` | `The group owner cannot leave the group. Transfer ownership or delete the group instead.` |
+| Caller is not a member | `404` | `You are not a member of this group` |
+| Group does not exist | `404` | `Group not found` |
+
+**The owner cannot leave.** A group with no owner would have nobody able to manage it, and ownership transfer does not exist yet (§8). Hide or disable the Leave action for the owner rather than letting them hit the `403`.
+
+**Leaving also withdraws a pending join request.** A `pending` row is deleted the same way, so this doubles as "cancel my request" — no separate endpoint needed. Because `memberStatus` (§3.4) tells you which state the caller is in, you can label the same button "Leave group" or "Cancel request" accordingly.
+
+**Rejoining** goes through the normal flow (§3.6): request to join, or use an invite code — and it needs owner/admin approval again. Leaving is not reversible by the user alone.
+
+> Distinct from `DELETE /groups/:id/members/:userId`, which is an owner/admin **removing someone else**. This endpoint takes no target id — the caller is always the subject, so it cannot be used to remove another member.
 
 ---
 
@@ -544,15 +577,14 @@ class Group {
   final String ownerId;
   final String? logo;        // ImageKit URL — team crest
   final String? wallpaper;   // ImageKit URL — cover photo
-  final List<String> teamRules;
+  final List<String> rules;
   final List<String> locationIds; // IDs only; fetch /groups/:id/locations to populate
   final String? country;     // optional, e.g. 'Thailand'
   final String? city;        // optional, e.g. 'Bangkok'
   final bool isPrivate;
   final int maxPlayers;
-  final String? myRole;      // present on GET /groups
-  final String? userRole;    // present on GET /groups/:id — caller's role
-  final String? memberStatus;// present on GET /groups/:id — 'pending' | 'approved'
+  final String? userRole;    // caller's role — on GET /groups AND GET /groups/:id
+  final String? memberStatus;// 'pending' | 'approved' — GET /groups/:id only
 
   Group({
     required this.id,
@@ -565,20 +597,24 @@ class Group {
     this.sportType,
     this.logo,
     this.wallpaper,
-    this.teamRules = const [],
+    this.rules = const [],
     this.locationIds = const [],
     this.country,
     this.city,
-    this.myRole,
     this.userRole,
     this.memberStatus,
   });
 
-  /// True only for an APPROVED membership. A pending requester also has
-  /// userRole == 'member', so never infer membership from the role alone.
-  bool get isMember => memberStatus == 'approved';
+  /// A pending requester also has userRole == 'member', so never infer
+  /// membership from the role alone — check memberStatus.
+  ///
+  /// GET /groups only ever returns approved memberships and omits
+  /// memberStatus, so a null status with a non-null role counts as a member.
+  bool get isMember =>
+      memberStatus == 'approved' || (memberStatus == null && userRole != null);
   bool get isPendingApproval => memberStatus == 'pending';
-  bool get canManage => isMember && (userRole == 'owner' || userRole == 'admin');
+  bool get canManage =>
+      isMember && (userRole == 'owner' || userRole == 'admin');
 
   factory Group.fromJson(Map<String, dynamic> j) => Group(
         id: j['_id'] as String,
@@ -589,18 +625,15 @@ class Group {
         ownerId: j['ownerId'] as String,
         logo: j['logo'] as String?,
         wallpaper: j['wallpaper'] as String?,
-        teamRules: List<String>.from((j['teamRules'] as List?) ?? const []),
+        rules: List<String>.from((j['rules'] as List?) ?? const []),
         locationIds: List<String>.from((j['locations'] as List?) ?? const []),
         isPrivate: (j['isPrivate'] as bool?) ?? false,
         maxPlayers: (j['maxPlayers'] as num?)?.toInt() ?? 22,
         country: j['country'] as String?,
         city: j['city'] as String?,
-        myRole: j['myRole'] as String?,
         userRole: j['userRole'] as String?,
         memberStatus: j['memberStatus'] as String?,
       );
-
-  bool get canManage => myRole == 'owner' || myRole == 'admin';
 }
 
 class GroupMember {
@@ -673,19 +706,20 @@ class GroupInvite {
 
 | Screen | Calls |
 |---|---|
-| My groups | `GET /groups` (use `myRole` to gate admin UI) |
+| My groups | `GET /groups` (use `userRole` to gate admin UI) |
 | Group discovery / search | `GET /groups/search?q=` |
 | Create group | `POST /locations` (no `groupId` — group doesn't exist yet) → `POST /groups` with `locationIds`; the server adopts them (§2.3) |
 | Group detail — header | `GET /groups/:id` (`logo`, `wallpaper`, `handle`, `country`/`city`; gate admin UI on `userRole` **+ `memberStatus == 'approved'`**) |
 | Group detail — Members tab | `GET /groups/:id/members` |
-| Group detail — rules | `GET /groups/:id/rules` (render `\n` — §3.9) |
+| Group detail — rules | `GET /groups/:id` → `rules` (render `\n` — §3.9) |
 | Group detail — map/venues | `GET /groups/:id/locations` (populated) |
 | Group settings — images | `POST /groups/:id/logo`, `POST /groups/:id/wallpaper` |
-| Group settings — rules | `POST /groups/:id/rules` — replaces the whole array, no cap (§3.9) |
+| Group settings — rules | `PATCH /groups/:id` with `rules` — replaces the whole array, no cap (§3.9) |
 | Group settings — venues | `POST` / `DELETE /groups/:id/locations[/:locationId]` (max 5) |
 | Invite / share QR | `GET /groups/:id/qr` → render `inviteLink`; "Regenerate" → `GET /groups/:id/invite-code` |
 | Join via QR scan | `POST /groups/join-by-code` → **`pending`**; show "awaiting approval", then poll `GET /groups/:id` → `memberStatus` |
 | Pending requests | `GET /groups/:id/invitations` → `PATCH .../:invId` |
+| Group settings — leave | `POST /groups/:id/leave` (hide for `userRole == 'owner'`) |
 | My saved venues | `GET /locations` |
 
 ---
@@ -699,7 +733,7 @@ class GroupInvite {
 - [ ] `logo` ≠ `wallpaper` (crest vs cover). Both are ready-to-use CDN URLs.
 - [ ] `GET /:id/qr` is **stable** and open to **any authenticated user**; `GET /:id/invite-code` **rotates** and stays owner/admin — don't call it on screen load.
 - [ ] Max **5** locations per group. Team rules have **no limit** — render with `white-space: pre-line` so newlines survive (§3.9).
-- [ ] `POST /groups/:id/rules` **replaces** the whole array — resend existing rules when adding one.
+- [ ] `rules` on `PATCH /groups/:id` **replaces** the whole array — resend existing rules when adding one. There are **no** `/groups/:id/rules` routes.
 - [ ] **Join-by-code/QR now needs approval** (§3.6). Don't route into the group on success; branch on `status: "pending"`.
 - [ ] On `GET /groups/:id`, check **`memberStatus == 'approved'`**, not just a non-null `userRole` — a pending requester has `userRole: "member"`.
 - [ ] `group.level` is **inert** — nothing reads it server-side; don't gate features on it.
@@ -710,6 +744,7 @@ class GroupInvite {
 - [ ] You can only **attach** locations you created; editing extends to group staff for group-owned rows.
 - [ ] `handle` must be lowercase-slug and is globally unique (`409`).
 - [ ] Owner's role/level can never be changed (`403`); `owner` isn't an assignable role.
+- [ ] `POST /groups/:id/leave` is self-service for every role **except owner** — hide the action for owners (§3.10). It also cancels a pending join request.
 - [ ] Uploads: field name `file`, images only (JPEG/PNG/WebP), ≤ 10 MB.
 
 ---
@@ -719,6 +754,7 @@ class GroupInvite {
 | Item | Status |
 |---|---|
 | Group **posts** feed and **gallery** | Not implemented (fields/routes absent) |
+| **Ownership transfer** | Not implemented — which is why the owner cannot leave a group (§3.10). Only a full group delete would free them, and that isn't built either. |
 | "Plus one" guest invites | Not implemented — approval semantics still an open product decision |
 | Nearby/geo search (`GET /events?near=`) | Data is in place (`geo` + 2dsphere index) but **no endpoint yet**. `GET /events?region=` (filter by the group's `country`/`city`) **is** available. |
 | `GET /locations/search?q=&near=` | **Not implemented** — list via `GET /locations` or `GET /groups/:id/locations`. |

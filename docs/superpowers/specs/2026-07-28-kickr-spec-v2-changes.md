@@ -23,8 +23,7 @@ Verified against source. These are **done**, not backlog:
 | **File storage** | ImageKit via shared `ImageKitService` (backend-proxied; stores CDN url + fileId; deletes prior file on replace). Avatar, group logo + wallpaper migrated. |
 | **Player Profile (§4.2/§4.1)** | Implemented: `biography, country, city, dateOfBirth, sports[], preferredSport, footballPosition, privacy{profileVisibility,showStats,showMatchHistory}, inviteCode, highlightVideos[], gallery[]`, plus `GET /users/:id/profile` (privacy-filtered), `GET /users/me/qr`, extended `PATCH /users/me`. Stats are partial (see §2.3). |
 | **Location (§3)** — *shipped 2026-08-03* | `locations` collection with derived GeoJSON + `2dsphere`, CRUD routes, group attach/detach (max 5). **Diverged from spec:** rows may be *group*-owned as well as creator-owned (§3.3). `GET /locations/search` not built (§3.5). |
-| **Groups (§4)** — *shipped 2026-08-03* | `logo/logoFileId`, `sportType`, unique `handle`, `teamRules` (uncapped), `country`, `city`, `locations[]`; `captain` role + `level` 1–3; search, QR (open to any authenticated user), rules, member-role and location routes (§4.6). Detail returns the caller's `userRole`/`memberStatus`. |
-
+| **Groups (§4)** — *shipped 2026-08-03* | `logo/logoFileId`, `sportType`, unique `handle`, `rules` (uncapped; renamed from `teamRules`), `country`, `city`, `locations[]`; `captain` role + `level` 1–3; search, QR (open to any authenticated user), member-role and location routes (§4.6). Detail returns the caller's `userRole`/`memberStatus`. Rules have no dedicated routes — they are a group field. |
 | **Admin endpoints** — *shipped 2026-08-03* | `POST /admin/groups/:groupId/members` and `POST /admin/events/:eventId/players` behind an `x-admin-key` shared secret (`ADMIN_KEY`). Bypass permissions but preserve capacity/duplicate/existence checks; per-user results. Fail closed when the env var is unset. See [pre-events changes](./2026-08-03-pre-events-changes.md) §6. |
 
 Design docs exist for **phone-number sign-in** and **verified email change** (separate specs); not covered here.
@@ -45,7 +44,7 @@ The 2026-08-03 status refresh re-verified §2–§4 against `main` at `0b429fc`.
 |---|---|---|
 | §4.1 User Management | **Mostly done** | Signup now accepts an optional `name` (shipped 2026-08-03). Remaining: `role`, `favouriteTeam`, username autogeneration (§2.2) |
 | §4.2 Player Profile | **Mostly done** | Remaining: real statistics (needs §5 + §8), gallery/highlight **upload routes** |
-| §4.3 Groups | ✅ **Shipped** | Logo, sportType, handle, teamRules, captains + levels, locations all landed (§4.2, §4.3, §4.6). Remaining: Posts feed (§14 #4), group gallery upload |
+| §4.3 Groups | ✅ **Shipped** | Logo, sportType, handle, `rules`, captains + levels, locations all landed (§4.2, §4.3, §4.6). Remaining: Posts feed (§14 #4), group gallery upload |
 | §4.4 Group Invitations | ✅ **Shipped** | Search + QR shipped; §14 #5 approval inconsistency **fixed 2026-08-03** ([pre-events §6b](./2026-08-03-pre-events-changes.md)). QR is now readable by any authenticated user. Still open: invite-link deep-link format |
 | §4.5 Events | Partial | **Rework** status → 6-state lifecycle; **add** MVP, multi-team fixtures, photos, cover, templates → [detailed spec](./2026-08-03-events-feature-spec.md) |
 | §4.6 Public Events | Partial | **Add** geo discovery (now unblocked — `Location.geo` exists); auto-close-when-full |
@@ -229,7 +228,7 @@ logoFileId: string  // ImageKit fileId for replace/delete
 wallpaperFileId: string            // added alongside, same reason
 sportType: string   // enum football | futsal | padel | basketball
 handle: string      // unique sparse index, trimmed
-teamRules: [string] // no cap (max-3 removed 2026-08-03); newlines preserved
+rules: [string]     // RENAMED from `teamRules` 2026-08-03; no cap; newlines preserved
 locations: [ObjectId->Location]   // §3.2 — max 5, enforced via GroupsService.MAX_LOCATIONS
 ```
 
@@ -279,18 +278,19 @@ level: 1 | 2 | 3                                  // default 1
 | GET | `/groups/search?q=` | search by name/handle; excludes private groups | ✅ shipped |
 | POST | `/groups/:id/logo` | upload team logo (ImageKit) | ✅ shipped |
 | POST | `/groups/:id/wallpaper` | upload cover photo (ImageKit) | ✅ shipped |
-| PATCH | `/groups/:id` | accept `sportType`, `handle`, `teamRules` — returns **409** on a taken handle (`34fc1a4`) | ✅ shipped |
+| PATCH | `/groups/:id` | accept `sportType`, `handle`, `rules`, `country`, `city` — returns **409** on a taken handle (`34fc1a4`) | ✅ shipped |
 | GET | `/groups/:id/qr` | QR/invite-link payload | ✅ shipped |
 | PATCH | `/groups/:id/members/:userId/role` | promote to captain/admin, set `level` | ✅ shipped |
-| GET/POST | `/groups/:id/rules` | team rules — **no cap** (max-3 removed 2026-08-03) | ✅ shipped |
+| GET/POST | `/groups/:id/rules` | ~~team rules~~ — **REMOVED 2026-08-03**; rules are the `rules` field on create/update/read | ❌ removed |
 | GET/POST/DELETE | `/groups/:id/locations` | see §3.5, **max 5** | ✅ shipped |
 | GET | `/groups/:id/members`, `/groups/:id/invite-code` | listing + code retrieval | ✅ shipped |
-| DELETE | `/groups/:id/members/:userId` | remove a member | ✅ shipped |
+| DELETE | `/groups/:id/members/:userId` | remove a member (owner/admin; owner can't be removed) | ✅ shipped |
+| POST | `/groups/:id/leave` | **NEW** — caller leaves the group; any role except `owner` ([pre-events §6c](./2026-08-03-pre-events-changes.md)) | ✅ shipped |
 | GET/POST | `/groups/:id/posts` | **NEW** (if Posts is a separate feed — §14 #4) | ❌ not built |
 | POST | `/groups/:id/gallery` | **NEW** — upload gallery media (ImageKit) | ❌ not built |
-| DELETE | `/groups/:id/rules` | rule removal — POST replaces the whole array as built | ❌ not built |
+| DELETE | `/groups/:id/rules` | never built, and no longer applicable | ❌ n/a |
 
-> **Note on rules:** as built, `POST /groups/:id/rules` **replaces** the entire `teamRules` array (no count or length cap since 2026-08-03) rather than appending, so a separate DELETE is unnecessary for the current client. Listed above as not-built for accuracy against the original spec row.
+> **Note on rules (updated 2026-08-03):** the dedicated rules routes were **removed**. Rules are now the `rules` array field on `POST /groups`, `PATCH /groups/:id` and `GET /groups/:id` — no count or length cap, and setting it **replaces** the whole array rather than appending. The field was renamed from `teamRules`; see [pre-events changes](./2026-08-03-pre-events-changes.md) §4.2.
 
 ---
 
@@ -668,7 +668,7 @@ Future §7 items (AI matching, live tracking, GPS check-in, push, dark mode, i18
 |---|---|---|
 | users | ✅ — `role`/`favouriteTeam` **still missing** | ✅ |
 | notifications | ✅ — shuffle is still the only trigger | ✅ (more triggers) |
-| groups | ✅ — **extended**: logo, sportType, handle, teamRules, locations[] | ✅ |
+| groups | ✅ — **extended**: logo, sportType, handle, `rules` (was `teamRules`), country, city, locations[] | ✅ |
 | group_members | ✅ — **extended**: captain role + level 1–3 | ✅ |
 | messages | ✅ — still `{groupId, senderId, text}` only | ✅ (+attachments) |
 | events | ✅ — `locationId` landed; status rework + `matches[]` outstanding | ✅ |

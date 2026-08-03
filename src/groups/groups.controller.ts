@@ -21,7 +21,6 @@ import { CreateGroupDto } from './dto/create-group.dto';
 import { UpdateGroupDto } from './dto/update-group.dto';
 import { AttachLocationDto } from './dto/attach-location.dto';
 import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
-import { SetGroupRulesDto } from './dto/group-rules.dto';
 import { multerMemoryImageOptions } from '../common/upload/multer-memory.config';
 
 @ApiTags('Groups')
@@ -90,19 +89,8 @@ export class GroupsController {
     return this.groupsService.getQr(id);
   }
 
-  @Get(':id/rules')
-  getRules(@Param('id') id: string) {
-    return this.groupsService.getRules(id);
-  }
-
-  @Post(':id/rules')
-  setRules(
-    @Param('id') id: string,
-    @CurrentUser() user: any,
-    @Body() dto: SetGroupRulesDto,
-  ) {
-    return this.groupsService.setRules(id, user._id.toString(), dto.rules);
-  }
+  // Group rules have no dedicated routes: they are just the `rules` field on
+  // POST /groups, PATCH /groups/:id and GET /groups/:id.
 
   @Get(':id/locations')
   listLocations(@Param('id') id: string) {
@@ -129,6 +117,13 @@ export class GroupsController {
       user._id.toString(),
       locationId,
     );
+  }
+
+  // Self-service: any member (admin/captain/member) may leave. The owner is
+  // refused — see GroupsService.leave.
+  @Post(':id/leave')
+  leave(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.groupsService.leave(id, user._id.toString());
   }
 
   @Get(':id/members')

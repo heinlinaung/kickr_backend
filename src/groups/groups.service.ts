@@ -50,9 +50,12 @@ export class GroupsService {
     const groups = await this.groupModel
       .find({ _id: { $in: groupIds } })
       .lean();
+    // Named `userRole` to match GET /groups/:id (findById). Every membership
+    // here is already `status: 'approved'`, so there is no memberStatus to
+    // report — the list only contains groups the caller actually belongs to.
     return groups.map((group) => ({
       ...group,
-      myRole: memberships.find(
+      userRole: memberships.find(
         (m) => m.groupId.toString() === (group._id as any).toString(),
       )?.role,
     }));
@@ -295,35 +298,47 @@ export class GroupsService {
     return { inviteCode: code, inviteLink: `${base}/g/${code}`, expiresAt };
   }
 
-  async setRules(
-    groupId: string,
-    userId: string,
-    rules: string[],
-  ): Promise<GroupDocument> {
-    await this.assertOwnerOrAdmin(groupId, userId);
-    // No count or length cap (product decision) — rule text is stored verbatim,
-    // including any newlines, so multi-line rules round-trip unchanged.
-    const group = await this.groupModel
-      .findByIdAndUpdate(groupId, { $set: { teamRules: rules } }, { new: true })
-      .lean();
-    if (!group) throw new NotFoundException('Group not found');
-    return group;
-  }
-
-  async getRules(groupId: string): Promise<{ rules: string[] }> {
-    const group = await this.groupModel
-      .findById(groupId)
-      .select('teamRules')
-      .lean();
-    if (!group) throw new NotFoundException('Group not found');
-    return { rules: (group as any).teamRules ?? [] };
-  }
+  // Group rules are handled by create()/update() via the `rules` field and
+  // read back on findById() — there are deliberately no setRules/getRules
+  // methods. Rule text is stored verbatim (no count or length cap), so
+  // newlines inside a rule round-trip unchanged.
 
   async listMembers(groupId: string) {
     return this.memberModel
       .find({ groupId: new Types.ObjectId(groupId), status: 'approved' })
       .populate('userId', 'name email profileImage')
       .lean();
+  }
+
+  /**
+   * The caller leaves the group themselves (self-service, no role check —
+   * any member may leave).
+   *
+   * The owner is refused: a group with no owner would have nobody able to
+   * manage it, and ownership transfer does not exist yet. They must hand
+   * ownership over first (also not built) or delete the group.
+   */
+  async leave(groupId: string, userId: string) {
+    const group = await this.groupModel.findById(groupId).select('_id').lean();
+    if (!group) throw new NotFoundException('Group not found');
+
+    const member = await this.memberModel.findOne({
+      groupId: new Types.ObjectId(groupId),
+      userId: new Types.ObjectId(userId),
+    });
+    // Covers both "never joined" and "request still pending" — a pending row is
+    // deleted too, which doubles as cancelling your own join request.
+    if (!member)
+      throw new NotFoundException('You are not a member of this group');
+
+    if (member.role === 'owner') {
+      throw new ForbiddenException(
+        'The group owner cannot leave the group. Transfer ownership or delete the group instead.',
+      );
+    }
+
+    await this.memberModel.deleteOne({ _id: member._id });
+    return { message: 'You have left the group' };
   }
 
   async removeMember(

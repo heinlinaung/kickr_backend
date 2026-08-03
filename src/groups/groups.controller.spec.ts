@@ -15,13 +15,12 @@ describe('GroupsController', () => {
     updateLogo: jest.fn().mockResolvedValue({ _id: 'g1' }),
     search: jest.fn().mockResolvedValue([]),
     getQr: jest.fn().mockResolvedValue({ inviteCode: 'c', inviteLink: 'l' }),
-    getRules: jest.fn().mockResolvedValue({ rules: [] }),
-    setRules: jest.fn().mockResolvedValue({ _id: 'g1' }),
     listLocations: jest.fn().mockResolvedValue([]),
     attachLocation: jest.fn().mockResolvedValue({ _id: 'g1' }),
     detachLocation: jest.fn().mockResolvedValue({ _id: 'g1' }),
     listMembers: jest.fn().mockResolvedValue([]),
     removeMember: jest.fn().mockResolvedValue({ message: 'Member removed' }),
+    leave: jest.fn().mockResolvedValue({ message: 'You have left the group' }),
     updateMemberRole: jest.fn().mockResolvedValue({ role: 'admin' }),
     generateInviteCode: jest.fn().mockResolvedValue('code-1'),
   };
@@ -86,21 +85,6 @@ describe('GroupsController', () => {
     expect(svc.getQr).toHaveBeenCalledWith('g1');
   });
 
-  describe('rules', () => {
-    it('GET delegates', async () => {
-      await controller.getRules('g1');
-      expect(svc.getRules).toHaveBeenCalledWith('g1');
-    });
-
-    it('POST unwraps the dto to the rules array', async () => {
-      await controller.setRules('g1', user, { rules: ['a', 'b'] });
-      expect(svc.setRules).toHaveBeenCalledWith('g1', 'requester-1', [
-        'a',
-        'b',
-      ]);
-    });
-  });
-
   describe('locations', () => {
     it('GET delegates', async () => {
       await controller.listLocations('g1');
@@ -157,6 +141,11 @@ describe('GroupsController', () => {
       const dto = { name: 'New' } as any;
       await controller.update('g1', user, dto);
       expect(svc.update).toHaveBeenCalledWith('g1', 'requester-1', dto);
+    });
+
+    it('POST /groups/:id/leave passes only the caller (no target id)', async () => {
+      await controller.leave('g1', user);
+      expect(svc.leave).toHaveBeenCalledWith('g1', 'requester-1');
     });
 
     it('GET /groups/:id/members', async () => {

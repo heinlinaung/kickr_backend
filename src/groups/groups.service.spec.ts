@@ -247,11 +247,13 @@ describe('GroupsService', () => {
     });
   });
 
-  describe('setRules', () => {
+  // Rules have no dedicated setRules/getRules any more — they go through
+  // update() and are read back from findById() like any other group field.
+  describe('rules via update()', () => {
     it('is owner/admin gated', async () => {
       memberModel.findOne.mockResolvedValue(null);
       await expect(
-        service.setRules(GROUP_ID, USER_ID, ['a']),
+        service.update(GROUP_ID, USER_ID, { rules: ['a'] }),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(groupModel.findByIdAndUpdate).not.toHaveBeenCalled();
     });
@@ -262,14 +264,14 @@ describe('GroupsService', () => {
       allowOwner();
       const six = ['a', 'b', 'c', 'd', 'e', 'f'];
       groupModel.findByIdAndUpdate.mockReturnValue(
-        q({ _id: GROUP_ID, teamRules: six }),
+        q({ _id: GROUP_ID, rules: six }),
       );
 
-      const res: any = await service.setRules(GROUP_ID, USER_ID, six);
+      const res: any = await service.update(GROUP_ID, USER_ID, {
+        rules: six,
+      });
 
-      expect(res.teamRules).toEqual(six);
-      const patch = groupModel.findByIdAndUpdate.mock.calls[0][1];
-      expect(patch.$set.teamRules).toHaveLength(6);
+      expect(res.rules).toEqual(six);
     });
 
     it('stores multi-line and non-ASCII rule text verbatim', async () => {
@@ -281,62 +283,50 @@ describe('GroupsService', () => {
         'Line one\n\nLine three',
       ];
       groupModel.findByIdAndUpdate.mockReturnValue(
-        q({ _id: GROUP_ID, teamRules: rules }),
+        q({ _id: GROUP_ID, rules: rules }),
       );
 
-      const res: any = await service.setRules(GROUP_ID, USER_ID, rules);
-
-      const patch = groupModel.findByIdAndUpdate.mock.calls[0][1];
-      expect(patch.$set.teamRules[0]).toBe(rules[0]);
-      expect(patch.$set.teamRules[0]).toContain('\n');
-      expect(patch.$set.teamRules[1]).toContain('\n\n');
-      expect(res.teamRules).toEqual(rules);
-    });
-
-    it('persists teamRules', async () => {
-      allowOwner();
-      const rules = ['Be on time', 'No slide tackles'];
-      groupModel.findByIdAndUpdate.mockReturnValue(
-        q({ _id: GROUP_ID, teamRules: rules }),
-      );
-
-      const res: any = await service.setRules(GROUP_ID, USER_ID, rules);
-
-      expect(groupModel.findByIdAndUpdate.mock.calls[0][1]).toEqual({
-        $set: { teamRules: rules },
+      const res: any = await service.update(GROUP_ID, USER_ID, {
+        rules: rules,
       });
-      expect(res.teamRules).toEqual(rules);
+
+      expect(res.rules[0]).toBe(rules[0]);
+      expect(res.rules[0]).toContain('\n');
+      expect(res.rules[1]).toContain('\n\n');
     });
 
-    it('404s when the group is missing', async () => {
-      allowOwner();
-      groupModel.findByIdAndUpdate.mockReturnValue(q(null));
-      await expect(
-        service.setRules(GROUP_ID, USER_ID, ['a']),
-      ).rejects.toBeInstanceOf(NotFoundException);
+    it('is readable back from findById', async () => {
+      const rules = ['Be on time', 'No slide tackles'];
+      groupModel.findById.mockReturnValue(q({ _id: GROUP_ID, rules: rules }));
+      memberModel.findOne.mockReturnValue(q(null));
+
+      const res: any = await service.findById(GROUP_ID, USER_ID);
+
+      expect(res.rules).toEqual(rules);
     });
   });
 
-  describe('getRules', () => {
-    it('returns the rules array', async () => {
-      groupModel.findById.mockReturnValue(
-        q({ _id: GROUP_ID, teamRules: ['Be on time'] }),
-      );
-      await expect(service.getRules(GROUP_ID)).resolves.toEqual({
-        rules: ['Be on time'],
-      });
+  describe('getMyGroups', () => {
+    // The list and detail endpoints must agree on the field name; this used to
+    // be `myRole` on the list and `userRole` on detail.
+    it("labels the caller's role as `userRole`, matching findById", async () => {
+      const gid = new Types.ObjectId();
+      memberModel.find.mockReturnValue(q([{ groupId: gid, role: 'admin' }]));
+      groupModel.find.mockReturnValue(q([{ _id: gid, name: 'FC' }]));
+
+      const res: any = await service.getMyGroups(USER_ID);
+
+      expect(res[0].userRole).toBe('admin');
+      expect(res[0]).not.toHaveProperty('myRole');
     });
 
-    it('defaults to an empty array when teamRules is unset', async () => {
-      groupModel.findById.mockReturnValue(q({ _id: GROUP_ID }));
-      await expect(service.getRules(GROUP_ID)).resolves.toEqual({ rules: [] });
-    });
+    it('only counts approved memberships', async () => {
+      memberModel.find.mockReturnValue(q([]));
+      groupModel.find.mockReturnValue(q([]));
 
-    it('404s when the group is missing', async () => {
-      groupModel.findById.mockReturnValue(q(null));
-      await expect(service.getRules(GROUP_ID)).rejects.toBeInstanceOf(
-        NotFoundException,
-      );
+      await service.getMyGroups(USER_ID);
+
+      expect(memberModel.find.mock.calls[0][0].status).toBe('approved');
     });
   });
 
@@ -689,6 +679,70 @@ describe('GroupsService', () => {
       await expect(service.listLocations(GROUP_ID)).rejects.toBeInstanceOf(
         NotFoundException,
       );
+    });
+  });
+
+  describe('leave', () => {
+    const groupExists = () =>
+      groupModel.findById.mockReturnValue(q({ _id: GROUP_ID }));
+
+    // No role gate: leaving is self-service for everyone except the owner.
+    it.each(['admin', 'captain', 'member'])(
+      'lets a %s leave and deletes their membership row',
+      async (role) => {
+        groupExists();
+        memberModel.findOne.mockResolvedValue({ _id: 'm1', role });
+        memberModel.deleteOne.mockResolvedValue({ deletedCount: 1 });
+
+        const res = await service.leave(GROUP_ID, USER_ID);
+
+        expect(res.message).toMatch(/left the group/i);
+        expect(memberModel.deleteOne).toHaveBeenCalledWith({ _id: 'm1' });
+      },
+    );
+
+    it('refuses the owner — a group must keep an owner', async () => {
+      groupExists();
+      memberModel.findOne.mockResolvedValue({ _id: 'm1', role: 'owner' });
+
+      await expect(service.leave(GROUP_ID, USER_ID)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(memberModel.deleteOne).not.toHaveBeenCalled();
+    });
+
+    it('404s when the caller is not a member', async () => {
+      groupExists();
+      memberModel.findOne.mockResolvedValue(null);
+
+      await expect(service.leave(GROUP_ID, USER_ID)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(memberModel.deleteOne).not.toHaveBeenCalled();
+    });
+
+    it('404s when the group does not exist', async () => {
+      groupModel.findById.mockReturnValue(q(null));
+
+      await expect(service.leave(GROUP_ID, USER_ID)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(memberModel.deleteOne).not.toHaveBeenCalled();
+    });
+
+    // A pending row is a join request, so leaving doubles as cancelling it.
+    it('lets a pending requester withdraw', async () => {
+      groupExists();
+      memberModel.findOne.mockResolvedValue({
+        _id: 'm1',
+        role: 'member',
+        status: 'pending',
+      });
+      memberModel.deleteOne.mockResolvedValue({ deletedCount: 1 });
+
+      await service.leave(GROUP_ID, USER_ID);
+
+      expect(memberModel.deleteOne).toHaveBeenCalledWith({ _id: 'm1' });
     });
   });
 
