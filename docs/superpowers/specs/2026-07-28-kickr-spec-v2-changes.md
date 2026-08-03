@@ -44,7 +44,7 @@ The 2026-08-03 status refresh re-verified §2–§4 against `main` at `0b429fc`.
 | §4.1 User Management | **Mostly done** | Remaining: `role`, `favouriteTeam`, username autogeneration (§2.2) — **none shipped** |
 | §4.2 Player Profile | **Mostly done** | Remaining: real statistics (needs §5 + §8), gallery/highlight **upload routes** |
 | §4.3 Groups | ✅ **Shipped** | Logo, sportType, handle, teamRules, captains + levels, locations all landed (§4.2, §4.3, §4.6). Remaining: Posts feed (§14 #4), group gallery upload |
-| §4.4 Group Invitations | Partial | Search + QR **shipped**; still open: invite-link deep-link format, and the invite-link-vs-approval inconsistency (§14 #5) |
+| §4.4 Group Invitations | Partial | Search + QR **shipped**; §14 #5 approval inconsistency **resolved by design** ([pre-events §6b](./2026-08-03-pre-events-changes.md)) — to build. Still open: invite-link deep-link format |
 | §4.5 Events | Partial | **Rework** status → 6-state lifecycle; **add** MVP, multi-team fixtures, photos, cover, templates → [detailed spec](./2026-08-03-events-feature-spec.md) |
 | §4.6 Public Events | Partial | **Add** geo discovery (now unblocked — `Location.geo` exists); auto-close-when-full |
 | §4.7 Tournament Management | Data-model only | **Build engine** — bracket gen, league fixtures, standings, winner propagation |
@@ -208,7 +208,7 @@ Remove `locationName`, `latitude`, `longitude` from **both** `Group` and `Event`
 
 ## 4. Groups & Invitations (§4.3, §4.4) — ✅ MOSTLY SHIPPED 2026-08-03
 
-> **AS BUILT.** §4.2 (schema additions), §4.3 (captain role + levels) and all but two rows of §4.6 (routes) shipped. §4.1 below is the *pre-change* state, kept for history. Still outstanding: group Posts (§14 #4), group gallery upload, invite-link deep-link format, and the §14 #5 approval inconsistency.
+> **AS BUILT.** §4.2 (schema additions), §4.3 (captain role + levels) and all but two rows of §4.6 (routes) shipped. §4.1 below is the *pre-change* state, kept for history. Still outstanding: group Posts (§14 #4), group gallery upload, and the invite-link deep-link format. The §14 #5 approval inconsistency is **resolved by design** and specified in [pre-events changes](./2026-08-03-pre-events-changes.md) §6b (to build).
 
 ### 4.1 Current state — VERIFIED (pre-change, 2026-07-28)
 
@@ -227,7 +227,7 @@ logoFileId: string  // ImageKit fileId for replace/delete
 wallpaperFileId: string            // added alongside, same reason
 sportType: string   // enum football | futsal | padel | basketball
 handle: string      // unique sparse index, trimmed
-teamRules: [string] // max 3, enforced in the service
+teamRules: [string] // max 3 as shipped — CAP BEING REMOVED (see pre-events changes §4.2)
 locations: [ObjectId->Location]   // §3.2 — max 5, enforced via GroupsService.MAX_LOCATIONS
 ```
 
@@ -236,7 +236,7 @@ Indexes as built: `inviteCode` unique sparse, `handle` unique sparse, `name` tex
 Notes:
 - `wallpaper` (existing) = the cover/banner photo. `logo` (new) = the team crest. The screenshots show both.
 - `homeGround` is **not** added — it is subsumed by `locations` (§3). *(The previous version listed it and simultaneously annotated "should remove"; resolved here as: removed.)*
-- `country`/`city` are **not** added to Group — derive from the referenced `Location` if needed for display/filtering.
+- ~~`country`/`city` are **not** added to Group — derive from the referenced `Location`.~~ **REVERSED 2026-08-03:** `country` and `city` **are** being added to Group as optional free-text fields. A team's country/city is a property of the team, not of any one pitch it plays on, and the new `GET /events?region=` filter needs it on the group directly rather than via a `Group.locations[] → Location` join on every query. See [pre-events changes](./2026-08-03-pre-events-changes.md) §4.1.
 - `isPrivate` (existing) means the group is excluded from search results (§4.5 Team Name search).
 
 ### 4.3 GroupMember — captains & member levels — ⚠️ PARTIALLY SHIPPED
@@ -260,14 +260,14 @@ level: 1 | 2 | 3                                  // default 1
 
 ### 4.5 Invitations / join flow (§4.4)
 
-Current: request-to-join (pending → owner approves), plus `inviteCode` + `join-by-code` (which **auto-approves**, bypassing owner approval).
+Current **as shipped today**: request-to-join (pending → owner approves), plus `inviteCode` + `join-by-code` (which **auto-approves**, bypassing owner approval). The auto-approve half is being changed — see the table below and [pre-events changes](./2026-08-03-pre-events-changes.md) §6b.
 
 | Join method | Status | Action |
 |---|---|---|
 | Team Name search | ✅ **Shipped** | `GET /groups/search?q=` — case-insensitive regex over `name` **and** `handle`, excludes `isPrivate`, limit 20 |
 | Invitation Link | ✅ **Shipped** | `GET /groups/:id/qr` returns `{ inviteCode, inviteLink, expiresAt }`; reuses the unexpired code rather than churning a new one (`f0e254b`) |
 | QR Code | ✅ **Shipped** | Same endpoint — returns the payload; client renders the QR |
-| Owner approval | ⚠️ **Still inconsistent** | `join-by-code` continues to auto-approve, contradicting "owners approve new members before joining". **Unresolved — see §14 #5** |
+| Owner approval | ✅ **Resolved by design** (to build) | Both paths require approval: `join-by-code` creates a `pending` row instead of auto-approving. Spec'd in [pre-events changes](./2026-08-03-pre-events-changes.md) §6b; §14 #5 closed |
 | Challenge from other team | Missing | Covered by Team Challenge (§10) |
 
 ### 4.6 New/changed routes
@@ -280,7 +280,7 @@ Current: request-to-join (pending → owner approves), plus `inviteCode` + `join
 | PATCH | `/groups/:id` | accept `sportType`, `handle`, `teamRules` — returns **409** on a taken handle (`34fc1a4`) | ✅ shipped |
 | GET | `/groups/:id/qr` | QR/invite-link payload | ✅ shipped |
 | PATCH | `/groups/:id/members/:userId/role` | promote to captain/admin, set `level` | ✅ shipped |
-| GET/POST | `/groups/:id/rules` | team rules, **max 3** | ✅ shipped |
+| GET/POST | `/groups/:id/rules` | team rules — **max 3 as shipped; cap being removed** ([pre-events §4.2](./2026-08-03-pre-events-changes.md)) | ✅ shipped |
 | GET/POST/DELETE | `/groups/:id/locations` | see §3.5, **max 5** | ✅ shipped |
 | GET | `/groups/:id/members`, `/groups/:id/invite-code` | listing + code retrieval | ✅ shipped |
 | DELETE | `/groups/:id/members/:userId` | remove a member | ✅ shipped |
@@ -288,7 +288,7 @@ Current: request-to-join (pending → owner approves), plus `inviteCode` + `join
 | POST | `/groups/:id/gallery` | **NEW** — upload gallery media (ImageKit) | ❌ not built |
 | DELETE | `/groups/:id/rules` | rule removal — POST replaces the whole array as built | ❌ not built |
 
-> **Note on rules:** as built, `POST /groups/:id/rules` **replaces** the entire `teamRules` array (validated at max 3) rather than appending, so a separate DELETE is unnecessary for the current client. Listed above as not-built for accuracy against the original spec row.
+> **Note on rules:** as built, `POST /groups/:id/rules` **replaces** the entire `teamRules` array (validated at max 3 as shipped; that cap is being removed) rather than appending, so a separate DELETE is unnecessary for the current client. Listed above as not-built for accuracy against the original spec row.
 
 ---
 
@@ -608,7 +608,9 @@ sequenceDiagram
 
 ### 13.2 Group creation → member invitation → approval
 
-Covers all three join paths (§4.5). Note the open question on whether invite-link joins should require approval (§14 #5) — shown as the *current* auto-approve behaviour.
+Covers all three join paths (§4.5).
+
+> **Updated 2026-08-03:** §14 #5 is resolved — invite-link/QR joins now require approval too, so both paths converge on `status: pending`. The diagram below reflects the target behaviour; the auto-approve branch it previously showed is being removed ([pre-events changes](./2026-08-03-pre-events-changes.md) §6b).
 
 ```mermaid
 flowchart TD
@@ -617,18 +619,17 @@ flowchart TD
 
     C -->|Search by name| D[GET /groups/search?q=<br/>excludes isPrivate]
     D --> E[POST /groups/:id/invitations<br/>request to join]
-    C -->|QR / invite link| F[GET /groups/:id/qr → code]
+    C -->|QR / invite link| F[GET /groups/:id/qr → code<br/>any authenticated user]
     F --> G[POST /groups/join-by-code]
 
     E --> H[GroupMember status: pending]
-    G --> I[["status: approved<br/>(auto — see §14 #5)"]]
+    G --> H
 
     H --> J{Owner/Admin reviews<br/>PATCH /groups/:id/invitations/:id}
     J -->|approve| K[status: approved<br/>joinedAt set<br/>capacity checked vs maxPlayers]
     J -->|reject| L[member row deleted]
 
     K --> M[Notification to requester]
-    I --> M
     L --> N[Notification: rejected]
 
     K --> O{Promotion?}
@@ -823,7 +824,7 @@ sequenceDiagram
 | 2 | OAuth (Google/Facebook) | ✅ RESOLVED — stubs removed; can add via Cognito IdPs later |
 | 3 | Highlight/gallery storage | ✅ RESOLVED — ImageKit. Sub-question: arrays vs a `media` collection if per-item metadata is needed |
 | 4 | **Group Posts vs chat announcements** — separate feed, or pinned messages? | OPEN — nothing built either way |
-| 5 | **Invite-link approval** — should join-by-link/QR still require owner approval? (currently auto-approves) | OPEN — **the inconsistency shipped**; search/QR landed around it without resolving the semantics |
+| 5 | **Invite-link approval** — should join-by-link/QR still require owner approval? | ✅ RESOLVED 2026-08-03 — **yes, approval required**. Join-by-code now creates a `pending` row like request-to-join. See [pre-events changes](./2026-08-03-pre-events-changes.md) §6b |
 | 6 | **Shuffle strategy** — random buckets of 6, skill/position-balanced, or fixed N colour teams? | ✅ RESOLVED 2026-08-03 — **fixed N colour teams** (`teamCount`, default 4). See the [Events spec](./2026-08-03-events-feature-spec.md) §3 |
 | 7 | **League standings storage** — recomputed collection vs computed-on-read | ✅ RESOLVED for *events* — computed-on-read (Events spec §4.3). Still OPEN for **tournaments** (§6.2) |
 | 8 | **Ratings cardinality** — one per match total, or one per teammate per match? | OPEN |
