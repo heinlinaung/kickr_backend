@@ -575,36 +575,7 @@ End-to-end flows for the main journeys. These encode the gating rules stated els
 
 Email + password sign-in. A PreSignUp Lambda auto-confirms users (bypassing email-code delivery); Cognito remains the identity source of truth, Mongo holds the profile.
 
-```mermaid
-sequenceDiagram
-    actor U as User (Flutter)
-    participant API as NestJS API
-    participant CG as AWS Cognito
-    participant L as PreSignUp Lambda
-    participant DB as MongoDB
-
-    U->>API: POST /auth/signup {email, name, password}
-    API->>API: generate username from name (§2.2)
-    API->>CG: SignUp (+ SECRET_HASH)
-    CG->>L: PreSignUp trigger
-    L-->>CG: autoConfirmUser = true
-    CG-->>API: UserSub (cognitoSub)
-    API->>DB: create User {cognitoSub, username, name, email}
-    Note over API,DB: dual-write: if this fails the<br/>Cognito user is orphaned (§ known gap)
-    API-->>U: 201 { message }
-
-    U->>API: POST /auth/login {email, password}
-    API->>CG: AdminInitiateAuth (ADMIN_USER_PASSWORD_AUTH)
-    CG-->>API: accessToken / idToken / refreshToken
-    API->>DB: findOne({ email }) → profile
-    API-->>U: 200 { tokens, user }
-
-    U->>API: GET /users/me  (Bearer accessToken)
-    API->>CG: fetch JWKS (cached)
-    API->>API: verify RS256 + issuer + token_use=access
-    API->>DB: findOne({ cognitoSub: claims.sub })
-    API-->>U: 200 { profile }
-```
+📊 **Diagram:** [`spec-v2-13-1-user-signup-login.mmd`](../diagrams/spec-v2-13-1-user-signup-login.mmd) — mermaid source (GitHub renders it on open).
 
 ### 13.2 Group creation → member invitation → approval
 
@@ -612,156 +583,25 @@ Covers all three join paths (§4.5).
 
 > **Updated 2026-08-03:** §14 #5 is resolved — invite-link/QR joins now require approval too, so both paths converge on `status: pending`. The diagram below reflects the target behaviour; the auto-approve branch it previously showed is being removed ([pre-events changes](./2026-08-03-pre-events-changes.md) §6b).
 
-```mermaid
-flowchart TD
-    A[Owner: POST /groups] --> B[Group created<br/>owner = GroupMember role:owner]
-    B --> C{How does a new member join?}
-
-    C -->|Search by name| D[GET /groups/search?q=<br/>excludes isPrivate]
-    D --> E[POST /groups/:id/invitations<br/>request to join]
-    C -->|QR / invite link| F[GET /groups/:id/qr → code<br/>any authenticated user]
-    F --> G[POST /groups/join-by-code]
-
-    E --> H[GroupMember status: pending]
-    G --> H
-
-    H --> J{Owner/Admin reviews<br/>PATCH /groups/:id/invitations/:id}
-    J -->|approve| K[status: approved<br/>joinedAt set<br/>capacity checked vs maxPlayers]
-    J -->|reject| L[member row deleted]
-
-    K --> M[Notification to requester]
-    L --> N[Notification: rejected]
-
-    K --> O{Promotion?}
-    O -->|PATCH members/:userId/role| P[role: captain / admin<br/>or level 1→3]
-```
+📊 **Diagram:** [`spec-v2-13-2-group-join-approval.mmd`](../diagrams/spec-v2-13-2-group-join-approval.mmd) — mermaid source (GitHub renders it on open).
 
 ### 13.3 Event lifecycle (creation → done)
 
 The 6-state machine from §5.2. Transitions are manual and organizer-gated; capacity is derived, not a state.
 
-```mermaid
-stateDiagram-v2
-    [*] --> join: POST /events (organizer)
-
-    join --> before_match: PATCH /status
-    before_match --> join: reopen registration
-    before_match --> preparation: PATCH /status
-    preparation --> before_match: revert
-    preparation --> playing: PATCH /status
-    playing --> after_match: PATCH /status
-    after_match --> done: PATCH /status
-    done --> [*]
-
-    note right of join
-        join / unjoin allowed
-        blocked when joinedCount >= maxPlayers
-    end note
-
-    note right of preparation
-        shuffle runs here →
-        teams assigned, fixtures
-        generated, team chats open
-    end note
-
-    note right of after_match
-        results + MVP + photos
-        ratings accepted ONLY here
-    end note
-
-    note right of done
-        team chats archived
-        history + stats retained
-    end note
-```
+📊 **Diagram:** [`spec-v2-13-3-event-lifecycle.mmd`](../diagrams/spec-v2-13-3-event-lifecycle.mmd) — mermaid source (GitHub renders it on open).
 
 ### 13.4 Team shuffle & fixture generation (preparation)
 
-```mermaid
-sequenceDiagram
-    actor O as Organizer
-    participant API as Events/Shuffle
-    participant DB as MongoDB
-    participant CH as Chat
-    participant N as Notifications
-
-    O->>API: PATCH /events/:id/status {preparation}
-    API->>API: assert legal transition + organizer
-    API-->>O: status = preparation
-
-    O->>API: POST /events/:id/shuffle
-    API->>API: reject unless status == preparation
-    API->>DB: load EventPlayers (status: joined)
-    API->>API: Fisher-Yates → assign teams (§14 #6)
-    API->>DB: bulkWrite EventPlayer.team
-
-    alt more than 2 teams
-        API->>API: generate double round-robin matches[]
-        API->>DB: save Event.matches (scores null)
-    end
-
-    API->>CH: create EventTeamChat per team
-    API->>N: notify each player of their team
-    API-->>O: { teams, fixtures }
-
-    Note over API,DB: fixtures immutable after this —<br/>only scores may be entered later
-```
+📊 **Diagram:** [`spec-v2-13-4-team-shuffle-fixtures.mmd`](../diagrams/spec-v2-13-4-team-shuffle-fixtures.mmd) — mermaid source (GitHub renders it on open).
 
 ### 13.5 Match results, MVP & ratings (playing → after_match)
 
-```mermaid
-flowchart LR
-    A[status: playing] --> B["PATCH /events/:id/matches/:matchNumber<br/>{scoreA, scoreB}"]
-    B --> C{all fixtures played?}
-    C -->|no| B
-    C -->|yes| D[PATCH /status → after_match]
-
-    D --> E[POST /events/:id/result<br/>mvpUserId]
-    D --> F[POST /events/:id/photos<br/>→ ImageKit]
-    D --> G[POST /events/:id/ratings<br/>stars 1-5 + comment]
-
-    G --> H{unique eventId+raterId+rateeId}
-    H -->|duplicate| I[409 conflict]
-    H -->|ok| J[rating stored]
-
-    J --> K[feeds profile avgRating]
-    E --> L[feeds profile mvpCount]
-    B --> M[standings derived on read<br/>win 3 / draw 1 / loss 0]
-
-    D --> N[PATCH /status → done<br/>team chats archived]
-```
+📊 **Diagram:** [`spec-v2-13-5-match-results-mvp-ratings.mmd`](../diagrams/spec-v2-13-5-match-results-mvp-ratings.mmd) — mermaid source (GitHub renders it on open).
 
 ### 13.6 Team challenge (group vs group)
 
-```mermaid
-sequenceDiagram
-    actor A as Group A owner
-    participant API as Challenges
-    participant DB as MongoDB
-    participant N as Notifications
-    actor B as Group B owner
-
-    A->>API: POST /challenges {toGroupId, proposedDate, locationId, numberOfPlayers}
-    API->>DB: Challenge status = pending
-    API->>N: notify Group B owner/admins
-    N-->>B: "Group A challenged you"
-
-    B->>API: GET /challenges?groupId=B
-    B->>API: PATCH /challenges/:id {accepted | rejected}
-
-    alt accepted
-        API->>DB: status = accepted, respondedBy
-        opt spawn match
-            API->>DB: create Event (locationId, date, maxPlayers)
-            API->>DB: challenge.resultingEventId = event._id
-        end
-        API->>N: notify Group A "accepted"
-        Note over API: event then follows the<br/>normal lifecycle (§13.3)
-    else rejected
-        API->>DB: status = rejected
-        API->>N: notify Group A "declined"
-    end
-```
+📊 **Diagram:** [`spec-v2-13-6-team-challenge.mmd`](../diagrams/spec-v2-13-6-team-challenge.mmd) — mermaid source (GitHub renders it on open).
 
 ### 13.7 Location attach (creator- or group-owned)
 
@@ -769,48 +609,13 @@ How any collection attaches a location (§3.3). No dedupe — creating always in
 
 > **Updated 2026-08-03:** as built, a location may be group-owned, so the ownership check is the §3.3 permission matrix, not a bare `createdBy` comparison. One exception: `EventsService` still uses the strict creator-only check — the known gap noted in §3.3.
 
-```mermaid
-flowchart TD
-    A["Caller supplies location<br/>(new payload or existing locationId)"] --> B{locationId given?}
-    B -->|yes| C["validate exists AND caller may manage it<br/>(creator, or group owner/admin/captain)"] --> H
-    B -->|no| D["POST /locations {name, lat, lng, url, metadata}"]
-    D --> G["always INSERT a new row<br/>createdBy = caller<br/>geo derived from lat/lng (2dsphere)"] --> H
-
-    H["referrer stores the ref"]
-    H --> I["Group.locations[] (max 5)<br/>caller must be group owner/admin"]
-    H --> J[Event.locationId]
-    H --> K[Challenge.locationId]
-
-    I --> L["DELETE detaches only —<br/>row survives for the owner's other uses"]
-    J --> M["enables GET /events?near=&radius=<br/>via $near on Location.geo"]
-
-    N["No dedupe: two users adding the same<br/>pitch create two rows — intended"] -.-> G
-```
+📊 **Diagram:** [`spec-v2-13-7-location-attach.mmd`](../diagrams/spec-v2-13-7-location-attach.mmd) — mermaid source (GitHub renders it on open).
 
 ### 13.8 File upload (ImageKit, backend-proxied)
 
 Applies to avatar, group logo/wallpaper/gallery, event cover/photos, chat attachments, highlight videos.
 
-```mermaid
-sequenceDiagram
-    actor U as Client
-    participant API as NestJS route
-    participant M as multer (memory)
-    participant IK as ImageKit
-    participant DB as MongoDB
-
-    U->>API: POST .../upload (multipart file)
-    API->>M: buffer in memory (MIME + size checked)
-    Note over M: image routes → multerMemoryImageOptions<br/>video routes → multerMemoryVideoOptions (§9.3)
-    API->>IK: upload(buffer, fileName, folder)
-    IK-->>API: { url, fileId }
-    opt entity had a previous file
-        API->>IK: deleteFile(prevFileId)
-        Note over API,IK: best-effort — failure logged,<br/>does not fail the request
-    end
-    API->>DB: store url + fileId on the entity
-    API-->>U: 200 { entity with CDN url }
-```
+📊 **Diagram:** [`spec-v2-13-8-file-upload-imagekit.mmd`](../diagrams/spec-v2-13-8-file-upload-imagekit.mmd) — mermaid source (GitHub renders it on open).
 
 ---
 

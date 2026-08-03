@@ -52,7 +52,7 @@ name?: string;
 
 `AuthService.signup` becomes `name: dto.name?.trim() || defaultNameFromEmail(email)`.
 
-**Why optional rather than required:** making it required is a breaking change to a shipped, client-facing endpoint. Optional keeps existing clients working while letting the new flow pass a real name. If product wants it mandatory, that is a one-line change plus a coordinated client release — call it out explicitly rather than smuggling it in here.
+**Why optional rather than required — confirmed by product 2026-08-03.** Making it required is a breaking change to a shipped, client-facing endpoint. Optional keeps existing clients working while letting the new flow pass a real name. Should it become mandatory later, that is a one-line DTO change plus a coordinated client release.
 
 `trim()` then `||` matters: a whitespace-only `name` falls back to the email-derived default instead of persisting a blank display name.
 
@@ -79,7 +79,7 @@ memberStatus: 'pending' | 'approved' | null
 
 Implementation: `findById(groupId, userId)` calls the existing `getMemberRole` and returns `{ ...group, userRole, memberStatus }`. The controller already has `@CurrentUser()` available on sibling routes.
 
-**Field name:** the request said `userrole`; using `userRole` to match the camelCase convention used by every other field in the API (`maxPlayers`, `inviteCode`, `teamRules`). Flag if the exact lowercase spelling is required by an existing client.
+**Field name:** `userRole` (camelCase), matching every other field in the API (`maxPlayers`, `inviteCode`, `teamRules`). The request wrote `userrole`; camelCase **confirmed by product 2026-08-03**.
 
 ---
 
@@ -392,10 +392,12 @@ Amends the Events spec §4.5 and its §6 API surface row for `GET /events`.
 | 7 | Join-by-code/QR **requires owner approval** — resolves parent §14 #5 |
 | 8 | Capacity for code-joins is enforced at **approval**, not request (§6b.3) |
 
+| 9 | `name` on signup stays **optional** — confirmed 2026-08-03 |
+| 10 | Response field is **`userRole`** (camelCase) — confirmed 2026-08-03 |
+
 **Flagged for confirmation — none blocking:**
 
-1. **`userRole` vs `userrole`** (§3.2) — camelCase chosen for consistency; confirm no client depends on the lowercase spelling.
-2. **Unbounded `teamRules`** (§4.2) — no cap and no length limit is an unbounded write surface; accepted by decision.
+1. **Unbounded `teamRules`** (§4.2) — no cap and no length limit is an unbounded write surface; accepted by decision.
 3. **`ADMIN_KEY` is a root-level credential** (§6.2) — anyone holding it can add any user to any group or event.
 4. **§5 must not ship without §6b** (§8 build order) — the pairing is what keeps opened invite codes from becoming self-service entry.
 5. **QR join is now a breaking UX change** (§6b.4) — needs a coordinated client release.

@@ -1,0 +1,35 @@
+%% 13.3 Event lifecycle (creation → done)
+%% Source of truth for this diagram. Rendered from ../specs/2026-07-28-kickr-spec-v2-changes.md §13.3
+%% Edit here, not in the spec — the spec links to this file.
+stateDiagram-v2
+    [*] --> join: POST /events (organizer)
+
+    join --> before_match: PATCH /status
+    before_match --> join: reopen registration
+    before_match --> preparation: PATCH /status
+    preparation --> before_match: revert
+    preparation --> playing: PATCH /status
+    playing --> after_match: PATCH /status
+    after_match --> done: PATCH /status
+    done --> [*]
+
+    note right of join
+        join / unjoin allowed
+        blocked when joinedCount >= maxPlayers
+    end note
+
+    note right of preparation
+        shuffle runs here →
+        teams assigned, fixtures
+        generated, team chats open
+    end note
+
+    note right of after_match
+        results + MVP + photos
+        ratings accepted ONLY here
+    end note
+
+    note right of done
+        team chats archived
+        history + stats retained
+    end note

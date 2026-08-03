@@ -1,0 +1,31 @@
+%% 13.1 User signup & first login (Cognito)
+%% Source of truth for this diagram. Rendered from ../specs/2026-07-28-kickr-spec-v2-changes.md §13.1
+%% Edit here, not in the spec — the spec links to this file.
+sequenceDiagram
+    actor U as User (Flutter)
+    participant API as NestJS API
+    participant CG as AWS Cognito
+    participant L as PreSignUp Lambda
+    participant DB as MongoDB
+
+    U->>API: POST /auth/signup {email, name, password}
+    API->>API: generate username from name (§2.2)
+    API->>CG: SignUp (+ SECRET_HASH)
+    CG->>L: PreSignUp trigger
+    L-->>CG: autoConfirmUser = true
+    CG-->>API: UserSub (cognitoSub)
+    API->>DB: create User {cognitoSub, username, name, email}
+    Note over API,DB: dual-write: if this fails the<br/>Cognito user is orphaned (§ known gap)
+    API-->>U: 201 { message }
+
+    U->>API: POST /auth/login {email, password}
+    API->>CG: AdminInitiateAuth (ADMIN_USER_PASSWORD_AUTH)
+    CG-->>API: accessToken / idToken / refreshToken
+    API->>DB: findOne({ email }) → profile
+    API-->>U: 200 { tokens, user }
+
+    U->>API: GET /users/me  (Bearer accessToken)
+    API->>CG: fetch JWKS (cached)
+    API->>API: verify RS256 + issuer + token_use=access
+    API->>DB: findOne({ cognitoSub: claims.sub })
+    API-->>U: 200 { profile }

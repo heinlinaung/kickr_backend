@@ -1,0 +1,24 @@
+%% 5.3 Join / unjoin gating
+%% Source of truth for this diagram. Rendered from ../specs/2026-08-03-events-feature-spec.md §5.3
+%% Edit here, not in the spec — the spec links to this file.
+flowchart TD
+    A[POST /events/:id/join] --> B{event exists?}
+    B -->|no| B1[404]
+    B -->|yes| C{status == 'join'?}
+    C -->|no| C1["400 — 'not open for joining'<br/>(before_match, playing, done …)"]
+    C -->|yes| D{already joined?}
+    D -->|yes| D1[409 — Already joined]
+    D -->|no| E["atomic findOneAndUpdate<br/>$expr: joinedCount < maxPlayers<br/>$inc joinedCount"]
+    E -->|no doc matched| E1[400 — Event is full]
+    E -->|matched| F{prior cancelled row?}
+    F -->|yes| G[reactivate → status 'joined']
+    F -->|no| H[insert EventPlayer]
+    G --> I[200 — joined]
+    H --> I
+
+    J[DELETE /events/:id/join] --> K{status == 'join'?}
+    K -->|no| K1["400 — teams may already be<br/>shuffled; organizer must revert"]
+    K -->|yes| L{joined row exists?}
+    L -->|no| L1[404 — you have not joined]
+    L -->|yes| M["mark cancelled<br/>$inc joinedCount -1"]
+    M --> N[200 — left]

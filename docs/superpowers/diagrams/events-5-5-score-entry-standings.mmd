@@ -1,0 +1,20 @@
+%% 5.5 Score entry & standings
+%% Source of truth for this diagram. Rendered from ../specs/2026-08-03-events-feature-spec.md §5.5
+%% Edit here, not in the spec — the spec links to this file.
+flowchart LR
+    A["PATCH /events/:id/matches/:matchNumber<br/>{scoreA, scoreB}"] --> B{organizer?}
+    B -->|no| B1[403]
+    B -->|yes| C{"status in playing,<br/>after_match?"}
+    C -->|no| C1["400 — cannot score<br/>before kick-off"]
+    C -->|yes| D{matchNumber exists?}
+    D -->|no| D1[404]
+    D -->|yes| E[set scoreA/scoreB + playedAt]
+
+    E --> F["GET /events/:id/standings"]
+    F --> G["fold over matches[]<br/>skip null scores"]
+    G --> H["win 3 / draw 1 / loss 0<br/>played, W, D, L, GF, GA, GD, pts"]
+    H --> I["sort: pts → GD → GF → team name"]
+    I --> J[table returned]
+
+    E --> K["matches[] is the sole score authority<br/>for multi-team events"]
+    K --> L["Event.result keeps mvpUserId only<br/>(+ scoreA/scoreB for simple 2-team)"]

@@ -203,240 +203,43 @@ Diagrams cover the failure paths as well as the happy ones, because most of the 
 
 The 6 states from §4.1, with the actions each one permits. Capacity is derived, so a full event stays in `join`.
 
-```mermaid
-stateDiagram-v2
-    [*] --> join: POST /events (organizer)
-
-    join --> before_match: PATCH /status
-    before_match --> join: reopen registration
-    before_match --> preparation: PATCH /status
-    preparation --> before_match: revert
-    preparation --> playing: PATCH /status
-    playing --> after_match: PATCH /status
-    after_match --> done: PATCH /status
-    done --> [*]
-
-    note right of join
-        join / unjoin allowed
-        blocked when joinedCount >= maxPlayers
-        (no 'full' status — derived)
-    end note
-
-    note right of preparation
-        shuffle runs here:
-        colour teams assigned,
-        fixtures generated,
-        team chats created
-    end note
-
-    note right of playing
-        per-fixture scores entered
-        standings derived on read
-    end note
-
-    note right of after_match
-        MVP + photos
-        ratings accepted ONLY here (§8, separate)
-    end note
-
-    note right of done
-        terminal — team chats archived
-        edit/delete rejected
-    end note
-```
+📊 **Diagram:** [`events-5-1-event-lifecycle-states.mmd`](../diagrams/events-5-1-event-lifecycle-states.mmd) — mermaid source (GitHub renders it on open).
 
 ### 5.2 Organizer happy path — create to archive
 
 The whole journey in one pass, 4 colour teams. Note where each of the four build-order steps contributes.
 
-```mermaid
-sequenceDiagram
-    actor O as Organizer
-    participant API as Events API
-    participant DB as MongoDB
-    participant IK as ImageKit
-    participant N as Notifications
-
-    O->>API: POST /events {title, date, teamCount: 4, locationId?, templateId?}
-    opt templateId supplied
-        API->>DB: load EventTemplate
-        API->>API: template fills omitted fields only
-    end
-    API->>DB: insert Event {status: 'join'}
-    API-->>O: 201 { event }
-
-    O->>API: POST /events/:id/cover (multipart)
-    API->>IK: upload → { url, fileId }
-    API->>DB: set coverImage + coverImageFileId
-    Note over API,IK: replacing later best-effort deletes the prior fileId
-
-    Note over O,DB: players join while status == 'join' (§5.3)
-
-    O->>API: PATCH /events/:id/status {before_match}
-    API->>API: canTransition('join','before_match') ✓
-    API-->>O: registration closed
-
-    O->>API: PATCH /events/:id/status {preparation}
-    O->>API: POST /events/:id/shuffle
-    API->>API: assert status == 'preparation'
-    API->>DB: assign Red/Yellow/Blue/Black
-    API->>DB: generate matches[] — 12 fixtures, scores null
-    API->>DB: create EventTeamChat per team
-    API->>N: notify each player of their team
-    API-->>O: { teams, fixtures }
-
-    O->>API: PATCH /events/:id/status {playing}
-    loop each of the 12 fixtures
-        O->>API: PATCH /events/:id/matches/:matchNumber {scoreA, scoreB}
-        API->>DB: set scores + playedAt
-    end
-
-    O->>API: PATCH /events/:id/status {after_match}
-    O->>API: POST /events/:id/result {mvpUserId}
-    API->>API: assert MVP is a joined player
-    O->>API: POST /events/:id/photos (multipart)
-    API->>IK: upload → { url, fileId }
-
-    O->>API: PATCH /events/:id/status {done}
-    API->>DB: EventTeamChat.archived = true
-    Note over API,DB: history + stats retained —<br/>feeds profile mvpCount (parent §2.3)
-```
+📊 **Diagram:** [`events-5-2-organizer-happy-path.mmd`](../diagrams/events-5-2-organizer-happy-path.mmd) — mermaid source (GitHub renders it on open).
 
 ### 5.3 Join / unjoin gating
 
 Two independent guards: the lifecycle state, and the atomic capacity check. The capacity check is the existing `findOneAndUpdate` + `$expr` — only its status condition changes (`open` → `join`).
 
-```mermaid
-flowchart TD
-    A[POST /events/:id/join] --> B{event exists?}
-    B -->|no| B1[404]
-    B -->|yes| C{status == 'join'?}
-    C -->|no| C1["400 — 'not open for joining'<br/>(before_match, playing, done …)"]
-    C -->|yes| D{already joined?}
-    D -->|yes| D1[409 — Already joined]
-    D -->|no| E["atomic findOneAndUpdate<br/>$expr: joinedCount < maxPlayers<br/>$inc joinedCount"]
-    E -->|no doc matched| E1[400 — Event is full]
-    E -->|matched| F{prior cancelled row?}
-    F -->|yes| G[reactivate → status 'joined']
-    F -->|no| H[insert EventPlayer]
-    G --> I[200 — joined]
-    H --> I
-
-    J[DELETE /events/:id/join] --> K{status == 'join'?}
-    K -->|no| K1["400 — teams may already be<br/>shuffled; organizer must revert"]
-    K -->|yes| L{joined row exists?}
-    L -->|no| L1[404 — you have not joined]
-    L -->|yes| M["mark cancelled<br/>$inc joinedCount -1"]
-    M --> N[200 — left]
-```
+📊 **Diagram:** [`events-5-3-join-unjoin-gating.mmd`](../diagrams/events-5-3-join-unjoin-gating.mmd) — mermaid source (GitHub renders it on open).
 
 ### 5.4 Shuffle → colour teams → fixture generation
 
 The `preparation`-only operation. Re-running it inside `preparation` is legal and regenerates everything.
 
-```mermaid
-sequenceDiagram
-    actor O as Organizer
-    participant API as Shuffle
-    participant DB as MongoDB
-    participant CH as Chat
-    participant N as Notifications
-
-    O->>API: POST /events/:id/shuffle
-    API->>API: assert organizer (createdBy, or group owner/admin)
-    API->>API: reject unless status == 'preparation'
-
-    API->>DB: load EventPlayers (status: 'joined')
-    API->>API: Fisher-Yates shuffle
-    API->>API: deal round-robin across first `teamCount` colours
-    Note over API: sizes differ by at most one
-    API->>DB: bulkWrite EventPlayer.team
-
-    API->>API: double round-robin over teams used
-    Note over API: leg 1 (i,j) then leg 2 (j,i)<br/>N=4 → 12 matches, 6 per team
-    API->>DB: save Event.matches (all scores null)
-
-    API->>CH: upsert EventTeamChat per team
-    API->>N: notify each player of their colour
-    API-->>O: { teams, fixtures }
-
-    opt re-shuffle while still in preparation
-        O->>API: POST /events/:id/shuffle
-        API->>DB: teams AND fixtures regenerated
-        Note over API,DB: safe — scores cannot exist yet<br/>(entry requires 'playing')
-    end
-```
+📊 **Diagram:** [`events-5-4-shuffle-colour-teams-fixtures.mmd`](../diagrams/events-5-4-shuffle-colour-teams-fixtures.mmd) — mermaid source (GitHub renders it on open).
 
 ### 5.5 Score entry & standings
 
 Standings are never stored. Every read recomputes from `matches[]`, skipping fixtures with a `null` score.
 
-```mermaid
-flowchart LR
-    A["PATCH /events/:id/matches/:matchNumber<br/>{scoreA, scoreB}"] --> B{organizer?}
-    B -->|no| B1[403]
-    B -->|yes| C{"status in playing,<br/>after_match?"}
-    C -->|no| C1["400 — cannot score<br/>before kick-off"]
-    C -->|yes| D{matchNumber exists?}
-    D -->|no| D1[404]
-    D -->|yes| E[set scoreA/scoreB + playedAt]
-
-    E --> F["GET /events/:id/standings"]
-    F --> G["fold over matches[]<br/>skip null scores"]
-    G --> H["win 3 / draw 1 / loss 0<br/>played, W, D, L, GF, GA, GD, pts"]
-    H --> I["sort: pts → GD → GF → team name"]
-    I --> J[table returned]
-
-    E --> K["matches[] is the sole score authority<br/>for multi-team events"]
-    K --> L["Event.result keeps mvpUserId only<br/>(+ scoreA/scoreB for simple 2-team)"]
-```
+📊 **Diagram:** [`events-5-5-score-entry-standings.mmd`](../diagrams/events-5-5-score-entry-standings.mmd) — mermaid source (GitHub renders it on open).
 
 ### 5.6 Geo discovery
 
 `$geoNear` must be the first aggregation stage, so the pipeline starts from `locations` and looks *up* to events — not the reverse.
 
-```mermaid
-flowchart TD
-    A["GET /events?near=lat,lng&radius=5000"] --> B["parse near; clamp radius<br/>default 10km, max 100km"]
-    B --> C["$geoNear on locations.geo<br/>(2dsphere — already exists)"]
-    C --> D["$lookup events where<br/>locationId == location._id"]
-    D --> E["filter isPublic: true<br/>AND status: 'join'"]
-    E --> F["$sort by distance"]
-    F --> G["events + distance in metres"]
-
-    H["same pitch may exist as several rows,<br/>one per creator/group (parent §3)"] -.->|"apparent duplicates<br/>are accepted"| G
-```
+📊 **Diagram:** [`events-5-6-geo-discovery.mmd`](../diagrams/events-5-6-geo-discovery.mmd) — mermaid source (GitHub renders it on open).
 
 ### 5.7 Illegal transition — the rejection path
 
 Every `PATCH /status` goes through the pure transition table. This is the single most-exercised guard in the spec, so it gets its own flow.
 
-```mermaid
-sequenceDiagram
-    actor U as Caller
-    participant API as Events API
-    participant LC as events.lifecycle (pure)
-    participant DB as MongoDB
-
-    U->>API: PATCH /events/:id/status {to}
-    API->>DB: load event
-    alt caller is not the organizer
-        API-->>U: 403 Forbidden
-    else
-        API->>LC: canTransition(event.status, to)
-        alt illegal (e.g. join → playing, or anything out of done)
-            LC-->>API: false
-            API-->>U: 409 Conflict — illegal transition
-        else legal
-            LC-->>API: true
-            API->>DB: set status
-            opt to == 'done'
-                API->>DB: archive EventTeamChat rows
-            end
-            API-->>U: 200 { event }
-        end
-    end
-```
+📊 **Diagram:** [`events-5-7-illegal-transition.mmd`](../diagrams/events-5-7-illegal-transition.mmd) — mermaid source (GitHub renders it on open).
 
 ---
 

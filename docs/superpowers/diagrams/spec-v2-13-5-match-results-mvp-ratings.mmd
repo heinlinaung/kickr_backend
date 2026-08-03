@@ -1,0 +1,22 @@
+%% 13.5 Match results, MVP & ratings (playing → after_match)
+%% Source of truth for this diagram. Rendered from ../specs/2026-07-28-kickr-spec-v2-changes.md §13.5
+%% Edit here, not in the spec — the spec links to this file.
+flowchart LR
+    A[status: playing] --> B["PATCH /events/:id/matches/:matchNumber<br/>{scoreA, scoreB}"]
+    B --> C{all fixtures played?}
+    C -->|no| B
+    C -->|yes| D[PATCH /status → after_match]
+
+    D --> E[POST /events/:id/result<br/>mvpUserId]
+    D --> F[POST /events/:id/photos<br/>→ ImageKit]
+    D --> G[POST /events/:id/ratings<br/>stars 1-5 + comment]
+
+    G --> H{unique eventId+raterId+rateeId}
+    H -->|duplicate| I[409 conflict]
+    H -->|ok| J[rating stored]
+
+    J --> K[feeds profile avgRating]
+    E --> L[feeds profile mvpCount]
+    B --> M[standings derived on read<br/>win 3 / draw 1 / loss 0]
+
+    D --> N[PATCH /status → done<br/>team chats archived]

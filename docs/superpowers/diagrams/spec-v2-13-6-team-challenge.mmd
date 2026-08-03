@@ -1,0 +1,30 @@
+%% 13.6 Team challenge (group vs group)
+%% Source of truth for this diagram. Rendered from ../specs/2026-07-28-kickr-spec-v2-changes.md §13.6
+%% Edit here, not in the spec — the spec links to this file.
+sequenceDiagram
+    actor A as Group A owner
+    participant API as Challenges
+    participant DB as MongoDB
+    participant N as Notifications
+    actor B as Group B owner
+
+    A->>API: POST /challenges {toGroupId, proposedDate, locationId, numberOfPlayers}
+    API->>DB: Challenge status = pending
+    API->>N: notify Group B owner/admins
+    N-->>B: "Group A challenged you"
+
+    B->>API: GET /challenges?groupId=B
+    B->>API: PATCH /challenges/:id {accepted | rejected}
+
+    alt accepted
+        API->>DB: status = accepted, respondedBy
+        opt spawn match
+            API->>DB: create Event (locationId, date, maxPlayers)
+            API->>DB: challenge.resultingEventId = event._id
+        end
+        API->>N: notify Group A "accepted"
+        Note over API: event then follows the<br/>normal lifecycle (§13.3)
+    else rejected
+        API->>DB: status = rejected
+        API->>N: notify Group A "declined"
+    end
