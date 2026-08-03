@@ -251,7 +251,7 @@ The same adoption happens on `POST /groups/:id/locations` when you attach one of
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| `GET` | `/groups` | member | Caller's groups; each item includes `myRole`. |
+| `GET` | `/groups` | member | Caller's groups; each item includes **`userRole`**. Only approved memberships, so no `memberStatus`. |
 | `POST` | `/groups` | any | Creator becomes `owner`. |
 | `GET` | `/groups/search?q=` | any | Public groups only (`isPrivate: false`), matches name **or** handle, max 20. |
 | `GET` | `/groups/:id` | any | Group detail **+ `userRole` / `memberStatus`** for the caller. |
@@ -550,9 +550,8 @@ class Group {
   final String? city;        // optional, e.g. 'Bangkok'
   final bool isPrivate;
   final int maxPlayers;
-  final String? myRole;      // present on GET /groups
-  final String? userRole;    // present on GET /groups/:id — caller's role
-  final String? memberStatus;// present on GET /groups/:id — 'pending' | 'approved'
+  final String? userRole;    // caller's role — on GET /groups AND GET /groups/:id
+  final String? memberStatus;// 'pending' | 'approved' — GET /groups/:id only
 
   Group({
     required this.id,
@@ -569,16 +568,20 @@ class Group {
     this.locationIds = const [],
     this.country,
     this.city,
-    this.myRole,
     this.userRole,
     this.memberStatus,
   });
 
-  /// True only for an APPROVED membership. A pending requester also has
-  /// userRole == 'member', so never infer membership from the role alone.
-  bool get isMember => memberStatus == 'approved';
+  /// A pending requester also has userRole == 'member', so never infer
+  /// membership from the role alone — check memberStatus.
+  ///
+  /// GET /groups only ever returns approved memberships and omits
+  /// memberStatus, so a null status with a non-null role counts as a member.
+  bool get isMember =>
+      memberStatus == 'approved' || (memberStatus == null && userRole != null);
   bool get isPendingApproval => memberStatus == 'pending';
-  bool get canManage => isMember && (userRole == 'owner' || userRole == 'admin');
+  bool get canManage =>
+      isMember && (userRole == 'owner' || userRole == 'admin');
 
   factory Group.fromJson(Map<String, dynamic> j) => Group(
         id: j['_id'] as String,
@@ -595,12 +598,9 @@ class Group {
         maxPlayers: (j['maxPlayers'] as num?)?.toInt() ?? 22,
         country: j['country'] as String?,
         city: j['city'] as String?,
-        myRole: j['myRole'] as String?,
         userRole: j['userRole'] as String?,
         memberStatus: j['memberStatus'] as String?,
       );
-
-  bool get canManage => myRole == 'owner' || myRole == 'admin';
 }
 
 class GroupMember {
@@ -673,7 +673,7 @@ class GroupInvite {
 
 | Screen | Calls |
 |---|---|
-| My groups | `GET /groups` (use `myRole` to gate admin UI) |
+| My groups | `GET /groups` (use `userRole` to gate admin UI) |
 | Group discovery / search | `GET /groups/search?q=` |
 | Create group | `POST /locations` (no `groupId` — group doesn't exist yet) → `POST /groups` with `locationIds`; the server adopts them (§2.3) |
 | Group detail — header | `GET /groups/:id` (`logo`, `wallpaper`, `handle`, `country`/`city`; gate admin UI on `userRole` **+ `memberStatus == 'approved'`**) |

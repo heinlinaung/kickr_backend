@@ -50,9 +50,12 @@ export class GroupsService {
     const groups = await this.groupModel
       .find({ _id: { $in: groupIds } })
       .lean();
+    // Named `userRole` to match GET /groups/:id (findById). Every membership
+    // here is already `status: 'approved'`, so there is no memberStatus to
+    // report — the list only contains groups the caller actually belongs to.
     return groups.map((group) => ({
       ...group,
-      myRole: memberships.find(
+      userRole: memberships.find(
         (m) => m.groupId.toString() === (group._id as any).toString(),
       )?.role,
     }));

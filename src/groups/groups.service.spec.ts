@@ -340,6 +340,30 @@ describe('GroupsService', () => {
     });
   });
 
+  describe('getMyGroups', () => {
+    // The list and detail endpoints must agree on the field name; this used to
+    // be `myRole` on the list and `userRole` on detail.
+    it("labels the caller's role as `userRole`, matching findById", async () => {
+      const gid = new Types.ObjectId();
+      memberModel.find.mockReturnValue(q([{ groupId: gid, role: 'admin' }]));
+      groupModel.find.mockReturnValue(q([{ _id: gid, name: 'FC' }]));
+
+      const res: any = await service.getMyGroups(USER_ID);
+
+      expect(res[0].userRole).toBe('admin');
+      expect(res[0]).not.toHaveProperty('myRole');
+    });
+
+    it('only counts approved memberships', async () => {
+      memberModel.find.mockReturnValue(q([]));
+      groupModel.find.mockReturnValue(q([]));
+
+      await service.getMyGroups(USER_ID);
+
+      expect(memberModel.find.mock.calls[0][0].status).toBe('approved');
+    });
+  });
+
   describe('findById', () => {
     it('404s when the group is missing', async () => {
       groupModel.findById.mockReturnValue(q(null));
