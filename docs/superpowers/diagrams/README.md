@@ -28,7 +28,7 @@ Owner: [`2026-08-03-events-feature-spec.md`](../specs/2026-08-03-events-feature-
 | 5.1 | [full event lifecycle](./events-5-1-event-lifecycle-states.mmd) | state |
 | 5.2 | [organizer happy path](./events-5-2-organizer-happy-path.mmd) | sequence |
 | 5.3 | [join / unjoin gating](./events-5-3-join-unjoin-gating.mmd) | flowchart |
-| 5.4 | [shuffle → colour teams → fixtures](./events-5-4-shuffle-colour-teams-fixtures.mmd) | sequence |
+| 5.4 | [team submission → validation → fixtures](./events-5-4-team-submission-fixtures.mmd) | sequence |
 | 5.5 | [score entry & standings](./events-5-5-score-entry-standings.mmd) | flowchart |
 | 5.6 | [geo discovery](./events-5-6-geo-discovery.mmd) | flowchart |
 | 5.7 | [illegal transition](./events-5-7-illegal-transition.mmd) | sequence |

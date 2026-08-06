@@ -28,13 +28,14 @@ sequenceDiagram
     API-->>O: registration closed
 
     O->>API: PATCH /events/:id/status {preparation}
-    O->>API: POST /events/:id/shuffle
-    API->>API: assert status == 'preparation'
-    API->>DB: assign Red/Yellow/Blue/Black
+    Note over O: client shuffles and finalizes the teams
+    O->>API: PUT /events/:id/teams { teams:[{name, playerIds}] }
+    API->>API: assert status == 'preparation' + validate roster
+    API->>DB: bulkWrite EventPlayer.team
     API->>DB: generate matches[] — 12 fixtures, scores null
     API->>DB: create EventTeamChat per team
     API->>N: notify each player of their team
-    API-->>O: { teams, fixtures }
+    API-->>O: { teams, fixtures, unassignedPlayerIds }
 
     O->>API: PATCH /events/:id/status {playing}
     loop each of the 12 fixtures

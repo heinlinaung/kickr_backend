@@ -1,0 +1,44 @@
+%% 5.4 Team submission → validation → fixture generation
+%% Source of truth for this diagram. Rendered from ../specs/2026-08-03-events-feature-spec.md §5.4
+%% Edit here, not in the spec — the spec links to this file.
+sequenceDiagram
+    actor O as Organizer (mobile)
+    participant API as Events API
+    participant DB as MongoDB
+    participant CH as Chat
+    participant N as Notifications
+
+    Note over O: the client performs the shuffle<br/>and finalizes the teams
+
+    alt client-submitted teams (default)
+        O->>API: PUT /events/:id/teams { teams:[{name, playerIds}] }
+        API->>API: assert organizer + status == 'preparation'
+        API->>DB: load joined EventPlayers
+        API->>API: validate — ids joined, no player in two teams,<br/>no dupes, names unique, 2..6 teams
+        alt validation fails
+            API-->>O: 400 naming the offending id
+        end
+    else server-side shuffle (fallback)
+        O->>API: POST /events/:id/shuffle
+        API->>API: assert organizer + status == 'preparation'
+        API->>DB: load joined EventPlayers
+        API->>API: Fisher-Yates → deal across teamCount colours
+    end
+
+    Note over API,DB: both paths converge below
+
+    API->>DB: bulkWrite EventPlayer.team<br/>(clear team on players dropped from the roster)
+    API->>API: double round-robin over the finalized teams
+    Note over API: leg 1 (i,j) then leg 2 (j,i)<br/>N=4 → 12 matches, 6 per team
+    API->>DB: save Event.matches (all scores null)
+    API->>CH: upsert EventTeamChat per team name
+    API->>N: notify each assigned player of their team
+    API-->>O: { teams, fixtures, unassignedPlayerIds }
+
+    Note over O: unassignedPlayerIds lets the app warn<br/>"3 players not on a team" — partial rosters are allowed
+
+    opt resubmit while still in preparation
+        O->>API: PUT /events/:id/teams (revised)
+        API->>DB: teams AND fixtures regenerated
+        Note over API,DB: safe — scores cannot exist yet<br/>(entry requires 'playing')
+    end

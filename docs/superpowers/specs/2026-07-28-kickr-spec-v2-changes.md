@@ -296,7 +296,7 @@ level: 1 | 2 | 3                                  // default 1
 
 ## 5. Events & Lifecycle (§4.5, §4.6) — NEXT UP
 
-> **Detailed design:** [2026-08-03-events-feature-spec.md](./2026-08-03-events-feature-spec.md) expands this section into an implementable spec and locks §14 #6 (shuffle strategy → fixed N colour teams) and the fixture format (generic double round-robin). Read that document before implementing; the sections below remain the authoritative statement of *what* is needed.
+> **Detailed design:** [2026-08-03-events-feature-spec.md](./2026-08-03-events-feature-spec.md) expands this section into an implementable spec and settles §14 #6 (**the client shuffles and submits the finalized teams**; a server-side colour-team shuffle is kept as a fallback) and the fixture format (generic double round-robin). Read that document before implementing; the sections below remain the authoritative statement of *what* is needed.
 
 ### 5.1 Current state — VERIFIED (updated 2026-08-03)
 
@@ -392,7 +392,7 @@ New `event_templates` collection: saved defaults (title, locationId, maxPlayers,
 Current `shuffle.service.ts` chunks joined players into random groups of 6, notifies them, and is **not** tied to the lifecycle.
 
 - **Gate to `preparation`** — reject otherwise.
-- **Team balancing** — currently pure-random buckets of 6. **Decision needed** (§14 #6): keep random, balance by `skillLevel`/`footballPosition`, or fixed N colour teams.
+- **Team balancing** — ✅ **RESOLVED 2026-08-06**: the **client** performs the shuffle and submits the finalized team list via `PUT /events/:id/teams`; the server validates it and derives fixtures, team chats and notifications. Server-side colour-team shuffle retained as an optional fallback. See the [Events spec](./2026-08-03-events-feature-spec.md) §4.3.
 - **Fixture generation** — when the event has >2 teams, generate `matches[]` (§5.3) in the same transition.
 - **Team chats** — create per-team rooms (`eventId`+`team`); archive on `done`.
 
@@ -632,7 +632,7 @@ Applies to avatar, group logo/wallpaper/gallery, event cover/photos, chat attach
 | 3 | Highlight/gallery storage | ✅ RESOLVED — ImageKit. Sub-question: arrays vs a `media` collection if per-item metadata is needed |
 | 4 | **Group Posts vs chat announcements** — separate feed, or pinned messages? | OPEN — nothing built either way |
 | 5 | **Invite-link approval** — should join-by-link/QR still require owner approval? | ✅ **RESOLVED & SHIPPED 2026-08-03** — yes, approval required. `joinByCode` now creates a `pending` row like request-to-join. See [pre-events changes](./2026-08-03-pre-events-changes.md) §6b/§11 |
-| 6 | **Shuffle strategy** — random buckets of 6, skill/position-balanced, or fixed N colour teams? | ✅ RESOLVED 2026-08-03 — **fixed N colour teams** (`teamCount`, default 4). See the [Events spec](./2026-08-03-events-feature-spec.md) §3 |
+| 6 | **Shuffle strategy** — random buckets of 6, skill/position-balanced, or fixed N colour teams? | ✅ RESOLVED — **superseded 2026-08-06**: the question is moot server-side because **the client now shuffles** and submits the finalized teams (`PUT /events/:id/teams`). The server validates and derives everything downstream; the colour-team shuffle survives only as a fallback. See the [Events spec](./2026-08-03-events-feature-spec.md) §4.3 |
 | 7 | **League standings storage** — recomputed collection vs computed-on-read | ✅ RESOLVED for *events* — computed-on-read (Events spec §4.3). Still OPEN for **tournaments** (§6.2) |
 | 8 | **Ratings cardinality** — one per match total, or one per teammate per match? | OPEN |
 | 9 | Chat/video upload limits & storage | ✅ RESOLVED — ImageKit |
