@@ -3,31 +3,33 @@
 %% Edit here, not in the spec — the spec links to this file.
 sequenceDiagram
     actor O as Organizer
+    participant C as Client
     participant API as Shuffle
     participant DB as MongoDB
     participant CH as Chat
     participant N as Notifications
 
-    O->>API: POST /events/:id/shuffle
+    O->>C: tap "Shuffle teams"
+    C->>C: Fisher-Yates joined players
+    C->>C: deal round-robin across first `teamCount` colours
+    C->>C: build double round-robin fixtures
+    Note over C: all computation is client-side<br/>N=4 → 12 matches, 6 per team
+
+    C->>API: POST /events/:id/shuffle<br/>{ assignments[], matches[] }
     API->>API: assert organizer (createdBy, or group owner/admin)
     API->>API: reject unless status == 'preparation'
+    Note over API: no further validation —<br/>payload is persisted as given (§4.3)
 
-    API->>DB: load EventPlayers (status: 'joined')
-    API->>API: Fisher-Yates shuffle
-    API->>API: deal round-robin across first `teamCount` colours
-    Note over API: sizes differ by at most one
-    API->>DB: bulkWrite EventPlayer.team
-
-    API->>API: double round-robin over teams used
-    Note over API: leg 1 (i,j) then leg 2 (j,i)<br/>N=4 → 12 matches, 6 per team
-    API->>DB: save Event.matches (all scores null)
-
-    API->>CH: upsert EventTeamChat per team
+    API->>DB: bulkWrite EventPlayer.team from assignments
+    API->>DB: replace Event.matches (scores forced null)
+    API->>CH: upsert EventTeamChat per team present
     API->>N: notify each player of their colour
-    API-->>O: { teams, fixtures }
+    API-->>C: { teams, fixtures }
+    C-->>O: teams displayed
 
     opt re-shuffle while still in preparation
-        O->>API: POST /events/:id/shuffle
-        API->>DB: teams AND fixtures regenerated
+        O->>C: tap again
+        C->>API: POST /events/:id/shuffle { new payload }
+        API->>DB: teams AND fixtures REPLACED wholesale
         Note over API,DB: safe — scores cannot exist yet<br/>(entry requires 'playing')
     end
