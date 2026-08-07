@@ -28,10 +28,11 @@ sequenceDiagram
     API-->>O: registration closed
 
     O->>API: PATCH /events/:id/status {preparation}
-    O->>API: POST /events/:id/shuffle
+    Note over O: client shuffles locally —<br/>Red/Yellow/Blue/Black + 12 fixtures (§5.4)
+    O->>API: POST /events/:id/shuffle {assignments, matches}
     API->>API: assert status == 'preparation'
-    API->>DB: assign Red/Yellow/Blue/Black
-    API->>DB: generate matches[] — 12 fixtures, scores null
+    API->>DB: persist EventPlayer.team from assignments
+    API->>DB: persist matches[] as sent — 12 fixtures, scores null
     API->>DB: create EventTeamChat per team
     API->>N: notify each player of their team
     API-->>O: { teams, fixtures }
