@@ -295,7 +295,9 @@ Error contract: `403` wrong actor, `404` unknown event/match, `409` illegal tran
 Each step is independently shippable and leaves the suite green.
 
 1. **Lifecycle core** — `events.lifecycle.ts` (pure transition table + `canTransition`), status enum migration, re-gate join/leave, `PATCH /events/:id/status`, shared organizer helper, `PATCH`/`DELETE /events/:id`. Migration script for existing rows.
-2. **Teams & fixtures** — shuffle endpoint gated to `preparation` persisting client-supplied teams + `matches[]`, score entry, standings-on-read, `EventTeamChat` scaffold + archive on `done`. No generation algorithm server-side; the client lands its shuffle in the same release.
+
+   **Schema ownership:** step 1 also lands the §4.4 *fields* that later steps fill — `matches: []`, `result: null`, `startTime`/`endTime`, `teamCount`, `coverImage`, `photos`, `likeCount`. They ship empty and unused. This is deliberate: the status migration already rewrites every event document, so adding the columns in the same pass avoids a second migration, and it means steps 2–3 are pure service/controller work with no schema change. Do **not** read step 1's schema as implying the behaviour is present.
+2. **Teams & fixtures** — shuffle endpoint gated to `preparation` persisting client-supplied teams + `matches[]`, score entry, standings-on-read, `EventTeamChat` scaffold + archive on `done`. No generation algorithm server-side; the client lands its shuffle in the same release. Depends on step 1 for both the `matches[]` field and the `playing` state that gates score entry — the dependency runs one way, so step 1 never waits on this.
 3. **After-match** — `result`/MVP, cover + photos via ImageKit, `startTime`/`endTime`.
 4. **Discovery & templates** — `$geoNear` listing, `EventTemplate` collection and routes, likes.
 

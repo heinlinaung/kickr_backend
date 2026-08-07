@@ -18,7 +18,16 @@ import {
 } from '../groups/schemas/group-member.schema';
 import { Group, GroupDocument } from '../groups/schemas/group.schema';
 import { CreateEventDto } from './dto/create-event.dto';
+import { UpdateEventDto } from './dto/update-event.dto';
 import { LocationsService } from '../locations/locations.service';
+import {
+  EventStatus,
+  canJoin,
+  canLeave,
+  canModify,
+  canTransition,
+  isEventStatus,
+} from './events.lifecycle';
 
 @Injectable()
 export class EventsService {
@@ -32,6 +41,43 @@ export class EventsService {
     private groupModel: Model<GroupDocument>,
     private readonly locationsService: LocationsService,
   ) {}
+
+  /**
+   * Loads an event and asserts the caller may act as its organizer.
+   *
+   * Organizer = the event's `createdBy`, or an approved owner/admin of the
+   * owning group for group events. Spec §4.1 calls for one shared helper here;
+   * ShuffleService duplicated this check before, and every new lifecycle route
+   * would have duplicated it again.
+   *
+   * Returns the event so callers don't re-fetch it.
+   */
+  async assertOrganizer(
+    eventId: string,
+    userId: string,
+  ): Promise<EventDocument> {
+    const event = await this.eventModel.findById(eventId);
+    if (!event) throw new NotFoundException('Event not found');
+
+    if (event.groupId) {
+      const member = await this.memberModel.findOne({
+        groupId: event.groupId,
+        userId: new Types.ObjectId(userId),
+        status: 'approved',
+        role: { $in: ['owner', 'admin'] },
+      });
+      // The creator keeps control even if they later lose their group role.
+      if (!member && event.createdBy.toString() !== userId) {
+        throw new ForbiddenException(
+          'Only the event creator or a group owner/admin can manage this event',
+        );
+      }
+    } else if (event.createdBy.toString() !== userId) {
+      throw new ForbiddenException('Only the event creator can manage this event');
+    }
+
+    return event;
+  }
 
   /**
    * Public event listing.
@@ -57,7 +103,8 @@ export class EventsService {
       filter.groupId = { $in: groups.map((g) => g._id) };
     }
 
-    return this.eventModel.find(filter).sort({ date: 1 }).lean();
+    const events = await this.eventModel.find(filter).sort({ date: 1 }).lean();
+    return events.map(withIsFull);
   }
 
   async create(userId: string, dto: CreateEventDto): Promise<EventDocument> {
@@ -77,8 +124,10 @@ export class EventsService {
     // model (Mongoose's loose create() typing would not flag the mismatch).
     const { locationId, ...rest } = dto;
     if (locationId) {
-      // You may only attach a location you own (mirrors GroupsService).
-      await this.locationsService.assertOwnedBy(locationId, userId);
+      // assertCanEdit, not assertOwnedBy: a group's owner/admin/captain may
+      // attach the group's own ground even if someone else created the row
+      // (spec §4.6). assertOwnedBy rejected exactly that case.
+      await this.locationsService.assertCanEdit(locationId, userId);
     }
     return this.eventModel.create({
       ...rest,
@@ -109,7 +158,7 @@ export class EventsService {
       groupRules = (group as { rules?: string[] } | null)?.rules ?? [];
     }
 
-    return { ...event, groupRules };
+    return { ...withIsFull(event), groupRules };
   }
 
   async join(eventId: string, userId: string) {
@@ -121,11 +170,14 @@ export class EventsService {
     if (existing && existing.status === 'joined')
       throw new ConflictException('Already joined');
 
-    // Atomic capacity check: only increment if joinedCount < maxPlayers and status is open
+    // Atomic capacity check: only increment while registration is open and
+    // there is room. Unchanged from the pre-lifecycle version except that the
+    // status condition is now 'join' — the race guard is the $expr, not the
+    // read above.
     const updatedEvent = await this.eventModel.findOneAndUpdate(
       {
         _id: eventId,
-        status: 'open',
+        status: 'join',
         $expr: { $lt: ['$joinedCount', '$maxPlayers'] },
       },
       { $inc: { joinedCount: 1 } },
@@ -135,7 +187,7 @@ export class EventsService {
       const event = await this.eventModel.findById(eventId).lean();
       if (!event) throw new NotFoundException('Event not found');
       throw new BadRequestException(
-        event.status !== 'open'
+        !canJoin(event.status)
           ? 'Event is not open for joining'
           : 'Event is full',
       );
@@ -155,17 +207,22 @@ export class EventsService {
       });
     }
 
-    // Update status to 'full' if at capacity
-    if (updatedEvent.joinedCount >= updatedEvent.maxPlayers) {
-      await this.eventModel.findByIdAndUpdate(eventId, {
-        $set: { status: 'full' },
-      });
-    }
-
+    // No status flip at capacity: `full` is gone and `isFull` is derived from
+    // joinedCount >= maxPlayers on read.
     return { message: 'Joined event successfully' };
   }
 
   async leave(eventId: string, userId: string) {
+    // Gate on the lifecycle BEFORE touching the player row: once teams are
+    // being assigned, a silent departure would leave the fixtures wrong.
+    const event = await this.eventModel.findById(eventId).lean();
+    if (!event) throw new NotFoundException('Event not found');
+    if (!canLeave(event.status)) {
+      throw new BadRequestException(
+        'Registration has closed for this event; ask the organizer to reopen it',
+      );
+    }
+
     const player = await this.playerModel.findOne({
       eventId: new Types.ObjectId(eventId),
       userId: new Types.ObjectId(userId),
@@ -176,27 +233,101 @@ export class EventsService {
     player.status = 'cancelled';
     await player.save();
 
-    // Use a single update: decrement and conditionally reopen if was 'full'
+    // Decrement only. There is no status to reopen now that `full` is gone,
+    // and the $gt guard keeps a double-leave from driving the count negative.
     await this.eventModel.findOneAndUpdate(
-      { _id: eventId, status: { $in: ['open', 'full'] } },
-      [
-        {
-          $set: {
-            joinedCount: { $subtract: ['$joinedCount', 1] },
-            status: {
-              $cond: {
-                if: { $eq: ['$status', 'full'] },
-                then: 'open',
-                else: '$status',
-              },
-            },
-          },
-        },
-      ],
-      { updatePipeline: true } as any,
+      { _id: eventId, status: 'join', joinedCount: { $gt: 0 } },
+      { $inc: { joinedCount: -1 } },
     );
 
     return { message: 'Left event successfully' };
+  }
+
+  /**
+   * Advance the lifecycle. Organizer-gated and validated against the pure
+   * transition table — every rejection path is exercised in the unit tests.
+   */
+  async setStatus(eventId: string, userId: string, to: string) {
+    const event = await this.assertOrganizer(eventId, userId);
+
+    if (!isEventStatus(to)) {
+      throw new BadRequestException(`Unknown status '${to}'`);
+    }
+    if (!canTransition(event.status, to)) {
+      throw new ConflictException(
+        `Cannot move an event from '${event.status}' to '${to}'`,
+      );
+    }
+
+    event.status = to as EventStatus;
+    await event.save();
+
+    // TODO(step 2): archiving team chats on `done` lands with EventTeamChat.
+    return event.toJSON();
+  }
+
+  /** Edit an event. Organizer-gated; rejected once archived. */
+  async update(eventId: string, userId: string, dto: UpdateEventDto) {
+    const event = await this.assertOrganizer(eventId, userId);
+    if (!canModify(event.status)) {
+      throw new BadRequestException('A completed event can no longer be edited');
+    }
+
+    const { locationId, date, startTime, endTime } = dto;
+    if (locationId) {
+      // assertCanEdit (not assertOwnedBy) so a group's admin can attach the
+      // group's own ground — see spec §4.6.
+      await this.locationsService.assertCanEdit(locationId, userId);
+    }
+
+    // Copy an explicit allow-list rather than spreading the DTO. The global
+    // ValidationPipe already strips unknown keys, but `status` must never be
+    // settable here regardless of pipe config: the lifecycle moves only
+    // through setStatus, where the transition table applies.
+    const EDITABLE = [
+      'title',
+      'description',
+      'isPublic',
+      'maxPlayers',
+      'teamCount',
+      'sportType',
+      'skillLevel',
+      'price',
+    ] as const;
+    for (const key of EDITABLE) {
+      if (dto[key] !== undefined) (event as any)[key] = dto[key];
+    }
+
+    if (date) event.date = new Date(date);
+    if (startTime !== undefined) {
+      event.startTime = startTime ? new Date(startTime) : null;
+    }
+    if (endTime !== undefined) {
+      event.endTime = endTime ? new Date(endTime) : null;
+    }
+    if (locationId !== undefined) {
+      event.locationId = locationId ? new Types.ObjectId(locationId) : null;
+    }
+    await event.save();
+    return event.toJSON();
+  }
+
+  /**
+   * Delete an event. Organizer-gated and rejected once archived, so completed
+   * events stay available as history (spec §4.1 / parent §4.5 "Done").
+   *
+   * Hard delete, per the spec's stated assumption — open question #1 asks
+   * whether joined events should instead soft-cancel with notifications.
+   */
+  async remove(eventId: string, userId: string) {
+    const event = await this.assertOrganizer(eventId, userId);
+    if (!canModify(event.status)) {
+      throw new BadRequestException('A completed event can no longer be deleted');
+    }
+
+    await this.playerModel.deleteMany({ eventId: new Types.ObjectId(eventId) });
+    await this.eventModel.deleteOne({ _id: new Types.ObjectId(eventId) });
+    return { message: 'Event deleted successfully' };
   }
 
   async listPlayers(eventId: string) {
@@ -205,6 +336,22 @@ export class EventsService {
       .populate('userId', 'name profileImage')
       .lean();
   }
+}
+
+/**
+ * Attaches the derived `isFull` flag to a lean event row.
+ *
+ * The schema declares `isFull` as a virtual, but virtuals are absent from
+ * `.lean()` results — and every read path here is lean for speed. Rather than
+ * drop lean(), compute the same rule in one place.
+ */
+function withIsFull<T extends { joinedCount?: number; maxPlayers?: number }>(
+  event: T,
+): T & { isFull: boolean } {
+  return {
+    ...event,
+    isFull: (event.joinedCount ?? 0) >= (event.maxPlayers ?? 0),
+  };
 }
 
 /** Escapes user input so it can be embedded in a RegExp literally. */
