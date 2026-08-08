@@ -6,9 +6,18 @@ Integration guides written against the **live** API — every request/response s
 |---|---|
 | [auth-api.md](./auth-api.md) | Signup (incl. the optional `name`), login, **refresh**, forgot/reset password. Token storage and the 401→refresh→retry loop. |
 | [groups-and-locations-api.md](./groups-and-locations-api.md) | Locations (venues) and Groups (fields, `country`/`city`, images, rules, members/roles, search, QR invites, joining). |
+| [events-api.md](./events-api.md) | Events — the 6-state lifecycle, derived `isFull`, listing a group's events, create/edit/delete, join/leave. ⚠️ **breaking status change**. |
 | [admin-api.md](./admin-api.md) | **Back-office only** — force-add users to a group or event behind the `x-admin-key` shared secret. Not for the mobile app. |
 
 **Live reference while the server is running:** Swagger UI at `/api-docs`, OpenAPI JSON at `/api-docs-json`.
+
+## ⚠️ Breaking change — 2026-08-09
+
+**Event `status` values changed.** The `open | full | done` enum is replaced by the 6-state lifecycle `join → before_match → preparation → playing → after_match → done`.
+
+`open` becomes `join`; **`full` is removed entirely** — a full event stays in `join` and capacity is exposed as the derived boolean `isFull`. Any build matching `"open"` or `"full"` breaks. See [events-api §2.2 and §3](./events-api.md).
+
+Same release: new `GET /events/group/:groupId` (a group's events, private ones visible to approved members), plus `PATCH /events/:id`, `DELETE /events/:id` and `PATCH /events/:id/status`.
 
 ## ⚠️ Breaking change — 2026-08-03
 

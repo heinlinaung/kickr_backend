@@ -43,6 +43,39 @@ export class EventsController {
     return this.eventsService.list(user._id.toString(), region);
   }
 
+  /**
+   * Declared BEFORE `@Get(':id')` on purpose — Nest matches routes in
+   * declaration order, and `group` would otherwise be swallowed as an `:id`.
+   */
+  @Get('group/:groupId')
+  @ApiOperation({
+    summary: "All of one group's events, soonest first",
+    description:
+      'Approved members see every event in the group, public or private. ' +
+      'Everyone else sees only the public ones. Optionally filter by ' +
+      'lifecycle status.',
+  })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    example: 'join',
+    description:
+      'Optional lifecycle filter: join | before_match | preparation | ' +
+      'playing | after_match | done.',
+  })
+  @ApiResponse({ status: 404, description: 'Group not found' })
+  listByGroup(
+    @Param('groupId') groupId: string,
+    @CurrentUser() user: any,
+    @Query('status') status?: string,
+  ) {
+    return this.eventsService.listByGroup(
+      groupId,
+      user._id.toString(),
+      status,
+    );
+  }
+
   @Post()
   create(@CurrentUser() user: any, @Body() dto: CreateEventDto) {
     return this.eventsService.create(user._id.toString(), dto);
