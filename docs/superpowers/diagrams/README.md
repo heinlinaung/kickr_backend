@@ -32,6 +32,10 @@ Owner: [`2026-08-03-events-feature-spec.md`](../specs/2026-08-03-events-feature-
 | 5.5 | [score entry & standings](./events-5-5-score-entry-standings.mmd) | flowchart |
 | 5.6 | [geo discovery](./events-5-6-geo-discovery.mmd) | flowchart |
 | 5.7 | [illegal transition](./events-5-7-illegal-transition.mmd) | sequence |
+| 5.8 | [after-match — MVP, cover & photos](./events-5-8-after-match-result-uploads.mmd) | sequence |
+| 5.9 | [likes & event templates](./events-5-9-likes-and-templates.mmd) | flowchart |
+
+All nine reflect the implementation as built (steps 1–4, 2026-08-09), not just the intended design.
 
 ## Conventions
 

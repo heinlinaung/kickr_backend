@@ -1,0 +1,43 @@
+%% 5.8 After-match — MVP, cover image & photos
+%% Source of truth for this diagram. Rendered from ../specs/2026-08-03-events-feature-spec.md §5.8
+%% Edit here, not in the spec — the spec links to this file.
+sequenceDiagram
+    actor O as Organizer
+    participant API as Events API
+    participant DB as MongoDB
+    participant IK as ImageKit
+
+    Note over O,DB: status == 'after_match' for result and photos.<br/>The cover image is the exception — any state but 'done'.
+
+    O->>API: POST /events/:id/result { mvpUserId }
+    API->>API: assert organizer + status == 'after_match'
+    API->>DB: look up EventPlayer(mvpUserId, status 'joined')
+    alt MVP never joined this event
+        API-->>O: 400 — the MVP must be a player who joined
+        Note over API: naming a non-player would corrupt the<br/>profile mvpCount that parent §2.3 feeds
+    else MVP is a joined player
+        API->>DB: set result { mvpUserId, scoreA, scoreB }
+        API-->>O: event with result
+    end
+
+    Note over O,IK: cover image — replaceable, so the old file must go
+
+    O->>API: POST /events/:id/cover (multipart file)
+    API->>IK: upload → { url, fileId }
+    API->>DB: set coverImage + coverImageFileId
+    API->>IK: delete the PREVIOUS fileId (best effort)
+    Note over API,IK: deletion comes last and its failure is swallowed —<br/>an orphaned remote file beats losing the cover<br/>when the upload fails after a delete
+
+    O->>API: POST /events/:id/photos (multipart file)
+    API->>API: assert status == 'after_match'
+    API->>IK: upload → { url, fileId }
+    API->>DB: push { url, fileId } onto photos[]
+
+    O->>API: DELETE /events/:id/photos/:fileId
+    alt fileId is not on this event
+        API-->>O: 404
+    else found
+        API->>DB: splice it out of photos[]
+        API->>IK: delete the remote file (best effort)
+        Note over API,IK: row first, file second — a failed remote<br/>delete leaks a file rather than leaving<br/>a broken URL on the event
+    end

@@ -1,0 +1,43 @@
+%% 5.9 Likes & event templates
+%% Source of truth for this diagram. Rendered from ../specs/2026-08-03-events-feature-spec.md §5.9
+%% Edit here, not in the spec — the spec links to this file.
+flowchart TD
+    subgraph likes["Likes — idempotent both ways"]
+        A["POST /events/:id/like"] --> B{event exists?}
+        B -->|no| B1[404]
+        B -->|yes| C["upsert EventLike {eventId, userId}"]
+        C --> D{"upsertedCount > 0?"}
+        D -->|"no — already liked"| D1["no-op, likeCount untouched"]
+        D -->|yes| E["$inc likeCount +1"]
+
+        F["DELETE /events/:id/like"] --> G["deleteOne EventLike"]
+        G --> H{"deletedCount > 0?"}
+        H -->|"no — was not liked"| H1["no-op"]
+        H -->|yes| I["$inc likeCount -1
+        guarded by likeCount > 0"]
+
+        J["a unique index on {eventId, userId}
+        enforces idempotency in the database,
+        not just in the service"] -.-> C
+        K["the > 0 guard stops a double-unlike
+        driving the counter negative"] -.-> I
+    end
+
+    subgraph templates["Templates — defaults, not links"]
+        L["POST /event-templates
+        only name is required"] --> M["stored against ownerId"]
+
+        N["POST /events { templateId, ... }"] --> O{"template exists
+        and is the caller's?"}
+        O -->|no| O1["404 / 403"]
+        O -->|yes| P["fill ONLY the fields
+        the request omitted"]
+        P --> Q["check location permission
+        on the resolved locationId"]
+        Q --> R["create event, recording templateId"]
+
+        S["a value sent in the request always wins —
+        the template never overrides it"] -.-> P
+        T["editing a template later does NOT change
+        events already created from it"] -.-> R
+    end

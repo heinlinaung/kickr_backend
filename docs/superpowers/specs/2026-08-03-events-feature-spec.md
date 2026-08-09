@@ -304,6 +304,18 @@ Every `PATCH /status` goes through the pure transition table. This is the single
 
 📊 **Diagram:** [`events-5-7-illegal-transition.mmd`](../diagrams/events-5-7-illegal-transition.mmd) — mermaid source (GitHub renders it on open).
 
+### 5.8 After-match — MVP, cover image & photos
+
+The `after_match` phase, plus the cover image (which is editable in any state but `done`). Note the ordering of the two ImageKit paths: an upload stores the new file *before* the old one is deleted, while a photo removal drops the row *before* deleting remotely. Both orderings prefer leaking a remote file over leaving a broken URL on the event.
+
+📊 **Diagram:** [`events-5-8-after-match-result-uploads.mmd`](../diagrams/events-5-8-after-match-result-uploads.mmd) — mermaid source (GitHub renders it on open).
+
+### 5.9 Likes & event templates
+
+Two independent §4.5 features. Likes are idempotent in both directions, enforced by a unique index rather than by service logic alone. Templates supply defaults at creation time only — a value sent in the request always wins, and editing a template never reaches back into events already created from it.
+
+📊 **Diagram:** [`events-5-9-likes-and-templates.mmd`](../diagrams/events-5-9-likes-and-templates.mmd) — mermaid source (GitHub renders it on open).
+
 ---
 
 ## 6. API surface
@@ -339,6 +351,14 @@ Error contract: `403` wrong actor, `404` unknown event/match, `409` illegal tran
 ---
 
 ## 7. Build order
+
+> **Status 2026-08-09 — all four steps implemented.** 501 tests across 32 suites,
+> `nest build` clean, and the §8 walkthrough verified end to end against a real
+> MongoDB. `POST /shuffle` now delegates to the same write path as
+> `PUT /teams` rather than keeping its old numeric-bucket implementation.
+> Remaining gaps are listed in §9 and in the API doc's "not built yet" table:
+> team-chat *messaging* (the rooms exist and archive, but there is no send/read
+> endpoint), and player ratings (§8, a separate module).
 
 Each step is independently shippable and leaves the suite green.
 
