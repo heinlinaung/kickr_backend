@@ -13,21 +13,68 @@ import {
   EventPlayerDocument,
 } from './schemas/event-player.schema';
 import {
+  EventTeamChat,
+  EventTeamChatDocument,
+} from './schemas/event-team-chat.schema';
+import { EventLike, EventLikeDocument } from './schemas/event-like.schema';
+import {
+  EventTemplate,
+  EventTemplateDocument,
+} from './schemas/event-template.schema';
+import {
   GroupMember,
   GroupMemberDocument,
 } from '../groups/schemas/group-member.schema';
 import { Group, GroupDocument } from '../groups/schemas/group.schema';
+import { Location, LocationDocument } from '../locations/schemas/location.schema';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
+import { SubmitTeamsDto } from './dto/submit-teams.dto';
+import { UpdateMatchScoreDto } from './dto/update-match-score.dto';
+import { SubmitResultDto } from './dto/submit-result.dto';
+import { CreateEventTemplateDto } from './dto/create-event-template.dto';
 import { LocationsService } from '../locations/locations.service';
+import { ImageKitService } from '../common/upload/imagekit.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
   EventStatus,
+  canEnterScore,
   canJoin,
   canLeave,
   canModify,
+  canShuffle,
+  canSubmitResult,
   canTransition,
   isEventStatus,
 } from './events.lifecycle';
+import {
+  Fixture,
+  TEAM_COLOURS,
+  computeStandings,
+  dealIntoTeams,
+  generateFixtures,
+  shuffled,
+} from './events.fixtures';
+import {
+  SubmittedTeam,
+  unassignedPlayerIds,
+  validateTeams,
+} from './events.teams';
+
+/** Default geo radius when `near` is given without an explicit `radius`. */
+const DEFAULT_RADIUS_METRES = 10_000;
+
+/** Filters accepted by `GET /events` (spec §6). */
+export interface ListEventsQuery {
+  region?: string;
+  /** "lat,lng" — swapped to GeoJSON [lng, lat] before querying. */
+  near?: string;
+  /** Metres; defaults to DEFAULT_RADIUS_METRES. */
+  radius?: number;
+  from?: string;
+  to?: string;
+  status?: string;
+}
 
 @Injectable()
 export class EventsService {
@@ -39,7 +86,17 @@ export class EventsService {
     private memberModel: Model<GroupMemberDocument>,
     @InjectModel(Group.name)
     private groupModel: Model<GroupDocument>,
+    @InjectModel(EventTeamChat.name)
+    private teamChatModel: Model<EventTeamChatDocument>,
+    @InjectModel(EventLike.name)
+    private likeModel: Model<EventLikeDocument>,
+    @InjectModel(EventTemplate.name)
+    private templateModel: Model<EventTemplateDocument>,
+    @InjectModel(Location.name)
+    private locationModel: Model<LocationDocument>,
     private readonly locationsService: LocationsService,
+    private readonly imagekit: ImageKitService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   /**
@@ -87,7 +144,8 @@ export class EventsService {
    * without knowing which they have. Events with no groupId are excluded when
    * region is set: they have no group from which to derive a region.
    */
-  async list(userId: string, region?: string) {
+  async list(userId: string, query: ListEventsQuery = {}) {
+    const { region, near, radius, from, to, status } = query;
     const filter: Record<string, unknown> = { isPublic: true };
 
     if (region?.trim()) {
@@ -103,8 +161,70 @@ export class EventsService {
       filter.groupId = { $in: groups.map((g) => g._id) };
     }
 
+    if (status !== undefined) {
+      if (!isEventStatus(status)) {
+        throw new BadRequestException(`Unknown status '${status}'`);
+      }
+      filter.status = status;
+    }
+
+    if (from || to) {
+      const range: Record<string, Date> = {};
+      if (from) range.$gte = new Date(from);
+      if (to) range.$lte = new Date(to);
+      filter.date = range;
+    }
+
+    // Geo narrowing runs as a separate lookup rather than a stage on the event
+    // pipeline: $geoNear must be the FIRST stage of its aggregation (spec
+    // §5.6), and events hold only a locationId — the coordinates live on
+    // Location. So we start from locations, then filter events by the ids.
+    if (near) {
+      const locationIds = await this.locationIdsNear(near, radius);
+      if (!locationIds.length) return [];
+      filter.locationId = { $in: locationIds };
+    }
+
     const events = await this.eventModel.find(filter).sort({ date: 1 }).lean();
     return events.map(withIsFull);
+  }
+
+  /**
+   * Location ids within `radius` metres of `near`, nearest first.
+   *
+   * `near` is "lat,lng" as the client sends it; GeoJSON wants [lng, lat], so
+   * the order is swapped here — getting this backwards is the classic geo bug
+   * and silently returns results from the wrong hemisphere.
+   */
+  private async locationIdsNear(
+    near: string,
+    radius?: number,
+  ): Promise<Types.ObjectId[]> {
+    const parts = near.split(',').map((part) => Number(part.trim()));
+    if (parts.length !== 2 || parts.some((n) => !Number.isFinite(n))) {
+      throw new BadRequestException(
+        "near must be 'lat,lng', e.g. near=16.8409,96.1735",
+      );
+    }
+    const [lat, lng] = parts;
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      throw new BadRequestException('near is outside valid coordinate ranges');
+    }
+
+    const maxDistance = radius && radius > 0 ? radius : DEFAULT_RADIUS_METRES;
+    const rows = await this.locationModel.aggregate<{ _id: Types.ObjectId }>([
+      {
+        $geoNear: {
+          near: { type: 'Point', coordinates: [lng, lat] },
+          distanceField: 'distance',
+          maxDistance,
+          spherical: true,
+        },
+      },
+      { $project: { _id: 1 } },
+    ]);
+
+    return rows.map((row) => row._id);
   }
 
   /**
@@ -166,7 +286,50 @@ export class EventsService {
     }
     // Destructure locationId out so the raw string is never spread onto the
     // model (Mongoose's loose create() typing would not flag the mismatch).
-    const { locationId, ...rest } = dto;
+    const { locationId: dtoLocationId, templateId, ...rest } = dto;
+
+    // A template fills fields the caller OMITTED — it never overrides what was
+    // sent (spec §5.2). Applied before the location permission check so a
+    // template-supplied ground is authorised the same as an explicit one.
+    let locationId = dtoLocationId;
+    if (templateId) {
+      const template = await this.templateModel.findById(templateId).lean();
+      if (!template) throw new NotFoundException('Template not found');
+      if (template.ownerId.toString() !== userId) {
+        throw new ForbiddenException('You can only use your own templates');
+      }
+
+      const FILLABLE = [
+        'title',
+        'description',
+        'maxPlayers',
+        'teamCount',
+        'sportType',
+        'skillLevel',
+        'price',
+        'isPublic',
+      ] as const;
+      const target = rest as Record<string, unknown>;
+      for (const key of FILLABLE) {
+        const fromTemplate = template[key];
+        // Only fill what the caller omitted, and only from a field the
+        // template actually set — a null column means "no default here".
+        if (
+          target[key] === undefined &&
+          fromTemplate !== null &&
+          fromTemplate !== undefined
+        ) {
+          target[key] = fromTemplate;
+        }
+      }
+      if (!locationId && template.locationId) {
+        locationId = template.locationId.toString();
+      }
+      if (!rest.groupId && template.groupId) {
+        rest.groupId = template.groupId.toString();
+      }
+    }
+
     if (locationId) {
       // assertCanEdit, not assertOwnedBy: a group's owner/admin/captain may
       // attach the group's own ground even if someone else created the row
@@ -176,8 +339,11 @@ export class EventsService {
     return this.eventModel.create({
       ...rest,
       date: new Date(dto.date),
-      groupId: dto.groupId ? new Types.ObjectId(dto.groupId) : null,
+      startTime: dto.startTime ? new Date(dto.startTime) : null,
+      endTime: dto.endTime ? new Date(dto.endTime) : null,
+      groupId: rest.groupId ? new Types.ObjectId(rest.groupId) : null,
       locationId: locationId ? new Types.ObjectId(locationId) : null,
+      templateId: templateId ? new Types.ObjectId(templateId) : null,
       createdBy: new Types.ObjectId(userId),
     });
   }
@@ -189,7 +355,7 @@ export class EventsService {
    * edited via PATCH /groups/:id. Always an array (never null) so the
    * client can render it unconditionally; `[]` for events with no group.
    */
-  async findById(eventId: string) {
+  async findById(eventId: string, userId?: string) {
     const event = await this.eventModel.findById(eventId).lean();
     if (!event) throw new NotFoundException('Event not found');
 
@@ -202,7 +368,25 @@ export class EventsService {
       groupRules = (group as { rules?: string[] } | null)?.rules ?? [];
     }
 
-    return { ...withIsFull(event), groupRules };
+    // Standings ride along on detail so the client renders the table without a
+    // second round trip. Empty until fixtures exist, and derived either way.
+    const matches = event.matches ?? [];
+    const teamNames = [...new Set(matches.flatMap((m) => [m.teamA, m.teamB]))];
+
+    let likedByMe = false;
+    if (userId) {
+      likedByMe = !!(await this.likeModel.exists({
+        eventId: new Types.ObjectId(eventId),
+        userId: new Types.ObjectId(userId),
+      }));
+    }
+
+    return {
+      ...withIsFull(event),
+      groupRules,
+      standings: computeStandings(matches, teamNames),
+      likedByMe,
+    };
   }
 
   async join(eventId: string, userId: string) {
@@ -306,7 +490,15 @@ export class EventsService {
     event.status = to as EventStatus;
     await event.save();
 
-    // TODO(step 2): archiving team chats on `done` lands with EventTeamChat.
+    // Archive the team chats on the way into `done` (spec §4.1). Archived
+    // rooms stay readable — this closes them to new messages, not to history.
+    if (to === 'done') {
+      await this.teamChatModel.updateMany(
+        { eventId: event._id as Types.ObjectId },
+        { $set: { archived: true } },
+      );
+    }
+
     return event.toJSON();
   }
 
@@ -379,6 +571,411 @@ export class EventsService {
       .find({ eventId: new Types.ObjectId(eventId), status: 'joined' })
       .populate('userId', 'name profileImage')
       .lean();
+  }
+
+  // --- Step 2: teams, fixtures, scores, standings -------------------------
+
+  /**
+   * `PUT /events/:id/teams` — the client submits a finalized roster (§4.3.1).
+   *
+   * Validates, then hands off to the shared persistence path. PUT rather than
+   * POST because the call replaces the whole assignment: the same body twice
+   * leaves the same state.
+   */
+  async submitTeams(eventId: string, userId: string, dto: SubmitTeamsDto) {
+    const event = await this.assertOrganizer(eventId, userId);
+    if (!canShuffle(event.status)) {
+      throw new BadRequestException(
+        `Teams can only be submitted during preparation (event is '${event.status}')`,
+      );
+    }
+
+    const joined = await this.joinedPlayerIds(eventId);
+    const problem = validateTeams(dto.teams, joined);
+    if (problem) throw new BadRequestException(problem);
+
+    return this.persistTeams(event, dto.teams, joined);
+  }
+
+  /**
+   * Server-side colour shuffle — the optional fallback of §4.3.3.
+   *
+   * Deals joined players across the first `teamCount` colours, then routes
+   * through the SAME persistence path as a client submission, so fixtures,
+   * chats and notifications behave identically whichever entry point ran.
+   * Neither is privileged: whichever ran last wins.
+   */
+  async shuffleTeams(eventId: string, userId: string) {
+    const event = await this.assertOrganizer(eventId, userId);
+    if (!canShuffle(event.status)) {
+      throw new BadRequestException(
+        `Teams can only be shuffled during preparation (event is '${event.status}')`,
+      );
+    }
+
+    const joined = await this.joinedPlayerIds(eventId);
+    if (joined.length < 2) {
+      throw new BadRequestException(
+        'At least 2 joined players are needed to shuffle teams',
+      );
+    }
+
+    // Cap the team count at the player count: dealing 3 players into 4 teams
+    // would leave an empty team, and an empty team still generates fixtures
+    // it can never play.
+    const teamCount = Math.min(event.teamCount ?? 4, joined.length);
+    const teams = dealIntoTeams(shuffled(joined), teamCount);
+
+    return this.persistTeams(event, teams, joined);
+  }
+
+  /**
+   * The single write path for teams (§4.3.2) — everything derived from an
+   * assignment lives here, so both entry points stay consistent.
+   *
+   * Persists `EventPlayer.team`, regenerates fixtures, upserts one chat room
+   * per team, and notifies each assigned player. Callers have already
+   * validated the roster and checked the lifecycle gate.
+   */
+  private async persistTeams(
+    event: EventDocument,
+    teams: SubmittedTeam[],
+    joinedIds: string[],
+  ) {
+    const eventId = event._id as Types.ObjectId;
+    const assigned = new Map<string, string>();
+    for (const team of teams) {
+      for (const playerId of team.playerIds) {
+        assigned.set(String(playerId), team.name.trim());
+      }
+    }
+
+    // Clear every joined player first, then set the assigned ones. The clear
+    // is what drops players removed on a resubmission back to `team: null` —
+    // without it a dropped player would keep their old team silently.
+    const ops = joinedIds.map((playerId) => ({
+      updateOne: {
+        filter: {
+          eventId,
+          userId: new Types.ObjectId(playerId),
+        },
+        update: { $set: { team: assigned.get(playerId) ?? null } },
+      },
+    }));
+    if (ops.length) await this.playerModel.bulkWrite(ops);
+
+    const teamNames = teams.map((team) => team.name.trim());
+    const fixtures = generateFixtures(teamNames);
+    event.matches = fixtures as unknown as EventDocument['matches'];
+    await event.save();
+
+    // Upsert rather than recreate: resubmitting the same team names keeps the
+    // existing rooms and their message history.
+    await Promise.all(
+      teamNames.map((team) =>
+        this.teamChatModel.updateOne(
+          { eventId, team },
+          { $setOnInsert: { eventId, team, archived: false } },
+          { upsert: true },
+        ),
+      ),
+    );
+
+    await Promise.all(
+      [...assigned.entries()].map(([playerId, team]) =>
+        this.notificationsService.create({
+          userId: playerId,
+          title: 'Your team is set',
+          body: `You are on ${team}. Check the fixtures for kick-off times.`,
+          type: 'event',
+          refId: eventId.toString(),
+        }),
+      ),
+    );
+
+    return {
+      teams: teams.map((team) => ({
+        name: team.name.trim(),
+        playerIds: team.playerIds.map(String),
+      })),
+      fixtures,
+      unassignedPlayerIds: unassignedPlayerIds(teams, joinedIds),
+    };
+  }
+
+  /** Fixture list for an event, in match order. */
+  async listMatches(eventId: string) {
+    const event = await this.eventModel
+      .findById(eventId)
+      .select('matches')
+      .lean();
+    if (!event) throw new NotFoundException('Event not found');
+    return [...(event.matches ?? [])].sort(
+      (a, b) => a.matchNumber - b.matchNumber,
+    );
+  }
+
+  /**
+   * Enter or correct one fixture's score.
+   *
+   * Allowed in `playing` and `after_match` — corrections after the whistle are
+   * expected, and locking at `after_match` would strand a typo. `playedAt` is
+   * stamped on first entry so the two null scores and a null timestamp move
+   * together.
+   */
+  async setMatchScore(
+    eventId: string,
+    userId: string,
+    matchNumber: number,
+    dto: UpdateMatchScoreDto,
+  ) {
+    const event = await this.assertOrganizer(eventId, userId);
+    if (!canEnterScore(event.status)) {
+      throw new BadRequestException(
+        `Scores can only be entered once the match is underway (event is '${event.status}')`,
+      );
+    }
+
+    const match = (event.matches ?? []).find(
+      (m) => m.matchNumber === matchNumber,
+    );
+    if (!match) {
+      throw new NotFoundException(`No fixture numbered ${matchNumber}`);
+    }
+
+    match.scoreA = dto.scoreA;
+    match.scoreB = dto.scoreB;
+    match.playedAt = new Date();
+    event.markModified('matches');
+    await event.save();
+
+    return match;
+  }
+
+  /**
+   * Standings, derived on read (decision #5) — never stored, so they cannot
+   * drift from the fixtures. Seeded with the team names taken from the fixture
+   * list so a team yet to play still shows a zero row.
+   */
+  async standings(eventId: string) {
+    const event = await this.eventModel
+      .findById(eventId)
+      .select('matches')
+      .lean();
+    if (!event) throw new NotFoundException('Event not found');
+
+    const matches = event.matches ?? [];
+    const teamNames = [...new Set(matches.flatMap((m) => [m.teamA, m.teamB]))];
+    return computeStandings(matches, teamNames);
+  }
+
+  // --- Step 3: after-match ------------------------------------------------
+
+  /**
+   * MVP and the optional overall score (§4.4), `after_match` only.
+   *
+   * The MVP must be a joined player: naming someone who never played would
+   * corrupt the profile `mvpCount` that parent §2.3 feeds from.
+   */
+  async submitResult(eventId: string, userId: string, dto: SubmitResultDto) {
+    const event = await this.assertOrganizer(eventId, userId);
+    if (!canSubmitResult(event.status)) {
+      throw new BadRequestException(
+        `The result can only be submitted after the match (event is '${event.status}')`,
+      );
+    }
+
+    if (dto.mvpUserId) {
+      const player = await this.playerModel.findOne({
+        eventId: new Types.ObjectId(eventId),
+        userId: new Types.ObjectId(dto.mvpUserId),
+        status: 'joined',
+      });
+      if (!player) {
+        throw new BadRequestException(
+          'The MVP must be a player who joined this event',
+        );
+      }
+    }
+
+    event.result = {
+      mvpUserId: dto.mvpUserId ? new Types.ObjectId(dto.mvpUserId) : null,
+      scoreA: dto.scoreA ?? null,
+      scoreB: dto.scoreB ?? null,
+    } as EventDocument['result'];
+    await event.save();
+
+    return event.toJSON();
+  }
+
+  /**
+   * Set or replace the cover image.
+   *
+   * The previous file is deleted best-effort AFTER the new one is stored: a
+   * failed cleanup leaves an orphaned ImageKit file, which is far better than
+   * deleting first and losing the cover if the upload then fails.
+   */
+  async setCover(eventId: string, userId: string, file: Express.Multer.File) {
+    const event = await this.assertOrganizer(eventId, userId);
+    if (!canModify(event.status)) {
+      throw new BadRequestException('A completed event can no longer be edited');
+    }
+
+    const previousFileId = event.coverImageFileId;
+    const uploaded = await this.imagekit.upload(
+      file.buffer,
+      `event-${eventId}-cover`,
+      'events/covers',
+    );
+
+    event.coverImage = uploaded.url;
+    event.coverImageFileId = uploaded.fileId;
+    await event.save();
+
+    if (previousFileId) {
+      await this.imagekit.deleteFile(previousFileId).catch(() => undefined);
+    }
+
+    return { coverImage: uploaded.url, coverImageFileId: uploaded.fileId };
+  }
+
+  /** Add an after-match photo. `after_match` only, per the action gates. */
+  async addPhoto(eventId: string, userId: string, file: Express.Multer.File) {
+    const event = await this.assertOrganizer(eventId, userId);
+    if (!canSubmitResult(event.status)) {
+      throw new BadRequestException(
+        `Photos can only be added after the match (event is '${event.status}')`,
+      );
+    }
+
+    const uploaded = await this.imagekit.upload(
+      file.buffer,
+      `event-${eventId}-photo`,
+      'events/photos',
+    );
+
+    event.photos.push({ url: uploaded.url, fileId: uploaded.fileId });
+    await event.save();
+
+    return { photos: event.photos };
+  }
+
+  /**
+   * Remove a photo. Deletes the row first, then the remote file: if ImageKit
+   * fails we would rather leak a file than leave a broken URL on the event.
+   */
+  async removePhoto(eventId: string, userId: string, fileId: string) {
+    const event = await this.assertOrganizer(eventId, userId);
+
+    const index = event.photos.findIndex((photo) => photo.fileId === fileId);
+    if (index === -1) throw new NotFoundException('Photo not found');
+
+    event.photos.splice(index, 1);
+    await event.save();
+    await this.imagekit.deleteFile(fileId).catch(() => undefined);
+
+    return { photos: event.photos };
+  }
+
+  // --- Step 4: discovery, likes, templates --------------------------------
+
+  /**
+   * Idempotent like. The unique index does the real work — a second call hits
+   * the duplicate and leaves `likeCount` alone rather than double-counting.
+   */
+  async like(eventId: string, userId: string) {
+    const event = await this.eventModel.findById(eventId).select('_id').lean();
+    if (!event) throw new NotFoundException('Event not found');
+
+    const result = await this.likeModel.updateOne(
+      {
+        eventId: new Types.ObjectId(eventId),
+        userId: new Types.ObjectId(userId),
+      },
+      {
+        $setOnInsert: {
+          eventId: new Types.ObjectId(eventId),
+          userId: new Types.ObjectId(userId),
+        },
+      },
+      { upsert: true },
+    );
+
+    // upsertedCount is 0 when the like already existed — only count new rows.
+    if (result.upsertedCount) {
+      await this.eventModel.updateOne(
+        { _id: new Types.ObjectId(eventId) },
+        { $inc: { likeCount: 1 } },
+      );
+    }
+
+    return { message: 'Event liked' };
+  }
+
+  /** Unlike. Also idempotent: removing a like that isn't there is a no-op. */
+  async unlike(eventId: string, userId: string) {
+    const result = await this.likeModel.deleteOne({
+      eventId: new Types.ObjectId(eventId),
+      userId: new Types.ObjectId(userId),
+    });
+
+    if (result.deletedCount) {
+      // The $gt guard keeps a double-unlike from driving the counter negative.
+      await this.eventModel.updateOne(
+        { _id: new Types.ObjectId(eventId), likeCount: { $gt: 0 } },
+        { $inc: { likeCount: -1 } },
+      );
+    }
+
+    return { message: 'Event unliked' };
+  }
+
+  /** The caller's templates, newest first. */
+  async listTemplates(userId: string) {
+    return this.templateModel
+      .find({ ownerId: new Types.ObjectId(userId) })
+      .sort({ createdAt: -1 })
+      .lean();
+  }
+
+  async createTemplate(userId: string, dto: CreateEventTemplateDto) {
+    if (dto.locationId) {
+      await this.locationsService.assertCanEdit(dto.locationId, userId);
+    }
+    return this.templateModel.create({
+      ...dto,
+      ownerId: new Types.ObjectId(userId),
+      groupId: dto.groupId ? new Types.ObjectId(dto.groupId) : null,
+      locationId: dto.locationId ? new Types.ObjectId(dto.locationId) : null,
+    });
+  }
+
+  async removeTemplate(templateId: string, userId: string) {
+    // Validate before constructing an ObjectId: a malformed id would otherwise
+    // throw a raw BSONError (500) instead of the 404 the caller deserves.
+    if (!Types.ObjectId.isValid(templateId)) {
+      throw new NotFoundException('Template not found');
+    }
+
+    const template = await this.templateModel.findById(templateId);
+    if (!template) throw new NotFoundException('Template not found');
+    if (template.ownerId.toString() !== userId) {
+      throw new ForbiddenException('You can only delete your own templates');
+    }
+    await this.templateModel.deleteOne({
+      _id: new Types.ObjectId(templateId),
+    });
+    return { message: 'Template deleted successfully' };
+  }
+
+  /** Joined player ids as strings, in join order. */
+  private async joinedPlayerIds(eventId: string): Promise<string[]> {
+    const players = await this.playerModel
+      .find({ eventId: new Types.ObjectId(eventId), status: 'joined' })
+      .select('userId')
+      .sort({ joinedAt: 1 })
+      .lean();
+    return players.map((player) => player.userId.toString());
   }
 }
 

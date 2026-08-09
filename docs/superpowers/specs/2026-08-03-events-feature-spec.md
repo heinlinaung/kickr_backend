@@ -340,6 +340,14 @@ Error contract: `403` wrong actor, `404` unknown event/match, `409` illegal tran
 
 ## 7. Build order
 
+> **Status 2026-08-09 — all four steps implemented.** 501 tests across 32 suites,
+> `nest build` clean, and the §8 walkthrough verified end to end against a real
+> MongoDB. `POST /shuffle` now delegates to the same write path as
+> `PUT /teams` rather than keeping its old numeric-bucket implementation.
+> Remaining gaps are listed in §9 and in the API doc's "not built yet" table:
+> team-chat *messaging* (the rooms exist and archive, but there is no send/read
+> endpoint), and player ratings (§8, a separate module).
+
 Each step is independently shippable and leaves the suite green.
 
 1. **Lifecycle core** — `events.lifecycle.ts` (pure transition table + `canTransition`), status enum migration, re-gate join/leave, `PATCH /events/:id/status`, shared organizer helper, `PATCH`/`DELETE /events/:id`. Migration script for existing rows.

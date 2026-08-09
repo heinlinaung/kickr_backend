@@ -8,11 +8,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { EventsService } from './events.service';
-import { Event } from './schemas/event.schema';
-import { EventPlayer } from './schemas/event-player.schema';
-import { GroupMember } from '../groups/schemas/group-member.schema';
-import { Group } from '../groups/schemas/group.schema';
-import { LocationsService } from '../locations/locations.service';
+import { eventsProviders } from './events.test-providers';
 import { EVENT_STATUSES } from './events.lifecycle';
 
 const EVENT_ID = '507f1f77bcf86cd799439011';
@@ -48,10 +44,13 @@ describe('EventsService — lifecycle', () => {
   const playerModel: any = {};
   const memberModel: any = {};
   const groupModel: any = {};
+  const teamChatModel: any = {};
   const locations: any = { assertOwnedBy: jest.fn(), assertCanEdit: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    // setStatus archives team chats on the way into `done`.
+    teamChatModel.updateMany = jest.fn().mockResolvedValue({ modifiedCount: 0 });
     eventModel.findById = jest.fn();
     eventModel.findOneAndUpdate = jest.fn().mockResolvedValue(null);
     eventModel.deleteOne = jest.fn().mockResolvedValue({ deletedCount: 1 });
@@ -63,11 +62,14 @@ describe('EventsService — lifecycle', () => {
     const m = await Test.createTestingModule({
       providers: [
         EventsService,
-        { provide: getModelToken(Event.name), useValue: eventModel },
-        { provide: getModelToken(EventPlayer.name), useValue: playerModel },
-        { provide: getModelToken(GroupMember.name), useValue: memberModel },
-        { provide: getModelToken(Group.name), useValue: groupModel },
-        { provide: LocationsService, useValue: locations },
+        ...eventsProviders({
+          eventModel,
+          playerModel,
+          memberModel,
+          groupModel,
+          teamChatModel,
+          locations,
+        }),
       ],
     }).compile();
     service = m.get(EventsService);

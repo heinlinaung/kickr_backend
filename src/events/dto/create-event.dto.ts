@@ -6,7 +6,10 @@ import {
   IsNumber,
   IsEnum,
   IsDateString,
+  IsInt,
   IsMongoId,
+  Max,
+  Min,
   MinLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -70,4 +73,39 @@ export class CreateEventDto {
   @Type(() => Number)
   @IsNumber()
   price?: number;
+
+  @ApiProperty({
+    example: '2026-07-01T18:00:00.000Z',
+    required: false,
+    description: 'Kick-off time; `date` remains the scheduling field.',
+  })
+  @IsOptional()
+  @IsDateString()
+  startTime?: string;
+
+  @ApiProperty({ example: '2026-07-01T20:00:00.000Z', required: false })
+  @IsOptional()
+  @IsDateString()
+  endTime?: string;
+
+  @ApiProperty({
+    example: 4,
+    required: false,
+    description: 'How many colour teams to split into. Advisory (spec §4.3.1).',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(2)
+  @Max(6)
+  teamCount?: number;
+
+  @ApiProperty({
+    example: '665f1a2b3c4d5e6f7a8b9c0d',
+    required: false,
+    description: 'Fills any field omitted above; never overrides what is sent.',
+  })
+  @IsOptional()
+  @IsMongoId()
+  templateId?: string;
 }

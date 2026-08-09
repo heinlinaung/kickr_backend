@@ -1,0 +1,209 @@
+// src/events/events.fixtures.ts
+/**
+ * Fixture generation and standings — the pure half of spec §4.3.
+ *
+ * No Mongoose, no Nest, no I/O: total functions over plain values, so the
+ * round-robin and the points maths can be unit-tested exhaustively without a
+ * database. The service layer owns persistence; this module owns the rules.
+ */
+
+/** The colour vocabulary a shuffle draws from, in dealing order (spec §4.3.3). */
+export const TEAM_COLOURS = [
+  'Red',
+  'Yellow',
+  'Blue',
+  'Black',
+  'Green',
+  'Orange',
+] as const;
+
+/** Fixture-generation bounds. Two teams to have a fixture at all; six colours. */
+export const MIN_TEAMS = 2;
+export const MAX_TEAMS = TEAM_COLOURS.length;
+
+export interface Fixture {
+  matchNumber: number;
+  teamA: string;
+  teamB: string;
+  scoreA: number | null;
+  scoreB: number | null;
+  playedAt: Date | null;
+}
+
+/**
+ * Double round-robin over `teamNames` (spec §4.3.4).
+ *
+ * Every unordered pair meets twice: leg 1 emits (i, j), leg 2 emits (j, i) with
+ * home/away swapped so the repeat is not a literal duplicate row. `matchNumber`
+ * runs 1..N sequentially across leg 1 then leg 2.
+ *
+ * N teams yield N*(N-1) fixtures — 4 teams -> 12, each team playing 6.
+ *
+ * Scores start `null`, never 0: a goalless draw is a real result, and standings
+ * skip unplayed fixtures by testing for null (see `computeStandings`).
+ */
+export function generateFixtures(teamNames: string[]): Fixture[] {
+  const fixtures: Fixture[] = [];
+  let matchNumber = 1;
+
+  // Leg 1 then leg 2 as separate passes, rather than emitting both legs per
+  // pair. This keeps every team's first meeting in the first half of the
+  // schedule instead of playing the same opponent twice in a row.
+  for (const [homeIndex, awayIndex] of [
+    [0, 1],
+    [1, 0],
+  ] as const) {
+    for (let i = 0; i < teamNames.length; i++) {
+      for (let j = i + 1; j < teamNames.length; j++) {
+        const pair = [teamNames[i], teamNames[j]];
+        fixtures.push({
+          matchNumber: matchNumber++,
+          teamA: pair[homeIndex],
+          teamB: pair[awayIndex],
+          scoreA: null,
+          scoreB: null,
+          playedAt: null,
+        });
+      }
+    }
+  }
+
+  return fixtures;
+}
+
+/**
+ * Deal `playerIds` across the first `teamCount` colours (spec §4.3.3).
+ *
+ * Round-robin rather than contiguous chunks, so sizes differ by at most one
+ * however the count divides. Callers shuffle first — this function is
+ * deterministic on purpose so it stays testable.
+ */
+export function dealIntoTeams(
+  playerIds: string[],
+  teamCount: number,
+): { name: string; playerIds: string[] }[] {
+  const count = Math.max(MIN_TEAMS, Math.min(MAX_TEAMS, teamCount));
+  const teams = TEAM_COLOURS.slice(0, count).map((name) => ({
+    name,
+    playerIds: [] as string[],
+  }));
+
+  playerIds.forEach((playerId, index) => {
+    teams[index % count].playerIds.push(playerId);
+  });
+
+  return teams;
+}
+
+/** Fisher-Yates, returning a new array rather than mutating the caller's. */
+export function shuffled<T>(items: readonly T[]): T[] {
+  const copy = [...items];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+export interface StandingRow {
+  team: string;
+  played: number;
+  won: number;
+  drawn: number;
+  lost: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  goalDifference: number;
+  points: number;
+}
+
+interface ScoredMatch {
+  teamA: string;
+  teamB: string;
+  scoreA?: number | null;
+  scoreB?: number | null;
+}
+
+/**
+ * Standings folded over `matches` — derived on every read, never stored
+ * (spec decision #5), so they cannot drift from the fixtures they summarise.
+ *
+ * Win 3 / draw 1 / loss 0. A fixture with a null score on either side is
+ * skipped as unplayed. Ordering: points, then goal difference, then goals for,
+ * then team name — the name tie-break makes the output fully deterministic
+ * rather than dependent on insertion order.
+ *
+ * `teamNames` seeds the table so a team that has not played yet still appears
+ * with a zero row; without it, an unplayed team would silently vanish.
+ */
+export function computeStandings(
+  matches: readonly ScoredMatch[],
+  teamNames?: readonly string[],
+): StandingRow[] {
+  const table = new Map<string, StandingRow>();
+
+  const row = (team: string): StandingRow => {
+    let existing = table.get(team);
+    if (!existing) {
+      existing = {
+        team,
+        played: 0,
+        won: 0,
+        drawn: 0,
+        lost: 0,
+        goalsFor: 0,
+        goalsAgainst: 0,
+        goalDifference: 0,
+        points: 0,
+      };
+      table.set(team, existing);
+    }
+    return existing;
+  };
+
+  for (const team of teamNames ?? []) row(team);
+
+  for (const match of matches) {
+    // Null OR undefined means unplayed. Deliberately not falsy-checked: 0 is a
+    // real scoreline and must count.
+    if (match.scoreA === null || match.scoreA === undefined) continue;
+    if (match.scoreB === null || match.scoreB === undefined) continue;
+
+    const a = row(match.teamA);
+    const b = row(match.teamB);
+
+    a.played++;
+    b.played++;
+    a.goalsFor += match.scoreA;
+    a.goalsAgainst += match.scoreB;
+    b.goalsFor += match.scoreB;
+    b.goalsAgainst += match.scoreA;
+
+    if (match.scoreA > match.scoreB) {
+      a.won++;
+      b.lost++;
+      a.points += 3;
+    } else if (match.scoreA < match.scoreB) {
+      b.won++;
+      a.lost++;
+      b.points += 3;
+    } else {
+      a.drawn++;
+      b.drawn++;
+      a.points += 1;
+      b.points += 1;
+    }
+  }
+
+  for (const entry of table.values()) {
+    entry.goalDifference = entry.goalsFor - entry.goalsAgainst;
+  }
+
+  return [...table.values()].sort(
+    (x, y) =>
+      y.points - x.points ||
+      y.goalDifference - x.goalDifference ||
+      y.goalsFor - x.goalsFor ||
+      x.team.localeCompare(y.team),
+  );
+}

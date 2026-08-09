@@ -1,11 +1,6 @@
 import { Test } from '@nestjs/testing';
-import { getModelToken } from '@nestjs/mongoose';
 import { EventsService } from './events.service';
-import { Event } from './schemas/event.schema';
-import { EventPlayer } from './schemas/event-player.schema';
-import { GroupMember } from '../groups/schemas/group-member.schema';
-import { Group } from '../groups/schemas/group.schema';
-import { LocationsService } from '../locations/locations.service';
+import { eventsProviders } from './events.test-providers';
 
 const OWNED_LOCATION = '507f1f77bcf86cd799439011';
 const USER_ID = '507f191e810c19729de860ea';
@@ -16,6 +11,9 @@ describe('EventsService — location handling on create', () => {
   const playerModel: any = {};
   const memberModel: any = {};
   const groupModel: any = {};
+  // findById reports likedByMe; create() may resolve a template.
+  const likeModel: any = { exists: jest.fn().mockResolvedValue(null) };
+  const templateModel: any = { findById: jest.fn() };
   // §4.6: event location attach moved from assertOwnedBy to assertCanEdit so
   // a group's owner/admin/captain can attach the group's own ground.
   const locations = { assertOwnedBy: jest.fn(), assertCanEdit: jest.fn() };
@@ -26,11 +24,15 @@ describe('EventsService — location handling on create', () => {
     const m = await Test.createTestingModule({
       providers: [
         EventsService,
-        { provide: getModelToken(Event.name), useValue: eventModel },
-        { provide: getModelToken(EventPlayer.name), useValue: playerModel },
-        { provide: getModelToken(GroupMember.name), useValue: memberModel },
-        { provide: getModelToken(Group.name), useValue: groupModel },
-        { provide: LocationsService, useValue: locations },
+        ...eventsProviders({
+          eventModel,
+          playerModel,
+          memberModel,
+          groupModel,
+          likeModel,
+          templateModel,
+          locations,
+        }),
       ],
     }).compile();
     service = m.get(EventsService);
@@ -103,6 +105,9 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
   const playerModel: any = {};
   const memberModel: any = {};
   const groupModel: any = {};
+  // findById reports likedByMe; create() may resolve a template.
+  const likeModel: any = { exists: jest.fn().mockResolvedValue(null) };
+  const templateModel: any = { findById: jest.fn() };
   // §4.6: event location attach moved from assertOwnedBy to assertCanEdit so
   // a group's owner/admin/captain can attach the group's own ground.
   const locations = { assertOwnedBy: jest.fn(), assertCanEdit: jest.fn() };
@@ -124,11 +129,15 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
     const m = await Test.createTestingModule({
       providers: [
         EventsService,
-        { provide: getModelToken(Event.name), useValue: eventModel },
-        { provide: getModelToken(EventPlayer.name), useValue: playerModel },
-        { provide: getModelToken(GroupMember.name), useValue: memberModel },
-        { provide: getModelToken(Group.name), useValue: groupModel },
-        { provide: LocationsService, useValue: locations },
+        ...eventsProviders({
+          eventModel,
+          playerModel,
+          memberModel,
+          groupModel,
+          likeModel,
+          templateModel,
+          locations,
+        }),
       ],
     }).compile();
     service = m.get(EventsService);
@@ -183,7 +192,7 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
       groupModel.find.mockReturnValue(q([{ _id: GROUP_ID }]));
       eventModel.find.mockReturnValue(q([{ _id: 'e1' }]));
 
-      await service.list('u1', 'yangon');
+      await service.list('u1', { region: 'yangon' });
 
       const groupFilter = groupModel.find.mock.calls[0][0];
       expect(groupFilter.$or).toHaveLength(2);
@@ -200,7 +209,7 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
     it('returns [] without querying events when no group matches', async () => {
       groupModel.find.mockReturnValue(q([]));
 
-      const res = await service.list('u1', 'Atlantis');
+      const res = await service.list('u1', { region: 'Atlantis' });
 
       expect(res).toEqual([]);
       expect(eventModel.find).not.toHaveBeenCalled();
@@ -209,7 +218,7 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
     it('ignores a whitespace-only region', async () => {
       eventModel.find.mockReturnValue(q([]));
 
-      await service.list('u1', '   ');
+      await service.list('u1', { region: '   ' });
 
       expect(groupModel.find).not.toHaveBeenCalled();
       expect(eventModel.find).toHaveBeenCalledWith({ isPublic: true });
@@ -218,7 +227,7 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
     it('treats regex metacharacters in region as literal text', async () => {
       groupModel.find.mockReturnValue(q([]));
 
-      await service.list('u1', 'Yan.on');
+      await service.list('u1', { region: 'Yan.on' });
 
       const rx = groupModel.find.mock.calls[0][0].$or[0].country;
       expect(rx.test('Yangon')).toBe(false); // '.' must not act as a wildcard

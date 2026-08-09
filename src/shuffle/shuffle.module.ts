@@ -2,11 +2,11 @@ import { Module } from '@nestjs/common';
 import { ShuffleController } from './shuffle.controller';
 import { ShuffleService } from './shuffle.service';
 import { EventsModule } from '../events/events.module';
-import { GroupsModule } from '../groups/groups.module';
-import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
-  imports: [EventsModule, GroupsModule, NotificationsModule],
+  // Only EventsModule now: the shuffle delegates to EventsService, which owns
+  // the models, notifications and permission check it used to duplicate.
+  imports: [EventsModule],
   controllers: [ShuffleController],
   providers: [ShuffleService],
 })
