@@ -195,16 +195,17 @@ result: {
   scoreA: number | null         // simple 2-team events only
   scoreB: number | null
 } | null
-matches: [EventMatch]           // embedded, see below
 templateId: ObjectId->EventTemplate | null
 likeCount: number               // default 0, denormalised
 ```
 
 > `photos` stores `{url, fileId}` objects rather than the parent spec's bare `[string]`, because deleting a photo from ImageKit needs its `fileId`. Same reasoning already applied to avatars and group logos.
 
-**`EventMatch`** (embedded sub-document, no `_id`):
+**`EventMatch`** — its **own collection**, not an embedded array:
 
 ```
+_id: ObjectId             // stable, referenceable
+eventId: ObjectId->Event  // indexed
 matchNumber: number       // 1..N, fixed order
 teamA: string             // colour name
 teamB: string
@@ -212,6 +213,10 @@ scoreA: number | null
 scoreB: number | null
 playedAt: Date | null
 ```
+
+Unique index on `{eventId, matchNumber}`; a second on `playedAt` for cross-event fixture queries.
+
+> **REVISED 2026-08-09 — extracted from `Event.matches[]`.** Fixtures were embedded with `_id: false`, which reads fine but gives player ratings (§8) nothing durable to point at — a rating hangs off a *specific match*. Separating them also makes score entry a targeted `findOneAndUpdate` rather than a read-modify-save of the whole event, so two organizers scoring different fixtures can no longer overwrite each other. `GET /events/:id` still returns them inline as `matches`, so the response shape is unchanged. Migration: `scripts/extract-event-matches.ts` (dry-run by default).
 
 **`EventLike`** (new collection) — `{ eventId, userId, createdAt }`, unique compound `{eventId,userId}`. A separate collection rather than an array on Event so the like list doesn't grow the event document unboundedly and "did I like this" is an indexed lookup. `Event.likeCount` is the denormalised counter.
 

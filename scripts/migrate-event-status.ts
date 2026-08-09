@@ -20,7 +20,7 @@
  *   startTime, endTime  -> null
  *   teamCount           -> 4
  *   coverImage(FileId)  -> null
- *   photos, matches     -> []
+ *   photos              -> []
  *   result, templateId  -> null
  *   likeCount           -> 0
  *
@@ -70,7 +70,9 @@ const BACKFILL: Readonly<Record<string, unknown>> = {
   coverImageFileId: null,
   photos: [],
   result: null,
-  matches: [],
+  // `matches` is deliberately absent: fixtures moved to their own collection
+  // (see scripts/extract-event-matches.ts), so backfilling an empty array here
+  // would recreate the field this migration's successor removes.
   templateId: null,
   likeCount: 0,
 };

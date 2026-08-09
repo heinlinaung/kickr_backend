@@ -30,7 +30,7 @@ sequenceDiagram
     API->>DB: bulkWrite EventPlayer.team<br/>(clear team on players dropped from the roster)
     API->>API: double round-robin over the finalized teams
     Note over API: leg 1 (i,j) then leg 2 (j,i)<br/>N=4 → 12 matches, 6 per team
-    API->>DB: save Event.matches (all scores null)
+    API->>DB: replace EventMatch rows for this event<br/>(delete then insert — all scores null)
     API->>CH: upsert EventTeamChat per team name
     API->>N: notify each assigned player of their team
     API-->>O: { teams, fixtures, unassignedPlayerIds }

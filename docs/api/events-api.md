@@ -83,7 +83,6 @@ Captured from the live API (`GET /events/group/:groupId`, 2026-08-09):
   "coverImageFileId": null,
   "photos": [],
   "result": null,
-  "matches": [],
   "templateId": null,
   "likeCount": 0,
   "isFull": false,
@@ -99,7 +98,7 @@ The JSON above is a freshly created event, so most optional fields are empty. Th
 
 | Field | Filled by |
 |---|---|
-| `matches` | `PUT /events/:id/teams` or `POST /events/:id/shuffle`, during `preparation` (§11) |
+| `matches` | **No longer on the event document** — fixtures are their own collection. `GET /events/:id` still attaches them as `matches`, and `GET /events/:id/matches` returns the same rows (§11). |
 | `result` | `POST /events/:id/result`, during `after_match` |
 | `coverImage`, `coverImageFileId` | `POST /events/:id/cover` |
 | `photos` | `POST /events/:id/photos`, during `after_match` |
@@ -428,6 +427,8 @@ No body. Deals joined players across the first `teamCount` colours (Red, Yellow,
 Generated server-side as a **double round-robin**: every pair meets twice, home and away swapped in the second leg. 4 teams → 12 fixtures, 6 per team. 3 → 6, 2 → 2.
 
 Fixtures are **never client-authored**. You cannot send `matches[]`; a stale app therefore cannot persist a divergent fixture format.
+
+Each fixture is a document in its own collection with a stable `_id`, so it can be referenced from elsewhere — player ratings (§8) attach to a specific match. `GET /events/:id` still returns them inline as `matches` for convenience, so the response shape you consume is unchanged.
 
 Resubmitting during `preparation` regenerates teams and fixtures wholesale. Once the event leaves `preparation` they are locked.
 

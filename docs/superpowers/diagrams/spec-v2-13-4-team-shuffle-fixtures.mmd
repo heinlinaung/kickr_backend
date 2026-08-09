@@ -27,7 +27,7 @@ sequenceDiagram
     API->>DB: bulkWrite EventPlayer.team
 
     API->>API: generate double round-robin matches[]
-    API->>DB: save Event.matches (scores null)
+    API->>DB: insert EventMatch rows (scores null)
     Note over API: every N >= 2 gets fixtures —<br/>2 teams play twice, 4 teams play 12
 
     API->>CH: upsert EventTeamChat per team

@@ -13,6 +13,10 @@ import {
   EventPlayerDocument,
 } from './schemas/event-player.schema';
 import {
+  EventMatch,
+  EventMatchDocument,
+} from './schemas/event-match.schema';
+import {
   EventTeamChat,
   EventTeamChatDocument,
 } from './schemas/event-team-chat.schema';
@@ -86,6 +90,8 @@ export class EventsService {
     private memberModel: Model<GroupMemberDocument>,
     @InjectModel(Group.name)
     private groupModel: Model<GroupDocument>,
+    @InjectModel(EventMatch.name)
+    private matchModel: Model<EventMatchDocument>,
     @InjectModel(EventTeamChat.name)
     private teamChatModel: Model<EventTeamChatDocument>,
     @InjectModel(EventLike.name)
@@ -370,7 +376,12 @@ export class EventsService {
 
     // Standings ride along on detail so the client renders the table without a
     // second round trip. Empty until fixtures exist, and derived either way.
-    const matches = event.matches ?? [];
+    // Keyed off the loaded event's own _id rather than re-casting the caller's
+    // string — that one is already known good, having just matched.
+    const matches = await this.matchModel
+      .find({ eventId: event._id })
+      .sort({ matchNumber: 1 })
+      .lean();
     const teamNames = [...new Set(matches.flatMap((m) => [m.teamA, m.teamB]))];
 
     let likedByMe = false;
@@ -384,6 +395,9 @@ export class EventsService {
     return {
       ...withIsFull(event),
       groupRules,
+      // Fixtures now live in their own collection, so detail attaches them
+      // explicitly — the field is no longer on the event document.
+      matches,
       standings: computeStandings(matches, teamNames),
       likedByMe,
     };
@@ -561,7 +575,14 @@ export class EventsService {
       throw new BadRequestException('A completed event can no longer be deleted');
     }
 
+    // Fixtures, chats and likes live in their own collections now, so deleting
+    // the event must take them with it or they are orphaned.
     await this.playerModel.deleteMany({ eventId: new Types.ObjectId(eventId) });
+    await this.matchModel.deleteMany({ eventId: new Types.ObjectId(eventId) });
+    await this.teamChatModel.deleteMany({
+      eventId: new Types.ObjectId(eventId),
+    });
+    await this.likeModel.deleteMany({ eventId: new Types.ObjectId(eventId) });
     await this.eventModel.deleteOne({ _id: new Types.ObjectId(eventId) });
     return { message: 'Event deleted successfully' };
   }
@@ -666,8 +687,15 @@ export class EventsService {
 
     const teamNames = teams.map((team) => team.name.trim());
     const fixtures = generateFixtures(teamNames);
-    event.matches = fixtures as unknown as EventDocument['matches'];
-    await event.save();
+
+    // Replace wholesale: resubmitting during `preparation` regenerates the
+    // fixture list, and leaving stale rows behind would corrupt standings.
+    // Delete-then-insert rather than upsert, because the team names (and so
+    // the pairings) may have changed entirely.
+    await this.matchModel.deleteMany({ eventId });
+    const created = await this.matchModel.insertMany(
+      fixtures.map((fixture) => ({ ...fixture, eventId })),
+    );
 
     // Upsert rather than recreate: resubmitting the same team names keeps the
     // existing rooms and their message history.
@@ -698,21 +726,22 @@ export class EventsService {
         name: team.name.trim(),
         playerIds: team.playerIds.map(String),
       })),
-      fixtures,
+      // The persisted rows, so callers get each fixture's `_id` — ratings and
+      // score entry both address a match by id.
+      fixtures: created.map((match) => match.toJSON()),
       unassignedPlayerIds: unassignedPlayerIds(teams, joinedIds),
     };
   }
 
   /** Fixture list for an event, in match order. */
   async listMatches(eventId: string) {
-    const event = await this.eventModel
-      .findById(eventId)
-      .select('matches')
-      .lean();
+    const event = await this.eventModel.findById(eventId).select('_id').lean();
     if (!event) throw new NotFoundException('Event not found');
-    return [...(event.matches ?? [])].sort(
-      (a, b) => a.matchNumber - b.matchNumber,
-    );
+
+    return this.matchModel
+      .find({ eventId: event._id })
+      .sort({ matchNumber: 1 })
+      .lean();
   }
 
   /**
@@ -736,20 +765,25 @@ export class EventsService {
       );
     }
 
-    const match = (event.matches ?? []).find(
-      (m) => m.matchNumber === matchNumber,
+    // One targeted update rather than a read-modify-save of the whole event:
+    // two organizers scoring different fixtures no longer overwrite each
+    // other, which an embedded array could not prevent.
+    const match = await this.matchModel.findOneAndUpdate(
+      { eventId: new Types.ObjectId(eventId), matchNumber },
+      {
+        $set: {
+          scoreA: dto.scoreA,
+          scoreB: dto.scoreB,
+          playedAt: new Date(),
+        },
+      },
+      { returnDocument: 'after' },
     );
     if (!match) {
       throw new NotFoundException(`No fixture numbered ${matchNumber}`);
     }
 
-    match.scoreA = dto.scoreA;
-    match.scoreB = dto.scoreB;
-    match.playedAt = new Date();
-    event.markModified('matches');
-    await event.save();
-
-    return match;
+    return match.toJSON();
   }
 
   /**
@@ -758,13 +792,10 @@ export class EventsService {
    * list so a team yet to play still shows a zero row.
    */
   async standings(eventId: string) {
-    const event = await this.eventModel
-      .findById(eventId)
-      .select('matches')
-      .lean();
+    const event = await this.eventModel.findById(eventId).select('_id').lean();
     if (!event) throw new NotFoundException('Event not found');
 
-    const matches = event.matches ?? [];
+    const matches = await this.matchModel.find({ eventId: event._id }).lean();
     const teamNames = [...new Set(matches.flatMap((m) => [m.teamA, m.teamB]))];
     return computeStandings(matches, teamNames);
   }

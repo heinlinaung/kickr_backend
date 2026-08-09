@@ -45,12 +45,18 @@ describe('EventsService — lifecycle', () => {
   const memberModel: any = {};
   const groupModel: any = {};
   const teamChatModel: any = {};
+  const matchModel: any = {};
+  const likeModel: any = {};
   const locations: any = { assertOwnedBy: jest.fn(), assertCanEdit: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();
     // setStatus archives team chats on the way into `done`.
     teamChatModel.updateMany = jest.fn().mockResolvedValue({ modifiedCount: 0 });
+    // remove() now cascades to the collections that reference the event.
+    teamChatModel.deleteMany = jest.fn().mockResolvedValue({ deletedCount: 0 });
+    matchModel.deleteMany = jest.fn().mockResolvedValue({ deletedCount: 0 });
+    likeModel.deleteMany = jest.fn().mockResolvedValue({ deletedCount: 0 });
     eventModel.findById = jest.fn();
     eventModel.findOneAndUpdate = jest.fn().mockResolvedValue(null);
     eventModel.deleteOne = jest.fn().mockResolvedValue({ deletedCount: 1 });
@@ -68,6 +74,8 @@ describe('EventsService — lifecycle', () => {
           memberModel,
           groupModel,
           teamChatModel,
+          matchModel,
+          likeModel,
           locations,
         }),
       ],
@@ -419,11 +427,25 @@ describe('EventsService — lifecycle', () => {
       expect(doc.status).toBe('join');
     });
 
-    it('removes the event and its player rows', async () => {
+    it('removes the event and everything referencing it', async () => {
       eventModel.findById.mockResolvedValue(eventDoc({ status: 'join' }));
       await service.remove(EVENT_ID, CREATOR);
+
+      // Fixtures, chats and likes live in their own collections now, so each
+      // must be cleaned up or the delete leaves orphaned rows behind.
       expect(playerModel.deleteMany).toHaveBeenCalled();
+      expect(matchModel.deleteMany).toHaveBeenCalled();
+      expect(teamChatModel.deleteMany).toHaveBeenCalled();
+      expect(likeModel.deleteMany).toHaveBeenCalled();
       expect(eventModel.deleteOne).toHaveBeenCalled();
+    });
+
+    it('leaves referencing rows alone when the delete is refused', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc({ status: 'done' }));
+      await expect(service.remove(EVENT_ID, CREATOR)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(matchModel.deleteMany).not.toHaveBeenCalled();
     });
 
     it('403s a stranger deleting an event', async () => {

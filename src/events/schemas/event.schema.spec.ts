@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { EventSchema } from './event.schema';
+import { EventMatchSchema } from './event-match.schema';
 import { EVENT_STATUSES } from '../events.lifecycle';
 
 describe('Event schema (location ref migration)', () => {
@@ -40,7 +41,7 @@ describe('Event schema (lifecycle status)', () => {
 });
 
 describe('Event schema (step 1 fields for later steps)', () => {
-  it('declares the after-match and fixture fields', () => {
+  it('declares the after-match fields', () => {
     const paths = Object.keys(EventSchema.paths);
     for (const p of [
       'startTime',
@@ -50,7 +51,6 @@ describe('Event schema (step 1 fields for later steps)', () => {
       'coverImageFileId',
       'photos',
       'result',
-      'matches',
       'templateId',
       'likeCount',
     ]) {
@@ -58,8 +58,14 @@ describe('Event schema (step 1 fields for later steps)', () => {
     }
   });
 
+  it('no longer embeds fixtures — they are their own collection', () => {
+    // Fixtures moved to EventMatch so each has a stable _id that ratings
+    // (spec §8) can reference. Leaving the array behind would give two
+    // sources of truth for the same data.
+    expect(Object.keys(EventSchema.paths)).not.toContain('matches');
+  });
+
   it('ships them empty — presence is not behaviour', () => {
-    expect((EventSchema.path('matches') as any).options.default).toEqual([]);
     expect((EventSchema.path('photos') as any).options.default).toEqual([]);
     expect((EventSchema.path('result') as any).options.default).toBeNull();
     expect((EventSchema.path('startTime') as any).options.default).toBeNull();
@@ -72,20 +78,40 @@ describe('Event schema (step 1 fields for later steps)', () => {
     expect(path.options.min).toBe(2);
     expect(path.options.max).toBe(6);
   });
+});
 
-  it('defaults fixture scores to null, not zero', () => {
+describe('EventMatch schema (standalone fixtures)', () => {
+  it('defaults scores to null, not zero', () => {
     // 0-0 is a real scoreline; unplayed must be distinguishable from a draw
     // or standings would count every unplayed fixture as a point each.
-    const matches: any = EventSchema.path('matches');
-    const sub = matches.schema;
-    expect(sub.path('scoreA').options.default).toBeNull();
-    expect(sub.path('scoreB').options.default).toBeNull();
-    expect(sub.path('playedAt').options.default).toBeNull();
+    expect((EventMatchSchema.path('scoreA') as any).options.default).toBeNull();
+    expect((EventMatchSchema.path('scoreB') as any).options.default).toBeNull();
+    expect(
+      (EventMatchSchema.path('playedAt') as any).options.default,
+    ).toBeNull();
   });
 
-  it('embeds fixtures without their own _id', () => {
-    const matches: any = EventSchema.path('matches');
-    expect(matches.schema.options._id).toBe(false);
+  it('gives every fixture its own _id for ratings to reference', () => {
+    // The whole point of the extraction — an embedded subdoc had _id: false.
+    expect(EventMatchSchema.options._id).not.toBe(false);
+    expect(Object.keys(EventMatchSchema.paths)).toContain('_id');
+  });
+
+  it('ties each fixture to its event and requires the pairing', () => {
+    for (const p of ['eventId', 'matchNumber', 'teamA', 'teamB']) {
+      expect((EventMatchSchema.path(p) as any).options.required).toBe(true);
+    }
+  });
+
+  it('enforces one fixture per matchNumber per event', () => {
+    // Without this, a re-run of the migration could double-insert a fixture
+    // list and silently double every team's played count.
+    const indexes = EventMatchSchema.indexes();
+    const unique = indexes.find(
+      ([fields, opts]: any) =>
+        fields.eventId === 1 && fields.matchNumber === 1 && opts?.unique,
+    );
+    expect(unique).toBeDefined();
   });
 });
 
