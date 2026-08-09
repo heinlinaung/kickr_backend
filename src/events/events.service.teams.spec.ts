@@ -50,6 +50,7 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
   const playerModel: any = {};
   const memberModel: any = {};
   const teamChatModel: any = {};
+  const matchModel: any = {};
   const notifications: any = {};
 
   beforeEach(async () => {
@@ -61,6 +62,21 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
     memberModel.findOne = jest.fn().mockResolvedValue(null);
     teamChatModel.updateOne = jest.fn().mockResolvedValue({});
     teamChatModel.updateMany = jest.fn().mockResolvedValue({});
+    matchModel.deleteMany = jest.fn().mockResolvedValue({ deletedCount: 0 });
+    matchModel.insertMany = jest.fn().mockImplementation((rows: any[]) =>
+      Promise.resolve(
+        rows.map((row, i) => ({
+          ...row,
+          _id: `m${i + 1}`,
+          toJSON: () => ({ ...row, _id: `m${i + 1}` }),
+        })),
+      ),
+    );
+    matchModel.findOneAndUpdate = jest.fn();
+    matchModel.find = jest.fn().mockReturnValue({
+      sort: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([]),
+    });
     notifications.create = jest.fn().mockResolvedValue(undefined);
 
     const m = await Test.createTestingModule({
@@ -71,6 +87,7 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
           playerModel,
           memberModel,
           teamChatModel,
+          matchModel,
           notifications,
         }),
       ],
@@ -129,10 +146,13 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
         { name: 'Black', playerIds: [P4] },
       ]);
 
-      // 4 teams -> 12 fixtures, and they are persisted on the event.
+      // 4 teams -> 12 fixtures, persisted to the eventmatches collection.
       expect(res.fixtures).toHaveLength(12);
-      expect(doc.matches).toHaveLength(12);
-      expect(doc.save).toHaveBeenCalled();
+      expect(matchModel.insertMany.mock.calls[0][0]).toHaveLength(12);
+      // Every row carries its eventId so it can be found again.
+      expect(
+        matchModel.insertMany.mock.calls[0][0].every((r: any) => r.eventId),
+      ).toBe(true);
     });
 
     it('persists each player onto their submitted team', async () => {
@@ -205,18 +225,25 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
     });
 
     it('regenerates fixtures on resubmission, discarding the old list', async () => {
-      const doc = eventDoc({
-        matches: [{ matchNumber: 99, teamA: 'Old', teamB: 'Stale' }],
-      });
-      eventModel.findById.mockResolvedValue(doc);
+      eventModel.findById.mockResolvedValue(eventDoc());
 
       await submit([
         { name: 'Red', playerIds: [P1] },
         { name: 'Blue', playerIds: [P2] },
       ]);
 
-      expect(doc.matches).toHaveLength(2);
-      expect(doc.matches.some((m: any) => m.teamA === 'Old')).toBe(false);
+      // Stale rows are deleted before the new ones land, so a shrinking or
+      // renamed team cannot leave orphaned fixtures behind.
+      expect(matchModel.deleteMany).toHaveBeenCalledWith({
+        eventId: expect.anything(),
+      });
+      const inserted = matchModel.insertMany.mock.calls[0][0];
+      expect(inserted).toHaveLength(2);
+      expect(inserted.some((m: any) => m.teamA === 'Old')).toBe(false);
+      // Delete must precede insert or the new fixtures are wiped.
+      expect(matchModel.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(
+        matchModel.insertMany.mock.invocationCallOrder[0],
+      );
     });
 
     it('is idempotent — the same body twice leaves the same fixtures', async () => {
@@ -288,17 +315,20 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
   });
 
   describe('setMatchScore', () => {
-    const withFixtures = (status = 'playing') =>
-      eventDoc({
-        status,
-        matches: [
-          { matchNumber: 1, teamA: 'Red', teamB: 'Blue', scoreA: null, scoreB: null, playedAt: null },
-        ],
+    /** The event doc only carries the lifecycle now; fixtures are their own rows. */
+    const atStatus = (status = 'playing') => eventDoc({ status });
+
+    /** findOneAndUpdate returns the updated row, or null when no fixture matched. */
+    const fixtureFound = () =>
+      matchModel.findOneAndUpdate.mockImplementation((_f: any, update: any) => {
+        const set = update.$set;
+        const row = { matchNumber: 1, teamA: 'Red', teamB: 'Blue', ...set };
+        return Promise.resolve({ ...row, toJSON: () => row });
       });
 
     it('records both scores and stamps playedAt', async () => {
-      const doc = withFixtures();
-      eventModel.findById.mockResolvedValue(doc);
+      eventModel.findById.mockResolvedValue(atStatus());
+      fixtureFound();
 
       const match = await service.setMatchScore(EVENT_ID, CREATOR, 1, {
         scoreA: 3,
@@ -307,11 +337,17 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
 
       expect(match).toMatchObject({ scoreA: 3, scoreB: 2 });
       expect(match.playedAt).toBeInstanceOf(Date);
-      expect(doc.save).toHaveBeenCalled();
+      // Targeted update, so concurrent scoring of different fixtures is safe.
+      expect(matchModel.findOneAndUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ matchNumber: 1 }),
+        expect.anything(),
+        expect.objectContaining({ returnDocument: 'after' }),
+      );
     });
 
     it('accepts a 0-0 scoreline', async () => {
-      eventModel.findById.mockResolvedValue(withFixtures());
+      eventModel.findById.mockResolvedValue(atStatus());
+      fixtureFound();
       const match = await service.setMatchScore(EVENT_ID, CREATOR, 1, {
         scoreA: 0,
         scoreB: 0,
@@ -320,7 +356,8 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
     });
 
     it('allows a correction after the whistle', async () => {
-      eventModel.findById.mockResolvedValue(withFixtures('after_match'));
+      eventModel.findById.mockResolvedValue(atStatus('after_match'));
+      fixtureFound();
       await expect(
         service.setMatchScore(EVENT_ID, CREATOR, 1, { scoreA: 1, scoreB: 0 }),
       ).resolves.toBeDefined();
@@ -329,15 +366,19 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
     it.each(['join', 'before_match', 'preparation', 'done'])(
       'rejects score entry while %s',
       async (status) => {
-        eventModel.findById.mockResolvedValue(withFixtures(status));
+        eventModel.findById.mockResolvedValue(atStatus(status));
+        fixtureFound();
         await expect(
           service.setMatchScore(EVENT_ID, CREATOR, 1, { scoreA: 1, scoreB: 0 }),
         ).rejects.toBeInstanceOf(BadRequestException);
+        // The gate must reject before any write is attempted.
+        expect(matchModel.findOneAndUpdate).not.toHaveBeenCalled();
       },
     );
 
     it('404s on an unknown fixture number', async () => {
-      eventModel.findById.mockResolvedValue(withFixtures());
+      eventModel.findById.mockResolvedValue(atStatus());
+      matchModel.findOneAndUpdate.mockResolvedValue(null);
       await expect(
         service.setMatchScore(EVENT_ID, CREATOR, 99, { scoreA: 1, scoreB: 0 }),
       ).rejects.toBeInstanceOf(NotFoundException);
@@ -348,12 +389,14 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
     it('derives the table from stored fixtures', async () => {
       eventModel.findById.mockReturnValue({
         select: jest.fn().mockReturnThis(),
-        lean: jest.fn().mockResolvedValue({
-          matches: [
-            { teamA: 'Red', teamB: 'Blue', scoreA: 2, scoreB: 0 },
-            { teamA: 'Red', teamB: 'Blue', scoreA: null, scoreB: null },
-          ],
-        }),
+        lean: jest.fn().mockResolvedValue({ _id: EVENT_ID }),
+      });
+      matchModel.find.mockReturnValue({
+        sort: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([
+          { teamA: 'Red', teamB: 'Blue', scoreA: 2, scoreB: 0 },
+          { teamA: 'Red', teamB: 'Blue', scoreA: null, scoreB: null },
+        ]),
       });
 
       const table = await service.standings(EVENT_ID);

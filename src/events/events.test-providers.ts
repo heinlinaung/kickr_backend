@@ -12,6 +12,7 @@
 import { getModelToken } from '@nestjs/mongoose';
 import { Event } from './schemas/event.schema';
 import { EventPlayer } from './schemas/event-player.schema';
+import { EventMatch } from './schemas/event-match.schema';
 import { EventTeamChat } from './schemas/event-team-chat.schema';
 import { EventLike } from './schemas/event-like.schema';
 import { EventTemplate } from './schemas/event-template.schema';
@@ -27,6 +28,7 @@ export interface EventsTestDoubles {
   playerModel?: any;
   memberModel?: any;
   groupModel?: any;
+  matchModel?: any;
   teamChatModel?: any;
   likeModel?: any;
   templateModel?: any;
@@ -42,6 +44,14 @@ export function eventsProviders(doubles: EventsTestDoubles = {}) {
     playerModel = {},
     memberModel = {},
     groupModel = {},
+    // findById/standings always query fixtures now, so the default double has
+    // to answer a full find().sort().lean() chain with an empty list.
+    matchModel = {
+      find: jest.fn().mockReturnValue({
+        sort: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([]),
+      }),
+    },
     teamChatModel = {},
     likeModel = {},
     templateModel = {},
@@ -56,6 +66,7 @@ export function eventsProviders(doubles: EventsTestDoubles = {}) {
     { provide: getModelToken(EventPlayer.name), useValue: playerModel },
     { provide: getModelToken(GroupMember.name), useValue: memberModel },
     { provide: getModelToken(Group.name), useValue: groupModel },
+    { provide: getModelToken(EventMatch.name), useValue: matchModel },
     { provide: getModelToken(EventTeamChat.name), useValue: teamChatModel },
     { provide: getModelToken(EventLike.name), useValue: likeModel },
     { provide: getModelToken(EventTemplate.name), useValue: templateModel },

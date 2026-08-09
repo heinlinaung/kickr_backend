@@ -5,6 +5,7 @@ import { EventTemplatesController } from './event-templates.controller';
 import { EventsService } from './events.service';
 import { Event, EventSchema } from './schemas/event.schema';
 import { EventPlayer, EventPlayerSchema } from './schemas/event-player.schema';
+import { EventMatch, EventMatchSchema } from './schemas/event-match.schema';
 import {
   EventTeamChat,
   EventTeamChatSchema,
@@ -32,7 +33,8 @@ import { NotificationsModule } from '../notifications/notifications.module';
       { name: GroupMember.name, schema: GroupMemberSchema },
       // Needed for the group's rules on event detail and the ?region= filter.
       { name: Group.name, schema: GroupSchema },
-      // Step 2-4 collections: team chats, likes and reusable templates.
+      // Step 2-4 collections: fixtures, team chats, likes and templates.
+      { name: EventMatch.name, schema: EventMatchSchema },
       { name: EventTeamChat.name, schema: EventTeamChatSchema },
       { name: EventLike.name, schema: EventLikeSchema },
       { name: EventTemplate.name, schema: EventTemplateSchema },

@@ -9,14 +9,15 @@ flowchart LR
     after_match?"}
     C -->|no| C1["400 — cannot score
     before kick-off"]
-    C -->|yes| D{matchNumber exists?}
-    D -->|no| D1[404]
-    D -->|yes| E["set scoreA/scoreB + playedAt
+    C -->|yes| D{"findOneAndUpdate on
+    {eventId, matchNumber}"}
+    D -->|"no row"| D1[404]
+    D -->|updated| E["scoreA/scoreB + playedAt set
     both scores required; 0 is valid"]
 
     E --> F["GET /events/:id/standings
     (also inlined on GET /events/:id)"]
-    F --> G["fold over matches[]
+    F --> G["fold over the event's EventMatch rows
     skip any fixture with a null score"]
     G --> H["win 3 / draw 1 / loss 0
     played, W, D, L, GF, GA, GD, pts"]
@@ -30,7 +31,12 @@ flowchart LR
     a typo can still be corrected
     once the whistle has gone"] -.-> C
 
-    E --> M["matches[] is the sole score authority
+    O["one targeted update per fixture, so two
+    organizers scoring different matches cannot
+    overwrite each other — an embedded array
+    could not offer that"] -.-> D
+
+    E --> M["EventMatch is the sole score authority
     for multi-team events"]
     M --> N["Event.result keeps mvpUserId only
     (+ scoreA/scoreB for simple 2-team)"]

@@ -6,36 +6,11 @@ import { EVENT_STATUSES } from '../events.lifecycle';
 export type EventDocument = HydratedDocument<Event>;
 
 /**
- * One fixture in a multi-team event. Embedded on Event (no own `_id`) because
- * the fixture list is fixed at shuffle time and only ever read or written as
- * part of its event.
- *
- * Scores are `null` until entered — NOT 0, which is a real scoreline. Standings
- * skip any fixture with a null score on either side, so the distinction is
- * load-bearing rather than cosmetic.
+ * Fixtures used to be embedded here as `matches[]`. They now live in their own
+ * collection — see `./event-match.schema.ts` — so each has a stable `_id` that
+ * player ratings (spec §8) can reference. `scripts/extract-event-matches.ts`
+ * migrates existing embedded arrays across.
  */
-@Schema({ _id: false })
-export class EventMatch {
-  @Prop({ required: true })
-  matchNumber: number;
-
-  @Prop({ required: true })
-  teamA: string;
-
-  @Prop({ required: true })
-  teamB: string;
-
-  @Prop({ type: Number, default: null })
-  scoreA: number | null;
-
-  @Prop({ type: Number, default: null })
-  scoreB: number | null;
-
-  @Prop({ type: Date, default: null })
-  playedAt: Date | null;
-}
-
-export const EventMatchSchema = SchemaFactory.createForClass(EventMatch);
 
 /** An after-match photo. `fileId` is kept so the file can be deleted. */
 @Schema({ _id: false })
@@ -135,10 +110,6 @@ export class Event {
 
   @Prop({ type: EventResultSchema, default: null })
   result: EventResult | null;
-
-  /** Fixtures, submitted by the client during `preparation` (spec §4.3). */
-  @Prop({ type: [EventMatchSchema], default: [] })
-  matches: EventMatch[];
 
   @Prop({ type: Types.ObjectId, ref: 'EventTemplate', default: null })
   templateId: Types.ObjectId | null;
