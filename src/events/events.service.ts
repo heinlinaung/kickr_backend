@@ -107,6 +107,50 @@ export class EventsService {
     return events.map(withIsFull);
   }
 
+  /**
+   * Every event belonging to one group, soonest first.
+   *
+   * Visibility: an **approved** member of the group sees all of its events,
+   * public or private. Anyone else sees only the public ones — the group's
+   * existence isn't secret, but its private fixtures are.
+   *
+   * This is why the endpoint lives here rather than as a `groupId` filter on
+   * `GET /events`: that route hard-filters `isPublic: true`, so a private
+   * group event could never appear there.
+   *
+   * `status` optionally narrows to one lifecycle state (e.g. only `join`
+   * events for a "what can I sign up for" screen).
+   */
+  async listByGroup(groupId: string, userId: string, status?: string) {
+    if (!Types.ObjectId.isValid(groupId)) {
+      throw new BadRequestException('Invalid group id');
+    }
+
+    const group = await this.groupModel.findById(groupId).select('_id').lean();
+    if (!group) throw new NotFoundException('Group not found');
+
+    const member = await this.memberModel.findOne({
+      groupId: new Types.ObjectId(groupId),
+      userId: new Types.ObjectId(userId),
+      status: 'approved',
+    });
+
+    const filter: Record<string, unknown> = {
+      groupId: new Types.ObjectId(groupId),
+    };
+    if (!member) filter.isPublic = true;
+
+    if (status !== undefined) {
+      if (!isEventStatus(status)) {
+        throw new BadRequestException(`Unknown status '${status}'`);
+      }
+      filter.status = status;
+    }
+
+    const events = await this.eventModel.find(filter).sort({ date: 1 }).lean();
+    return events.map(withIsFull);
+  }
+
   async create(userId: string, dto: CreateEventDto): Promise<EventDocument> {
     if (dto.groupId) {
       const member = await this.memberModel.findOne({

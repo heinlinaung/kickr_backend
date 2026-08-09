@@ -281,6 +281,95 @@ describe('EventsService — lifecycle', () => {
     });
   });
 
+  describe('listByGroup', () => {
+    const lean = (rows: any[]) => ({
+      sort: () => ({ lean: () => Promise.resolve(rows) }),
+    });
+
+    beforeEach(() => {
+      groupModel.findById = jest.fn().mockReturnValue({
+        select: () => ({ lean: () => Promise.resolve({ _id: GROUP_ID }) }),
+      });
+      eventModel.find = jest.fn().mockReturnValue(lean([]));
+    });
+
+    it('shows an approved member every event, public or private', async () => {
+      memberModel.findOne.mockResolvedValue({ role: 'member' });
+
+      await service.listByGroup(GROUP_ID, STRANGER);
+
+      const filter = eventModel.find.mock.calls[0][0];
+      expect(filter.groupId.toString()).toBe(GROUP_ID);
+      // no isPublic constraint for members
+      expect(filter).not.toHaveProperty('isPublic');
+    });
+
+    it('restricts a non-member to public events only', async () => {
+      memberModel.findOne.mockResolvedValue(null);
+
+      await service.listByGroup(GROUP_ID, STRANGER);
+
+      expect(eventModel.find.mock.calls[0][0].isPublic).toBe(true);
+    });
+
+    it('requires the membership to be approved, not merely pending', async () => {
+      memberModel.findOne.mockResolvedValue(null);
+      await service.listByGroup(GROUP_ID, STRANGER);
+      expect(memberModel.findOne.mock.calls[0][0].status).toBe('approved');
+    });
+
+    it('optionally narrows to one lifecycle status', async () => {
+      memberModel.findOne.mockResolvedValue({ role: 'member' });
+      await service.listByGroup(GROUP_ID, STRANGER, 'join');
+      expect(eventModel.find.mock.calls[0][0].status).toBe('join');
+    });
+
+    it('400s an unknown status rather than returning everything', async () => {
+      memberModel.findOne.mockResolvedValue({ role: 'member' });
+      await expect(
+        service.listByGroup(GROUP_ID, STRANGER, 'open'),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(eventModel.find).not.toHaveBeenCalled();
+    });
+
+    it('404s an unknown group instead of returning an empty list', async () => {
+      groupModel.findById.mockReturnValue({
+        select: () => ({ lean: () => Promise.resolve(null) }),
+      });
+      await expect(
+        service.listByGroup(GROUP_ID, STRANGER),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('400s a malformed group id', async () => {
+      await expect(
+        service.listByGroup('not-an-id', STRANGER),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('attaches derived isFull to each row', async () => {
+      memberModel.findOne.mockResolvedValue({ role: 'member' });
+      eventModel.find.mockReturnValue(
+        lean([
+          { _id: 'a', joinedCount: 12, maxPlayers: 12 },
+          { _id: 'b', joinedCount: 3, maxPlayers: 12 },
+        ]),
+      );
+
+      const rows: any[] = await service.listByGroup(GROUP_ID, STRANGER);
+      expect(rows[0].isFull).toBe(true);
+      expect(rows[1].isFull).toBe(false);
+    });
+
+    it('sorts soonest first', async () => {
+      memberModel.findOne.mockResolvedValue({ role: 'member' });
+      const sort = jest.fn().mockReturnValue({ lean: () => Promise.resolve([]) });
+      eventModel.find.mockReturnValue({ sort });
+      await service.listByGroup(GROUP_ID, STRANGER);
+      expect(sort).toHaveBeenCalledWith({ date: 1 });
+    });
+  });
+
   describe('update / remove gating', () => {
     it('rejects editing a done event', async () => {
       eventModel.findById.mockResolvedValue(eventDoc({ status: 'done' }));
