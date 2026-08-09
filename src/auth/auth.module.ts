@@ -15,6 +15,9 @@ import { User, UserSchema } from '../users/schemas/user.schema';
   ],
   controllers: [AuthController],
   providers: [AuthService, CognitoService, CognitoJwtVerifier, JwtStrategy],
-  exports: [PassportModule, CognitoJwtVerifier],
+  // CognitoService is exported so AdminModule's test-data endpoint can create
+  // and delete pool identities. Identity remains owned here — consumers get
+  // the service, not their own client.
+  exports: [PassportModule, CognitoJwtVerifier, CognitoService],
 })
 export class AuthModule {}
