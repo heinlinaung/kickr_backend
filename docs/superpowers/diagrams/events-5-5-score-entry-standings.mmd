@@ -2,19 +2,35 @@
 %% Source of truth for this diagram. Rendered from ../specs/2026-08-03-events-feature-spec.md §5.5
 %% Edit here, not in the spec — the spec links to this file.
 flowchart LR
-    A["PATCH /events/:id/matches/:matchNumber<br/>{scoreA, scoreB}"] --> B{organizer?}
+    A["PATCH /events/:id/matches/:matchNumber
+    {scoreA, scoreB}"] --> B{organizer?}
     B -->|no| B1[403]
-    B -->|yes| C{"status in playing,<br/>after_match?"}
-    C -->|no| C1["400 — cannot score<br/>before kick-off"]
+    B -->|yes| C{"status in playing,
+    after_match?"}
+    C -->|no| C1["400 — cannot score
+    before kick-off"]
     C -->|yes| D{matchNumber exists?}
     D -->|no| D1[404]
-    D -->|yes| E[set scoreA/scoreB + playedAt]
+    D -->|yes| E["set scoreA/scoreB + playedAt
+    both scores required; 0 is valid"]
 
-    E --> F["GET /events/:id/standings"]
-    F --> G["fold over matches[]<br/>skip null scores"]
-    G --> H["win 3 / draw 1 / loss 0<br/>played, W, D, L, GF, GA, GD, pts"]
+    E --> F["GET /events/:id/standings
+    (also inlined on GET /events/:id)"]
+    F --> G["fold over matches[]
+    skip any fixture with a null score"]
+    G --> H["win 3 / draw 1 / loss 0
+    played, W, D, L, GF, GA, GD, pts"]
     H --> I["sort: pts → GD → GF → team name"]
     I --> J[table returned]
 
-    E --> K["matches[] is the sole score authority<br/>for multi-team events"]
-    K --> L["Event.result keeps mvpUserId only<br/>(+ scoreA/scoreB for simple 2-team)"]
+    K["team names seeded from the fixture list,
+    so a team yet to play still shows a zero row"] -.-> G
+
+    L["after_match is included on purpose —
+    a typo can still be corrected
+    once the whistle has gone"] -.-> C
+
+    E --> M["matches[] is the sole score authority
+    for multi-team events"]
+    M --> N["Event.result keeps mvpUserId only
+    (+ scoreA/scoreB for simple 2-team)"]
