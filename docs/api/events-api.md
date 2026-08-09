@@ -322,7 +322,7 @@ Do **not** design screens against these — the fields exist but nothing fills t
 | Feature | State |
 |---|---|
 | **Teams & fixtures** | `matches[]` is always `[]`. No fixture, score, or standings endpoints exist. |
-| **Shuffle** | `POST /events/:id/shuffle` exists but still assigns numeric teams (`"1"`, `"2"`) in buckets of 6. **It is being replaced**: the client will compute colour teams (Red/Yellow/Blue/Black/Green/Orange) and the fixture list, and POST them for the server to store. Do not build against the current response. |
+| **Teams & shuffle** | `POST /events/:id/shuffle` exists but still assigns numeric teams (`"1"`, `"2"`) in buckets of 6. **It is being replaced**: the client computes colour teams (Red/Yellow/Blue/Black/Green/Orange) and submits the finalized roster via a new `PUT /events/:id/teams`; the server validates it and generates the fixtures. `POST /shuffle` stays as an optional server-side fallback on the same write path. Do not build against the current response. |
 | **Scores / standings** | Not built. No `GET /events/:id/standings`. |
 | **MVP / result** | `result` is always `null`. |
 | **Cover image & photos** | `coverImage`, `photos` always empty. No upload routes. |
@@ -347,4 +347,4 @@ Do **not** design screens against these — the fields exist but nothing fills t
 - [ ] `date` is the scheduling field. `startTime`/`endTime` are always `null` today.
 - [ ] Join failures — "not open" and "full" — are **both** `400`; read the message.
 - [ ] Deleting an event is a **hard delete** with no notification to joined players.
-- [ ] `POST /events/:id/shuffle` is about to change shape. Don't ship against it.
+- [ ] Team submission is moving to `PUT /events/:id/teams` (client sends the roster, server generates fixtures). `POST /events/:id/shuffle` is about to change shape — don't ship against it.

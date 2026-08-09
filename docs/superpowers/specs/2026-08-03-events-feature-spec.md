@@ -43,9 +43,8 @@ Out of scope: player ratings (§8, separate module — this spec only guarantees
 | # | Question | Decision |
 |---|---|---|
 | 1 | Transitions | Manual, organizer-gated `PATCH /events/:id/status`, validated against a legal-transition table. No scheduler. |
-| 2 | Shuffle strategy (parent §14 #6) | **Client-side.** The client assigns players to colour teams and builds the fixture list; the API persists what it receives. Colours are Red/Yellow/Blue/Black/Green/Orange, `teamCount` configurable per event, default 4. |
-| 3 | Fixture format | **Generic double round-robin** for any N: every pairing played twice. N=4→12 matches, N=3→6, N=2→2. **Implemented in the client** — the server does not generate or enforce it. |
-| 7 | Shuffle authority | The API is a persist endpoint, not a compute one. It stores the teams and fixtures the client sends without recomputing or validating them. See §4.3. |
+| 2 | Who shuffles (parent §14 #6) | **The client (mobile).** It submits a finalized team list via `PUT /events/:id/teams`; the server validates and derives fixtures/chats/notifications (§4.3). A server-side colour-team shuffle is kept as an optional fallback. Colours are Red/Yellow/Blue/Black/Green/Orange, `teamCount` configurable per event, default 4. *(Revises parent §14 #6.)* |
+| 3 | Fixture format | **Generic double round-robin** for any N: every pairing played twice. N=4→12 matches, N=3→6, N=2→2. One algorithm, no special cases — generated server-side from the finalized teams. |
 | 4 | Score authority | For multi-team events `matches[]` is the sole source of truth. `Event.result` carries `mvpUserId` (+ optional overall score for simple 2-team events). |
 | 5 | Standings | **Derived on read**, never stored. Win 3 / draw 1 / loss 0. |
 | 6 | Uploads | ImageKit via the existing `ImageKitService`, mirroring the group logo/wallpaper routes. |
@@ -75,7 +74,7 @@ Action gates:
 |---|---|
 | join | `status == 'join'` **and** `joinedCount < maxPlayers` |
 | unjoin (leave) | `status == 'join'` |
-| shuffle / submit fixtures | `status == 'preparation'` |
+| submit teams / shuffle / generate fixtures | `status == 'preparation'` |
 | enter fixture score | `status` in `playing`, `after_match` |
 | submit result / MVP / photos | `status == 'after_match'` |
 | edit / delete event | organizer, any non-`done` state |
@@ -92,17 +91,68 @@ On entering `done`: archive the event's team chats.
 
 ### 4.3 Teams & fixtures
 
-**Teams and fixtures are computed by the client.** The server's role is storage: `POST /events/:id/shuffle` receives a completed team assignment and fixture list and writes them, replacing whatever was there before. The server does not shuffle, does not deal players into teams, and does not generate fixtures.
+> **REVISED 2026-08-06 — the client now performs the shuffle.** The mobile app decides team assignment and submits the finalized list; the server no longer chooses who goes where by default. It validates the submission, persists it, and derives everything downstream. The server-side shuffle is **kept as an optional fallback** (§4.3.3).
 
-The colour vocabulary the client draws from:
+#### 4.3.1 Submitting teams — `PUT /events/:id/teams`
+
+The client sends the finalized roster:
+
+```json
+{
+  "teams": [
+    { "name": "Red",    "playerIds": ["665f…a1", "665f…a2"] },
+    { "name": "Yellow", "playerIds": ["665f…a3", "665f…a4"] }
+  ]
+}
+```
+
+**Why `PUT` and not `POST`:** the call replaces the entire assignment rather than adding to it. Resubmitting is idempotent — the same body twice leaves the same state.
+
+A client-supplied roster is **untrusted input**. The server rejects with `400` unless all of the following hold:
+
+| Rule | Why |
+|---|---|
+| Every `playerId` is a **joined** player on this event | Stops stale, fabricated, or cancelled-player ids landing on a team |
+| No player appears in **two teams** | Would corrupt standings and per-player stats |
+| No duplicate id **within** a team | Same |
+| Team `name`s are unique and non-empty | `name` keys the fixtures and team chats |
+| At least **2** teams, at most **6** | Fixture generation needs ≥2; the cap matches `teamCount` |
+| Caller is the organizer, `status == 'preparation'` | Same gate as everything else in this phase |
+
+Errors name the offending ids (e.g. `Player 665f…a3 appears in both Red and Yellow`) — a bare "invalid teams" is unactionable from a mobile client.
+
+**Partial assignment is allowed.** Joined players absent from the submission keep `team: null`. This supports reserves and late arrivals, and the client may add them in a later resubmission.
+
+> ⚠️ **Consequence:** a client bug that omits players will silently leave them off every team rather than erroring. The response therefore returns `unassignedPlayerIds` so the app can surface "3 players not on a team" instead of discovering it at kick-off. Consider warning the user client-side before submitting a partial roster.
+
+`teamCount` remains an Event field but becomes **advisory** — a hint for the client's UI, not a constraint the server enforces against the submitted list. The authoritative team count is `teams.length`.
+
+#### 4.3.2 What the server still owns
+
+Team *assignment* moved to the client. Everything derived from it did **not** — these stay server-side because they must be consistent and are not the client's to author:
+
+1. **Persisting `EventPlayer.team`** — one `bulkWrite`, plus clearing `team` on any player dropped from the roster.
+2. **Fixture generation** — deterministic from the team list (§4.3.4). The client never authors match records.
+3. **Team chat rooms** — one `EventTeamChat` per team name.
+4. **Notifications** — each player told their team.
+
+#### 4.3.3 Server-side shuffle — kept as a fallback
+
+`POST /events/:id/shuffle` is **retained**. It assigns colour teams server-side, then routes through the *same* persistence path as a client submission, so there is one write path and one set of downstream effects.
+
+The colour vocabulary both the client and the fallback draw from:
 
 ```
 TEAM_COLOURS = ['Red', 'Yellow', 'Blue', 'Black', 'Green', 'Orange']
 ```
 
-`teamCount` remains an Event field (default 4, min 2, max 6) — it is the organizer's stated intent and what the client shuffles against, but the server does not check the submitted teams against it.
+Fisher-Yates the joined players, then deal them round-robin across the first `teamCount` colours so team sizes differ by at most one.
 
-**Client-side algorithm** (documented here so client and server agree on the shape of the data, not because the server implements it): Fisher-Yates the joined players, deal them round-robin across the first `teamCount` colours so sizes differ by at most one, then build a **double round-robin** over the teams used —
+Useful for a web client, an organizer who wants the server to decide, and as a fallback if the mobile shuffle ships late. **Both endpoints write the same fields; whichever ran last wins.** Neither is privileged.
+
+#### 4.3.4 Fixture generation
+
+Fixtures are generated from the finalized teams — **whatever their source** — as a **double round-robin**:
 
 ```
 for each unordered pair (i, j): emit (i, j) in leg 1, then (j, i) in leg 2
@@ -111,23 +161,20 @@ matchNumber is assigned 1..N sequentially across leg 1 then leg 2
 
 For 4 teams that is 12 matches with each team playing 6, matching the parent spec's fixture table. Leg 2 swaps home/away so the repeated pairing isn't a literal duplicate row.
 
-**Request shape:**
+**Stored shape** — `matches[]` is derived, never client-authored:
 
 ```
-POST /events/:id/shuffle
-{
-  assignments: [{ userId, team }],           // team ∈ TEAM_COLOURS
-  matches: [{ matchNumber, teamA, teamB }]   // scores omitted — always stored null
-}
+matches: [{ matchNumber, teamA, teamB, scoreA: null, scoreB: null, playedAt: null }]
 ```
 
 **Rules:**
-1. Persisted on shuffle during `preparation`. Immutable afterward except score entry.
-2. Re-submitting while still in `preparation` **replaces** teams and fixtures wholesale, discarding any scores entered (there should be none yet — scores need `playing`).
-3. Scores stay `null` on write regardless of what the request contains; they are set only via `PATCH /events/:id/matches/:matchNumber`.
-4. The server persists the payload as given. It does not verify that every joined player appears, that team sizes are balanced, that `matchNumber`s are contiguous, or that the fixtures form a legal double round-robin.
+1. Generated on every teams submission during `preparation` — from `PUT /teams` or `POST /shuffle` alike.
+2. **Resubmitting while still in `preparation` regenerates teams *and* fixtures**, discarding any scores entered (there should be none — scores need `playing`).
+3. Teams and fixtures lock once the event leaves `preparation`. `PUT /teams` outside that state → `400`.
+4. Scores stay `null` until entered; the UI renders a dash. They are set only via `PATCH /events/:id/matches/:matchNumber` — a fixture score in a teams submission is ignored.
+5. Teams named in `matches[]` are the submitted names, so **renaming a team means resubmitting** — there is no rename-in-place.
 
-> **Consequence — deliberate:** decision #3's round-robin guarantee is a *client* guarantee, not a server-enforced invariant. A buggy or hostile client can persist unbalanced teams, a partial fixture list, or players assigned to no team, and the server will accept it. Standings (§4.3 below) still compute correctly over whatever fixtures exist, because the fold is defined over `matches[]` as stored. If this turns out to matter in practice, the fix is to add validation server-side later — that is a strictly additive change and does not alter the storage shape.
+> **Two clients on different app versions:** because fixtures are generated server-side from the submitted team list, a stale client cannot persist a divergent fixture format — the only client-authored data is the roster in §4.3.1, and that is validated. This is the main practical gain over a pure-persist endpoint.
 
 **Standings** are computed on read from `matches[]`: played, W, D, L, GF, GA, GD, points (3/1/0). Sorted by points, then GD, then GF, then team name for determinism. Matches with a `null` score on either side are skipped.
 
@@ -233,11 +280,11 @@ Two independent guards: the lifecycle state, and the atomic capacity check. The 
 
 📊 **Diagram:** [`events-5-3-join-unjoin-gating.mmd`](../diagrams/events-5-3-join-unjoin-gating.mmd) — mermaid source (GitHub renders it on open).
 
-### 5.4 Shuffle → colour teams → fixture submission
+### 5.4 Team submission → validation → fixture generation
 
-The `preparation`-only operation. The client computes teams and fixtures and posts them; the server persists. Re-running it inside `preparation` is legal and replaces everything.
+The `preparation`-only operation. Both entry points — the client's `PUT /teams` and the fallback `POST /shuffle` — converge on one persistence path, so fixtures, team chats and notifications behave identically whichever ran. Re-running inside `preparation` is legal and regenerates everything.
 
-📊 **Diagram:** [`events-5-4-shuffle-colour-teams-fixtures.mmd`](../diagrams/events-5-4-shuffle-colour-teams-fixtures.mmd) — mermaid source (GitHub renders it on open).
+📊 **Diagram:** [`events-5-4-team-submission-fixtures.mmd`](../diagrams/events-5-4-team-submission-fixtures.mmd) — mermaid source (GitHub renders it on open).
 
 ### 5.5 Score entry & standings
 
@@ -272,7 +319,8 @@ Every `PATCH /status` goes through the pure transition table. This is the single
 | POST | `/events/:id/join` | member | **CHANGED** — gated to `join` state |
 | DELETE | `/events/:id/join` | member | **CHANGED** — gated to `join` state |
 | GET | `/events/:id/players` | any | unchanged |
-| POST | `/events/:id/shuffle` | organizer | **CHANGED** — gated to `preparation`; **persists** client-supplied `assignments` + `matches`; creates team chats |
+| PUT | `/events/:id/teams` | organizer | **NEW** — client submits the finalized team list (§4.3.1); validates, persists, generates fixtures + team chats, notifies |
+| POST | `/events/:id/shuffle` | organizer | **CHANGED** — gated to `preparation`; optional server-side fallback (§4.3.3); same write path as `PUT /teams` |
 | GET | `/events/:id/matches` | any | **NEW** — fixture list |
 | PATCH | `/events/:id/matches/:matchNumber` | organizer | **NEW** — enter a fixture score |
 | GET | `/events/:id/standings` | any | **NEW** — derived table |
@@ -297,7 +345,7 @@ Each step is independently shippable and leaves the suite green.
 1. **Lifecycle core** — `events.lifecycle.ts` (pure transition table + `canTransition`), status enum migration, re-gate join/leave, `PATCH /events/:id/status`, shared organizer helper, `PATCH`/`DELETE /events/:id`. Migration script for existing rows.
 
    **Schema ownership:** step 1 also lands the §4.4 *fields* that later steps fill — `matches: []`, `result: null`, `startTime`/`endTime`, `teamCount`, `coverImage`, `photos`, `likeCount`. They ship empty and unused. This is deliberate: the status migration already rewrites every event document, so adding the columns in the same pass avoids a second migration, and it means steps 2–3 are pure service/controller work with no schema change. Do **not** read step 1's schema as implying the behaviour is present.
-2. **Teams & fixtures** — shuffle endpoint gated to `preparation` persisting client-supplied teams + `matches[]`, score entry, standings-on-read, `EventTeamChat` scaffold + archive on `done`. No generation algorithm server-side; the client lands its shuffle in the same release. Depends on step 1 for both the `matches[]` field and the `playing` state that gates score entry — the dependency runs one way, so step 1 never waits on this.
+2. **Teams & fixtures** — `PUT /events/:id/teams` with full validation, shared persistence path, generic double round-robin generation, `matches[]`, score entry, standings-on-read, `EventTeamChat` scaffold + archive on `done`. Retain `POST /shuffle` on the same path, gated to `preparation`. Depends on step 1 for both the `matches[]` field and the `playing` state that gates score entry — the dependency runs one way, so step 1 never waits on this.
 3. **After-match** — `result`/MVP, cover + photos via ImageKit, `startTime`/`endTime`.
 4. **Discovery & templates** — `$geoNear` listing, `EventTemplate` collection and routes, likes.
 
@@ -309,11 +357,12 @@ Steps 1 and 2 are the load-bearing ones — ratings (§8) and the profile stats 
 
 Follows the repo's existing pattern (`*.spec.ts` beside the source, `test/` for e2e).
 
-- **Pure units** — transition table (every legal and illegal pair), standings computation (3/1/0, draws, null-score matches skipped, tie-break ordering). *No fixture-generation tests: the algorithm lives in the client and is tested there.*
-- **Service** — join/leave gate rejection per state; shuffle rejected outside `preparation`; score entry rejected before `playing`; MVP must be a joined player; re-submitting shuffle replaces teams and fixtures wholesale; submitted scores are ignored and stored `null`; like idempotency.
+- **Pure units** — transition table (every legal and illegal pair), fixture generation (N=2..6: correct match count, equal matches per team, every pairing exactly twice, home/away swapped in leg 2), standings computation (3/1/0, draws, null-score matches skipped, tie-break ordering).
+- **Service** — join/leave gate rejection per state; teams submission and shuffle rejected outside `preparation`; score entry rejected before `playing`; MVP must be a joined player; resubmission regenerates fixtures; submitted scores are ignored and stored `null`; like idempotency.
+- **Teams validation** — each rejection rule in §4.3.1 (non-joined id, player in two teams, duplicate within a team, duplicate/empty name, <2 or >6 teams), each naming the offending id; partial roster accepted with the right `unassignedPlayerIds`; a player dropped on resubmission has `team` cleared; `PUT` is idempotent for the same body.
 - **Schema** — defaults, enums, index declarations.
-- **e2e** — full walkthrough: create → join to capacity → advance to `preparation` → POST a 4-team assignment + 12 fixtures → read them back unchanged → `playing` → score every fixture → standings correct → `after_match` → MVP + photo → `done` → team chats archived.
-- **Deliberately not tested** — that submitted teams are balanced, complete, or that fixtures form a legal round-robin. Per §4.3 the server makes no such promise; asserting it in a server test would encode a guarantee the implementation does not provide.
+- **e2e** — full walkthrough: create → join to capacity → advance to `preparation` → `PUT /teams` with 4 teams → verify 12 fixtures → `playing` → score every fixture → standings correct → `after_match` → MVP + photo → `done` → team chats archived. Plus one pass using `POST /shuffle` instead, asserting it lands in the same state.
+- **Deliberately not tested** — team *balance* beyond the §4.3.1 rules. Partial rosters are legal by decision (§4.3.1), so a test asserting every joined player has a team would encode a guarantee the spec does not make; `unassignedPlayerIds` is asserted instead.
 
 ---
 
@@ -323,9 +372,11 @@ Follows the repo's existing pattern (`*.spec.ts` beside the source, `test/` for 
 |---|---|
 | Status migration breaks live clients expecting `open`/`full` | Ship the migration script with step 1; the Flutter client must land the new enum in the same release. **Coordinate before merging.** |
 | `joinedCount` drift under concurrent joins | Keep the existing atomic `findOneAndUpdate` + `$expr` guard; only the status condition changes (`open` → `join`). |
-| Re-shuffle silently discarding scores | Scores can't exist in `preparation` (entry needs `playing`), so the window is closed by the gate rather than by a check. |
-| Client sends malformed teams/fixtures and the server stores them | **Accepted, by decision #7.** The server validates nothing beyond the organizer check and the `preparation` gate. Malformed data surfaces as odd standings, not as corruption — standings fold over whatever is stored. Mitigation is client-side; server validation can be added later additively. |
-| Two clients on different app versions submit different fixture formats | `matches[]` has no server-enforced format, so a stale client's payload persists as-is. Version the client release alongside step 2 and treat fixture format as a client-side contract. |
+| Re-submitting teams silently discarding scores | Scores can't exist in `preparation` (entry needs `playing`), so the window is closed by the gate rather than by a check. |
+| Client omits players from the roster | Allowed by decision, so the server can't reject it. Mitigated by returning `unassignedPlayerIds` so the app can warn rather than fail silently at kick-off. |
+| Client and server shuffle disagree about state | Both write via one shared path (§4.3.2); last write wins. Neither endpoint is privileged. |
+| Client sends a malformed roster | Rejected at the boundary by the §4.3.1 rules, with the offending ids named. The cases that would corrupt standings or per-player stats — duplicate, cancelled, or fabricated ids — cannot be persisted. |
+| Two clients on different app versions submit different fixture formats | Not reachable: fixtures are generated server-side (§4.3.4), so `matches[]` has exactly one producer. Only the roster is client-authored, and it is validated. |
 | `$geoNear` must be the first aggregation stage | Start from `locations` and `$lookup` events, not the reverse. |
 
 **Open, needs product input — none of these block step 1:**
