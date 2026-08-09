@@ -16,7 +16,9 @@ describe('EventsService — location handling on create', () => {
   const playerModel: any = {};
   const memberModel: any = {};
   const groupModel: any = {};
-  const locations = { assertOwnedBy: jest.fn() };
+  // §4.6: event location attach moved from assertOwnedBy to assertCanEdit so
+  // a group's owner/admin/captain can attach the group's own ground.
+  const locations = { assertOwnedBy: jest.fn(), assertCanEdit: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -43,10 +45,13 @@ describe('EventsService — location handling on create', () => {
     await service.create(USER_ID, { ...baseDto, locationId: OWNED_LOCATION });
 
     // must check the caller owns the location before writing
-    expect(locations.assertOwnedBy).toHaveBeenCalledWith(
+    expect(locations.assertCanEdit).toHaveBeenCalledWith(
       OWNED_LOCATION,
       USER_ID,
     );
+    // the stricter creator-only check must NOT be used — it rejected group
+    // admins attaching their own group's ground (§4.6)
+    expect(locations.assertOwnedBy).not.toHaveBeenCalled();
 
     const arg = eventModel.create.mock.calls[0][0];
     // stored as an ObjectId, not the raw string
@@ -57,7 +62,7 @@ describe('EventsService — location handling on create', () => {
   it('stores null when no locationId is supplied and skips the ownership check', async () => {
     await service.create(USER_ID, { ...baseDto });
 
-    expect(locations.assertOwnedBy).not.toHaveBeenCalled();
+    expect(locations.assertCanEdit).not.toHaveBeenCalled();
     expect(eventModel.create.mock.calls[0][0].locationId).toBeNull();
   });
 
@@ -71,13 +76,24 @@ describe('EventsService — location handling on create', () => {
     expect(typeof arg.locationId).not.toBe('string');
   });
 
-  it('propagates a rejection from the ownership check without writing', async () => {
-    locations.assertOwnedBy.mockRejectedValueOnce(new Error('not yours'));
+  it('propagates a rejection from the permission check without writing', async () => {
+    locations.assertCanEdit.mockRejectedValueOnce(new Error('not yours'));
 
     await expect(
       service.create(USER_ID, { ...baseDto, locationId: OWNED_LOCATION }),
     ).rejects.toThrow('not yours');
     expect(eventModel.create).not.toHaveBeenCalled();
+  });
+
+  it('lets a group admin attach a location they did not personally create', async () => {
+    // The regression §4.6 fixes: assertCanEdit permits the owning group's
+    // owner/admin/captain, so this resolves where assertOwnedBy would throw.
+    locations.assertCanEdit.mockResolvedValueOnce({ _id: OWNED_LOCATION });
+
+    await expect(
+      service.create(USER_ID, { ...baseDto, locationId: OWNED_LOCATION }),
+    ).resolves.toBeDefined();
+    expect(eventModel.create).toHaveBeenCalled();
   });
 });
 
@@ -87,7 +103,9 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
   const playerModel: any = {};
   const memberModel: any = {};
   const groupModel: any = {};
-  const locations = { assertOwnedBy: jest.fn() };
+  // §4.6: event location attach moved from assertOwnedBy to assertCanEdit so
+  // a group's owner/admin/captain can attach the group's own ground.
+  const locations = { assertOwnedBy: jest.fn(), assertCanEdit: jest.fn() };
 
   const GROUP_ID = '507f1f77bcf86cd799439099';
 

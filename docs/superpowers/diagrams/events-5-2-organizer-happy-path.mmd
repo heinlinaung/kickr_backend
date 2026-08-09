@@ -28,7 +28,7 @@ sequenceDiagram
     API-->>O: registration closed
 
     O->>API: PATCH /events/:id/status {preparation}
-    Note over O: client shuffles and finalizes the teams
+    Note over O: client shuffles locally —<br/>Red/Yellow/Blue/Black (§5.4)
     O->>API: PUT /events/:id/teams { teams:[{name, playerIds}] }
     API->>API: assert status == 'preparation' + validate roster
     API->>DB: bulkWrite EventPlayer.team

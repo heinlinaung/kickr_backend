@@ -1,10 +1,16 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { EventPlayer, EventPlayerDocument } from '../events/schemas/event-player.schema';
 import { Event, EventDocument } from '../events/schemas/event.schema';
 import { GroupMember, GroupMemberDocument } from '../groups/schemas/group-member.schema';
 import { NotificationsService } from '../notifications/notifications.service';
+import { canShuffle } from '../events/events.lifecycle';
 
 @Injectable()
 export class ShuffleService {
@@ -29,6 +35,14 @@ export class ShuffleService {
       if (!member) throw new ForbiddenException('Only group owner or admin can shuffle players');
     } else if (event.createdBy.toString() !== requesterId) {
       throw new ForbiddenException('Only event creator can shuffle players');
+    }
+
+    // Spec §4.1: shuffling is a `preparation`-only operation. Previously this
+    // ran in any state, so teams could be reassigned mid-match.
+    if (!canShuffle(event.status)) {
+      throw new BadRequestException(
+        `Teams can only be shuffled during preparation (event is '${event.status}')`,
+      );
     }
 
     const players = await this.playerModel
