@@ -7,6 +7,8 @@ import {
   ConfirmSignUpCommand,
   ResendConfirmationCodeCommand,
   AdminInitiateAuthCommand,
+  AdminConfirmSignUpCommand,
+  AdminDeleteUserCommand,
   ForgotPasswordCommand,
   ConfirmForgotPasswordCommand,
   AuthFlowType,
@@ -68,6 +70,46 @@ export class CognitoService {
           SecretHash: this.secretHash(email),
           Username: email,
           ConfirmationCode: code,
+        }),
+      );
+    } catch (err) {
+      throw mapCognitoError(err);
+    }
+  }
+
+  /**
+   * Confirm a user without the emailed code, using pool-admin credentials.
+   *
+   * Only for server-driven flows where no human can read an inbox — the admin
+   * test-data endpoint seeds users that must be immediately usable. The normal
+   * signup path still goes through `confirmSignUp` with a real code.
+   */
+  async adminConfirmSignUp(email: string): Promise<void> {
+    try {
+      await this.client.send(
+        new AdminConfirmSignUpCommand({
+          UserPoolId: this.userPoolId,
+          Username: email,
+        }),
+      );
+    } catch (err) {
+      throw mapCognitoError(err);
+    }
+  }
+
+  /**
+   * Permanently delete a pool user.
+   *
+   * Needed because Mongo and Cognito are dual-written: dropping the User row
+   * alone would strand the identity in the pool, and the email is unique there,
+   * so a later signup with the same address would fail.
+   */
+  async adminDeleteUser(email: string): Promise<void> {
+    try {
+      await this.client.send(
+        new AdminDeleteUserCommand({
+          UserPoolId: this.userPoolId,
+          Username: email,
         }),
       );
     } catch (err) {
