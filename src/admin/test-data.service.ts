@@ -1,5 +1,10 @@
 // src/admin/test-data.service.ts
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { randomUUID } from 'crypto';
@@ -27,6 +32,10 @@ import {
 } from '../events/schemas/event-team-chat.schema';
 import { EventLike, EventLikeDocument } from '../events/schemas/event-like.schema';
 import { CognitoService } from '../auth/cognito/cognito.service';
+import {
+  cognitoErrorName,
+  isCognitoThrottle,
+} from '../auth/cognito/cognito.errors';
 import { GroupsService } from '../groups/groups.service';
 import { LocationsService } from '../locations/locations.service';
 import { EventsService } from '../events/events.service';
@@ -53,6 +62,46 @@ interface SeededUser {
   email: string;
   role: string;
 }
+
+/**
+ * Outcome of the user-seeding pass.
+ *
+ * `alreadyExisted` and `failures` are kept apart because they mean opposite
+ * things: the first is the endpoint behaving as specified (refusing to reuse an
+ * address), the second is something wrong upstream. Reporting both as
+ * "rejected" once made a password-policy rejection and an AWS throttle both
+ * read as "user already exists", which is exactly backwards.
+ */
+interface CreateUsersResult {
+  users: SeededUser[];
+  alreadyExisted: string[];
+  failures: { email: string; error: string; awsError?: string }[];
+}
+
+/**
+ * Pause between signup calls, and the retry schedule when AWS throttles.
+ *
+ * Cognito rate-limits SignUp per app client. 22 calls fired back-to-back get
+ * refused partway through — and a throttled request carrying a SECRET_HASH
+ * comes back as NotAuthorizedException, not TooManyRequestsException, so it
+ * looks like a credentials problem. Pacing the loop avoids provoking it;
+ * the backoff handles the burst limit still being hit.
+ */
+// Overridable so unit tests can exercise the retry path without waiting out
+// the real backoff. Production never sets this.
+const FAST = process.env.TEST_DATA_NO_DELAY === '1';
+const SIGNUP_GAP_MS = FAST ? 0 : 120;
+const SIGNUP_RETRY_DELAYS_MS = FAST ? [0, 0, 0] : [500, 1500, 4000];
+
+/**
+ * Give up on the whole pass after this many failures with nothing created.
+ * A bad secret or a rejected password fails for every address identically, so
+ * continuing only delays the diagnosis.
+ */
+const ABORT_AFTER_FAILURES = 3;
+
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 @Injectable()
 export class TestDataService {
@@ -89,7 +138,18 @@ export class TestDataService {
   async seed(dto: SeedTestDataDto) {
     const mode = dto.mode ?? 'full';
     const testId = randomUUID();
-    const password = dto.password ?? `Test-${randomUUID().slice(0, 12)}!aA1`;
+    const password = dto.password ?? generatePassword();
+
+    // Fail fast on a password the default Cognito policy would reject. Without
+    // this the same violation is discovered 22 times, once per signup, and only
+    // in the log — which is exactly how a missing uppercase character turned
+    // into a long debugging session.
+    const weakness = describePasswordWeakness(password);
+    if (weakness) {
+      throw new BadRequestException(
+        `password will be rejected by Cognito: ${weakness}`,
+      );
+    }
 
     const run = await this.testRunModel.create({
       testId,
@@ -106,12 +166,20 @@ export class TestDataService {
     };
 
     // --- 1. Users -------------------------------------------------------
-    const { users, rejected } = await this.createUsers(
+    const { users, alreadyExisted, failures } = await this.createUsers(
       dto,
       password,
       run,
       record,
     );
+
+    // Reported separately so a config/throttle problem is never mistaken for a
+    // name collision — the two need completely different fixes.
+    const userOutcome = {
+      users: users.length,
+      alreadyExisted,
+      failed: failures,
+    };
 
     // Everything downstream is created BY the owner, so its absence is fatal
     // even when other users landed — e.g. the owner's address already existed,
@@ -124,10 +192,7 @@ export class TestDataService {
         false,
         'no owner user was created — nothing downstream could be seeded',
       );
-      return this.report(testId, mode, run, checks, {
-        users: users.length,
-        rejectedExistingUsers: rejected,
-      });
+      return this.report(testId, mode, run, checks, userOutcome);
     }
 
     // --- 2. Group -------------------------------------------------------
@@ -181,8 +246,7 @@ export class TestDataService {
     if (mode === 'partial') {
       // Partial stops here by design: users and group only, group checks only.
       return this.report(testId, mode, run, checks, {
-        users: users.length,
-        rejectedExistingUsers: rejected,
+        ...userOutcome,
         group: 1,
         locations: locationIds.length,
       });
@@ -199,8 +263,7 @@ export class TestDataService {
     );
 
     return this.report(testId, mode, run, checks, {
-      users: users.length,
-      rejectedExistingUsers: rejected,
+      ...userOutcome,
       group: 1,
       locations: locationIds.length,
       event: eventId ? 1 : 0,
@@ -221,25 +284,38 @@ export class TestDataService {
     password: string,
     run: TestRunDocument,
     record: (name: string, passed: boolean, detail?: string) => void,
-  ): Promise<{ users: SeededUser[]; rejected: string[] }> {
+  ): Promise<CreateUsersResult> {
     const users: SeededUser[] = [];
-    const rejected: string[] = [];
+    const alreadyExisted: string[] = [];
+    const failures: CreateUsersResult['failures'] = [];
 
+    let first = true;
+    let aborted = false;
     for (const { role, count } of ROLE_PLAN) {
       for (let i = 1; i <= count; i++) {
-        const email =
+        // Parenthesised: `.toLowerCase()` binds tighter than `+`, so applying
+        // it to only the postfix literal would leave a mixed-case prefix.
+        const email = (
           `${dto.emailPrefix}-${role}-${String(i).padStart(2, '0')}` +
-          `${dto.emailPostfix}`.toLowerCase();
+          dto.emailPostfix
+        ).toLowerCase();
 
         const existing = await this.userModel.findOne({ email }).lean();
         if (existing) {
-          this.logger.error(`User already exists, refusing to create: ${email}`);
-          rejected.push(email);
+          // A warning, not an error: refusing to reuse an address is this
+          // endpoint working as specified.
+          this.logger.warn(`User already exists, refusing to create: ${email}`);
+          alreadyExisted.push(email);
           continue;
         }
 
+        // Pace the loop. Skipped before the first call so a single-user run
+        // pays nothing.
+        if (!first) await sleep(SIGNUP_GAP_MS);
+        first = false;
+
         try {
-          const sub = await this.cognito.signUp(email, password);
+          const sub = await this.signUpWithRetry(email, password);
           // Confirm server-side: nobody can read the seeded inbox, and an
           // unconfirmed user cannot log in, which would defeat the purpose of
           // creating real identities.
@@ -257,19 +333,45 @@ export class TestDataService {
           run.userIds.push(created._id as Types.ObjectId);
           run.userEmails.push(email);
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          this.logger.error(`Failed to create ${email}: ${message}`);
-          rejected.push(email);
+          const error = err instanceof Error ? err.message : String(err);
+          const awsError = cognitoErrorName(err);
+          this.logger.error(
+            `Failed to create ${email}: ${error}` +
+              (awsError ? ` [${awsError}]` : ''),
+          );
+          failures.push({ email, error, ...(awsError ? { awsError } : {}) });
+
+          // Bail out early on a systemic failure rather than repeating it 22
+          // times — the caller gets the same diagnosis in a fraction of the
+          // time. Only when NOTHING has succeeded: a single transient failure
+          // among successes is not systemic.
+          if (TestDataService.shouldAbortSeeding(failures, users.length)) {
+            this.logger.error(
+              `Aborting user seeding after ${failures.length} consecutive ` +
+                `failures — every signup is failing the same way: ${error}`,
+            );
+            aborted = true;
+          }
         }
+        if (aborted) break;
       }
+      if (aborted) break;
     }
 
     await run.save();
 
+    // Put the actual reason in the RESPONSE, not just the log. Failures here
+    // almost always share one cause, so the first message is the useful one.
+    const firstFailure = failures[0];
     record(
       `created ${TOTAL_USERS} users`,
       users.length === TOTAL_USERS,
-      `created ${users.length}, rejected ${rejected.length}`,
+      `created ${users.length}, ${alreadyExisted.length} already existed, ` +
+        `${failures.length} failed` +
+        (firstFailure
+          ? ` — first error: ${firstFailure.error}` +
+            (firstFailure.awsError ? ` [${firstFailure.awsError}]` : '')
+          : ''),
     );
     record(
       'roles seeded 1 owner / 2 captains / 3 admins / 16 members',
@@ -278,14 +380,80 @@ export class TestDataService {
           users.filter((u) => u.role === role).length === count,
       ),
     );
-    record(
-      're-creating an existing user is refused',
-      // Only meaningful once at least one address collided; when the prefix is
-      // fresh there is nothing to have refused, which is also correct.
-      rejected.length === 0 || rejected.length > 0,
-    );
 
-    return { users, rejected };
+    // Assert the refusal only when there was something to refuse. The previous
+    // version asserted `rejected.length === 0 || rejected.length > 0` — true for
+    // every possible input, so it could never fail and never told anyone
+    // anything.
+    if (alreadyExisted.length) {
+      record(
+        'an existing address is refused rather than reused',
+        users.every((u) => !alreadyExisted.includes(u.email)),
+        `${alreadyExisted.length} address(es) already in use — ` +
+          'pick a fresh emailPrefix, or clean up the run that owns them',
+      );
+    }
+    if (failures.length) {
+      record(
+        'every signup reached the identity provider',
+        false,
+        `${failures.length} failed. First: ${firstFailure.error}` +
+          (firstFailure.awsError ? ` [${firstFailure.awsError}]` : ''),
+      );
+    }
+
+    return { users, alreadyExisted, failures };
+  }
+
+  /**
+   * `cognito.signUp` with backoff when AWS throttles.
+   *
+   * Only throttling is retried. A policy violation or an existing username
+   * fails identically however many times it is tried, so retrying those would
+   * just multiply the wait before reporting.
+   */
+  private async signUpWithRetry(
+    email: string,
+    password: string,
+  ): Promise<string> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.cognito.signUp(email, password);
+      } catch (err) {
+        // ONLY genuine throttling is retried.
+        //
+        // NotAuthorizedException is deliberately excluded even though a
+        // throttled SECRET_HASH request can present that way: it is far more
+        // often a misconfigured client secret, and retrying then turns a fast,
+        // clear failure into 22 × 6s of waiting before the same answer. The
+        // per-call gap below is what avoids provoking the rate limit; backoff
+        // handles the burst case.
+        if (!isCognitoThrottle(err) || attempt >= SIGNUP_RETRY_DELAYS_MS.length) {
+          throw err;
+        }
+
+        const delay = SIGNUP_RETRY_DELAYS_MS[attempt];
+        this.logger.warn(
+          `Signup for ${email} throttled (attempt ${attempt + 1}); ` +
+            `retrying in ${delay}ms`,
+        );
+        await sleep(delay);
+      }
+    }
+  }
+
+  /**
+   * Stop the whole pass once it is clear every signup will fail the same way.
+   *
+   * A bad client secret or a pool policy the password violates fails
+   * identically for all 22 addresses. Grinding through the rest produces 21
+   * more copies of one message and delays the answer.
+   */
+  private static shouldAbortSeeding(
+    failures: CreateUsersResult['failures'],
+    created: number,
+  ): boolean {
+    return created === 0 && failures.length >= ABORT_AFTER_FAILURES;
   }
 
   /** Three group locations, plus the success/failure cases the spec asks for. */
@@ -575,7 +743,7 @@ export class TestDataService {
     mode: string,
     run: TestRunDocument,
     checks: Check[],
-    created: Record<string, number | string[]>,
+    created: Record<string, unknown>,
   ) {
     const failed = checks.filter((c) => !c.passed);
     return {
@@ -670,4 +838,33 @@ export class TestDataService {
         : {}),
     };
   }
+}
+
+/**
+ * A password satisfying the default Cognito policy: 8+ chars with an
+ * uppercase, a lowercase, a digit and a symbol.
+ *
+ * Built from explicit character classes rather than by decorating a UUID —
+ * `randomUUID()` is lowercase hex, so a template like `Test-<uuid>!aA1` leans
+ * entirely on its literal parts for three of the four classes. That works until
+ * someone edits the literal.
+ */
+function generatePassword(): string {
+  const hex = randomUUID().replace(/-/g, '').slice(0, 10);
+  return `Aa1!${hex.slice(0, 4).toUpperCase()}${hex.slice(4)}`;
+}
+
+/**
+ * Describes why the default Cognito policy would reject `password`, or null if
+ * it would pass. A pool with a custom policy may still be stricter — this
+ * catches the common cases before 22 signups discover them one at a time.
+ */
+function describePasswordWeakness(password: string): string | null {
+  const missing: string[] = [];
+  if (password.length < 8) missing.push('at least 8 characters');
+  if (!/[A-Z]/.test(password)) missing.push('an uppercase letter');
+  if (!/[a-z]/.test(password)) missing.push('a lowercase letter');
+  if (!/[0-9]/.test(password)) missing.push('a digit');
+  if (!/[^A-Za-z0-9]/.test(password)) missing.push('a symbol');
+  return missing.length ? `needs ${missing.join(', ')}` : null;
 }

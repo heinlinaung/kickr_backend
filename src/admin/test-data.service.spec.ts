@@ -1,4 +1,11 @@
 // src/admin/test-data.service.spec.ts
+//
+// Zero out the signup pacing/backoff. The real delays exist to avoid provoking
+// Cognito's rate limit; waiting them out here would push a 22-user retry test
+// past Jest's timeout while testing nothing extra. Set before the service is
+// imported, since the constants are read at module load.
+process.env.TEST_DATA_NO_DELAY = '1';
+
 import { Test } from '@nestjs/testing';
 import { getModelToken } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
@@ -191,7 +198,9 @@ describe('TestDataService', () => {
       const res = await seed();
 
       expect(cognito.signUp).not.toHaveBeenCalled();
-      expect(res.created.rejectedExistingUsers).toHaveLength(22);
+      // A collision is NOT a failure — it must not land in `failed`.
+      expect(res.created.alreadyExisted).toHaveLength(22);
+      expect(res.created.failed).toHaveLength(0);
     });
 
     it('keeps going when one signup fails, reporting the address', async () => {
@@ -207,10 +216,14 @@ describe('TestDataService', () => {
 
       // 21 of 22 still created; the failure is surfaced, not swallowed.
       expect(userModel.create).toHaveBeenCalledTimes(21);
-      expect(res.created.rejectedExistingUsers).toHaveLength(1);
-      expect(res.created.rejectedExistingUsers).toContain(
-        'test-member-01@example.com',
-      );
+      // A signup failure is reported as a failure, with its actual reason —
+      // not as "already exists", which sent a real debug session astray.
+      expect(res.created.alreadyExisted).toHaveLength(0);
+      expect(res.created.failed).toHaveLength(1);
+      expect(res.created.failed[0]).toMatchObject({
+        email: 'test-member-01@example.com',
+        error: 'rate limited',
+      });
     });
 
     it('stops cleanly when the owner could not be created', async () => {
@@ -228,6 +241,116 @@ describe('TestDataService', () => {
       expect(res.created.group).toBeUndefined();
       const check = res.checks.find((c) => c.name.includes('owner account'));
       expect(check?.passed).toBe(false);
+    });
+
+    it('surfaces the real signup error in the report, not just the log', async () => {
+      // The defect this replaces: every failure read as "already exists", so a
+      // password-policy rejection and an AWS throttle were indistinguishable
+      // from a name collision without reading the server log.
+      cognito.signUp.mockRejectedValue(
+        new Error('Password did not conform with policy'),
+      );
+
+      const res = await seed();
+
+      const detail = res.checks.find((c) =>
+        c.name.includes('created 22 users'),
+      )?.detail;
+      // The real reason reaches the RESPONSE, not just the log.
+      expect(detail).toContain('Password did not conform with policy');
+      expect(detail).toContain('0 already existed');
+      expect(res.created.failed[0].error).toContain(
+        'Password did not conform with policy',
+      );
+    });
+
+    it('aborts early instead of repeating one systemic failure 22 times', async () => {
+      // A bad secret or rejected password fails identically for every address.
+      cognito.signUp.mockRejectedValue(new Error('Invalid credentials'));
+
+      const res = await seed({ mode: 'partial' });
+
+      // Stops after a few attempts rather than grinding through all 22.
+      expect(cognito.signUp.mock.calls.length).toBeLessThanOrEqual(4);
+      expect(res.created.users).toBe(0);
+    });
+
+    it('records the AWS error name when one is available', async () => {
+      const err: any = new Error('Invalid credentials');
+      // mapCognitoError attaches the original name under this symbol key.
+      const { COGNITO_ERROR_NAME } = require('../auth/cognito/cognito.errors');
+      Object.defineProperty(err, COGNITO_ERROR_NAME, {
+        value: 'NotAuthorizedException',
+        enumerable: false,
+      });
+      cognito.signUp.mockRejectedValue(err);
+
+      const res = await seed();
+
+      expect(res.created.failed[0].awsError).toBe('NotAuthorizedException');
+    });
+
+    it('retries a throttled signup rather than giving up', async () => {
+      const err: any = new Error('Too many attempts, retry later');
+      const { COGNITO_ERROR_NAME } = require('../auth/cognito/cognito.errors');
+      Object.defineProperty(err, COGNITO_ERROR_NAME, {
+        value: 'TooManyRequestsException',
+        enumerable: false,
+      });
+      // Fail the first attempt for every address, then succeed.
+      const failedOnce = new Set<string>();
+      cognito.signUp.mockImplementation((email: string) => {
+        if (!failedOnce.has(email)) {
+          failedOnce.add(email);
+          return Promise.reject(err);
+        }
+        return Promise.resolve('sub-retry');
+      });
+
+      const res = await seed({ mode: 'partial' });
+
+      // All 22 still land, via the retry — two calls per address.
+      expect(res.created.users).toBe(22);
+      expect(res.created.failed).toHaveLength(0);
+      const attempts = cognito.signUp.mock.calls.map((c: any[]) => c[0]);
+      expect(attempts).toHaveLength(44);
+      expect(new Set(attempts).size).toBe(22);
+    });
+
+    it('does not retry a non-throttle failure', async () => {
+      // Retrying a policy violation or a bad client secret just multiplies the
+      // wait — it fails identically every time. Only throttling is retried.
+      const err: any = new Error('Invalid credentials');
+      const { COGNITO_ERROR_NAME } = require('../auth/cognito/cognito.errors');
+      Object.defineProperty(err, COGNITO_ERROR_NAME, {
+        value: 'NotAuthorizedException',
+        enumerable: false,
+      });
+      cognito.signUp.mockRejectedValue(err);
+
+      await seed({ mode: 'partial' });
+
+      // No address is attempted twice (and the run aborts early besides).
+      const attempted = cognito.signUp.mock.calls.map((c: any[]) => c[0]);
+      expect(new Set(attempted).size).toBe(attempted.length);
+    });
+
+    it('rejects a caller password the pool would refuse, before any signup', async () => {
+      await expect(seed({ password: 'nouppercase1!' })).rejects.toThrow(
+        /uppercase/,
+      );
+      expect(cognito.signUp).not.toHaveBeenCalled();
+    });
+
+    it('generates a password meeting the default policy', async () => {
+      await seed({ mode: 'partial' });
+
+      const [, password] = cognito.signUp.mock.calls[0];
+      expect(password).toMatch(/[A-Z]/);
+      expect(password).toMatch(/[a-z]/);
+      expect(password).toMatch(/[0-9]/);
+      expect(password).toMatch(/[^A-Za-z0-9]/);
+      expect(password.length).toBeGreaterThanOrEqual(8);
     });
 
     it('reports every check it ran', async () => {
