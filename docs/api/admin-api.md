@@ -258,15 +258,40 @@ path, so they exist in Cognito and can log in.
 | `emailPrefix` | Required. Letters, digits, `.`, `_`, `-` only (1–30 chars) |
 | `emailPostfix` | Required. Must look like `@example.com` |
 | `mode` | Optional, `full` (default) or `partial` |
-| `password` | Optional. Must satisfy your pool's policy; a compliant value is generated if omitted |
+| `password` | Optional. Must satisfy your pool's policy; a compliant value is generated if omitted. Validated up front — a password missing an uppercase, lowercase, digit or symbol is rejected with `400` before any signup runs |
 
 Addresses are built as `<prefix>-<role>-<nn><postfix>`, e.g.
 `test-owner-01@example.com`, `test-member-16@example.com`.
 
 **An address that already exists is refused and logged, never reused.** Those
-addresses come back in `created.rejectedExistingUsers`, and the run continues
-with whoever was created — so a partly-colliding prefix yields a partial
-fixture rather than a hard failure.
+addresses come back in `created.alreadyExisted`, and the run continues with
+whoever was created — so a partly-colliding prefix yields a partial fixture
+rather than a hard failure.
+
+**A signup that *fails* is reported separately, in `created.failed`**, with the
+real reason and the AWS error name:
+
+```json
+"failed": [
+  { "email": "qa-owner-01@example.com",
+    "error": "Password did not conform with policy: Password must have uppercase characters",
+    "awsError": "InvalidPasswordException" }
+]
+```
+
+The distinction matters: `alreadyExisted` is the endpoint working as specified,
+while `failed` means something is wrong with the pool, the client secret, or the
+password. If nothing at all is created, the run **aborts after 3 failures**
+rather than repeating one systemic error 22 times.
+
+Common `failed` causes:
+
+| `awsError` | Usually means |
+|---|---|
+| `InvalidPasswordException` | The password violates your pool's policy — pass a compliant `password` |
+| `NotAuthorizedException` | Wrong `COGNITO_CLIENT_SECRET`, a secret/no-secret mismatch, or self-registration disabled on the app client |
+| `TooManyRequestsException` | Cognito rate limit; the endpoint paces calls and retries these automatically |
+| `UsernameExistsException` | Present in Cognito but absent from Mongo — delete it from the pool, or use a new prefix |
 
 > If the **owner** address collides, nothing downstream can be built (the
 > group, locations and event are all created *by* the owner). The run stops
@@ -282,7 +307,8 @@ fixture rather than a hard failure.
     "mode": "full",
     "created": {
       "users": 22,
-      "rejectedExistingUsers": [],
+      "alreadyExisted": [],
+      "failed": [],
       "group": 1,
       "locations": 3,
       "event": 1,
@@ -373,6 +399,7 @@ curl -X DELETE http://localhost:3000/admin/test-data/<testId> \
 - [ ] **Never run this against production.** It creates real Cognito users.
 - [ ] Use a fresh `emailPrefix` per run, or expect refusals on collisions.
 - [ ] Read `failed` and the `checks` array — `201` alone means nothing passed.
+- [ ] Distinguish `created.alreadyExisted` (working as intended) from `created.failed` (something is broken) — check `awsError` for the cause.
 - [ ] Keep the `testId`; without it, cleanup means deleting rows by hand.
 - [ ] Clean up when finished, or seeded users accumulate in the Cognito pool.
 - [ ] A full run makes 22 Cognito signups — mind pool rate limits.
