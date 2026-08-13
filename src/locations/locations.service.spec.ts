@@ -354,6 +354,21 @@ describe('LocationsService', () => {
       );
     });
 
+    it('referee gets NO location rights — it is a label only', async () => {
+      // Deliberate: referee currently carries exactly what member does. If
+      // this starts failing, someone added it to EDIT_ROLES — decide whether
+      // that was intended rather than updating this test to match.
+      locationModel.findById.mockResolvedValue(groupLocation());
+      asRole('referee');
+
+      await expect(
+        service.update(LOC_ID, OTHER, { name: 'Nope' }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.remove(LOC_ID, OTHER)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+    });
+
     it('vice-captain may EDIT but NOT DELETE a group-owned location', async () => {
       // Deleting a venue the group relies on is structural, so it stays with
       // owner/admin — vice-captain inherits captain's limit too.

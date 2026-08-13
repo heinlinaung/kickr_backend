@@ -14,7 +14,7 @@ export class GroupMember {
 
   @Prop({
     default: 'member',
-    enum: ['owner', 'admin', 'captain', 'vice-captain', 'member'],
+    enum: ['owner', 'admin', 'captain', 'vice-captain', 'referee', 'member'],
   })
   role: string;
 

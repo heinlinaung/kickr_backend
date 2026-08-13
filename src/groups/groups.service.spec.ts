@@ -687,7 +687,7 @@ describe('GroupsService', () => {
       groupModel.findById.mockReturnValue(q({ _id: GROUP_ID }));
 
     // No role gate: leaving is self-service for everyone except the owner.
-    it.each(['admin', 'captain', 'vice-captain', 'member'])(
+    it.each(['admin', 'captain', 'vice-captain', 'referee', 'member'])(
       'lets a %s leave and deletes their membership row',
       async (role) => {
         groupExists();

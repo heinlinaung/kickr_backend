@@ -32,6 +32,7 @@ describe('GroupMember schema (roles + levels)', () => {
       'admin',
       'captain',
       'vice-captain',
+      'referee',
       'member',
     ]);
   });
