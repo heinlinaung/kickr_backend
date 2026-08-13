@@ -33,7 +33,8 @@ import { Group, GroupDocument } from '../groups/schemas/group.schema';
 import { Location, LocationDocument } from '../locations/schemas/location.schema';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
-import { SubmitTeamsDto } from './dto/submit-teams.dto';
+import { GenerateTeamsDto } from './dto/generate-teams.dto';
+import { AssignTeamPlayersDto } from './dto/assign-team-players.dto';
 import { UpdateMatchScoreDto } from './dto/update-match-score.dto';
 import { SubmitResultDto } from './dto/submit-result.dto';
 import { CreateEventTemplateDto } from './dto/create-event-template.dto';
@@ -51,22 +52,26 @@ import {
   canTransition,
   isEventStatus,
 } from './events.lifecycle';
+import { Team, TeamDocument } from './schemas/team.schema';
 import {
-  Fixture,
+  MATCH_BUFFER_MINUTES,
+  MIN_TEAMS,
   TEAM_COLOURS,
   computeStandings,
   dealIntoTeams,
-  generateFixtures,
+  generateFixturesLimited,
+  matchCountFor,
   shuffled,
 } from './events.fixtures';
-import {
-  SubmittedTeam,
-  unassignedPlayerIds,
-  validateTeams,
-} from './events.teams';
 
 /** Default geo radius when `near` is given without an explicit `radius`. */
 const DEFAULT_RADIUS_METRES = 10_000;
+
+/**
+ * Matches the bodyless `POST /shuffle` aims for when picking a match duration.
+ * Only a default — `POST /teams/generate` takes an explicit duration.
+ */
+const DEFAULT_SHUFFLE_MATCHES = 3;
 
 /** Filters accepted by `GET /events` (spec §6). */
 export interface ListEventsQuery {
@@ -92,6 +97,8 @@ export class EventsService {
     private groupModel: Model<GroupDocument>,
     @InjectModel(EventMatch.name)
     private matchModel: Model<EventMatchDocument>,
+    @InjectModel(Team.name)
+    private teamModel: Model<TeamDocument>,
     @InjectModel(EventTeamChat.name)
     private teamChatModel: Model<EventTeamChatDocument>,
     @InjectModel(EventLike.name)
@@ -247,7 +254,12 @@ export class EventsService {
    * `status` optionally narrows to one lifecycle state (e.g. only `join`
    * events for a "what can I sign up for" screen).
    */
-  async listByGroup(groupId: string, userId: string, status?: string) {
+  async listByGroup(
+    groupId: string,
+    userId: string,
+    status?: string,
+    includeExpired = false,
+  ) {
     if (!Types.ObjectId.isValid(groupId)) {
       throw new BadRequestException('Invalid group id');
     }
@@ -271,6 +283,18 @@ export class EventsService {
         throw new BadRequestException(`Unknown status '${status}'`);
       }
       filter.status = status;
+    }
+
+    // Hide expired events by default: a group screen is about what is coming
+    // up, and past fixtures otherwise accumulate at the top of the list
+    // forever. `done` is excluded regardless of date — an archived event is
+    // finished even if its date has not passed. Pass includeExpired=true for
+    // the history view.
+    if (!includeExpired) {
+      filter.date = { $gte: startOfToday() };
+      // Only add the status exclusion when the caller has not pinned a status;
+      // an explicit ?status=done must still return those events.
+      if (status === undefined) filter.status = { $ne: 'done' };
     }
 
     const events = await this.eventModel.find(filter).sort({ date: 1 }).lean();
@@ -365,14 +389,51 @@ export class EventsService {
     const event = await this.eventModel.findById(eventId).lean();
     if (!event) throw new NotFoundException('Event not found');
 
-    let groupRules: string[] = [];
+    // `groupRules` is free text now (was string[]) — always a string, never
+    // null, so the client can render it unconditionally.
+    let groupRules = '';
+    // The caller's role in the owning group, so the client can decide what to
+    // show without a second call to the groups API. null for a non-member, and
+    // for events with no group.
+    let userRole: string | null = null;
+
     if (event.groupId) {
       const group = await this.groupModel
         .findById(event.groupId)
         .select('rules')
         .lean();
-      groupRules = (group as { rules?: string[] } | null)?.rules ?? [];
+      groupRules = (group as { rules?: string } | null)?.rules ?? '';
+
+      if (userId) {
+        // Query the member row directly rather than via getMemberRole: that
+        // helper filters to approved rows, so it cannot report a pending one.
+        const member = await this.memberModel
+          .findOne({
+            groupId: event.groupId,
+            userId: new Types.ObjectId(userId),
+          })
+          .select('role status')
+          .lean();
+        // Only an APPROVED member has an effective role; a pending request
+        // stores role 'member' but confers nothing.
+        userRole = member?.status === 'approved' ? (member.role ?? null) : null;
+      }
     }
+
+    // Location as an embedded object rather than a bare id, so a detail screen
+    // renders the venue without a second request.
+    const location = event.locationId
+      ? await this.locationModel
+          .findById(event.locationId)
+          .select('name lat lng url address city country geo')
+          .lean()
+      : null;
+
+    const teams = await this.teamModel
+      .find({ eventId: event._id })
+      .populate('players', 'name profileImage')
+      .sort({ name: 1 })
+      .lean();
 
     // Standings ride along on detail so the client renders the table without a
     // second round trip. Empty until fixtures exist, and derived either way.
@@ -395,6 +456,11 @@ export class EventsService {
     return {
       ...withIsFull(event),
       groupRules,
+      // The caller's group role, so a detail screen can gate its own controls.
+      userRole,
+      // Resolved venue object; `locationId` stays for clients that only need it.
+      location,
+      teams,
       // Fixtures now live in their own collection, so detail attaches them
       // explicitly — the field is no longer on the event document.
       matches,
@@ -540,6 +606,7 @@ export class EventsService {
       'isPublic',
       'maxPlayers',
       'teamCount',
+      'duration',
       'sportType',
       'skillLevel',
       'price',
@@ -603,28 +670,201 @@ export class EventsService {
    * POST because the call replaces the whole assignment: the same body twice
    * leaves the same state.
    */
-  async submitTeams(eventId: string, userId: string, dto: SubmitTeamsDto) {
+  async generateTeams(
+    eventId: string,
+    userId: string,
+    dto: GenerateTeamsDto,
+  ) {
     const event = await this.assertOrganizer(eventId, userId);
     if (!canShuffle(event.status)) {
       throw new BadRequestException(
-        `Teams can only be submitted during preparation (event is '${event.status}')`,
+        `Teams can only be generated during preparation (event is '${event.status}')`,
       );
     }
 
-    const joined = await this.joinedPlayerIds(eventId);
-    const problem = validateTeams(dto.teams, joined);
-    if (problem) throw new BadRequestException(problem);
+    // The whole point of taking `duration` here: the schedule has to fit the
+    // booked slot, so refuse up front rather than persisting an empty fixture
+    // list the organizer would have to debug.
+    const matchCount = matchCountFor(event.duration, dto.duration);
+    if (matchCount < 1) {
+      throw new BadRequestException(
+        `A ${dto.duration}-minute match does not fit in a ${event.duration}-minute ` +
+          `event (${MATCH_BUFFER_MINUTES} minutes are reserved as buffer). ` +
+          'Shorten the match duration or lengthen the event.',
+      );
+    }
 
-    return this.persistTeams(event, dto.teams, joined);
+    const eventObjectId = event._id as Types.ObjectId;
+    const names = TEAM_COLOURS.slice(0, dto.teamsCount).map(String);
+
+    // Replace wholesale: regenerating during `preparation` is legal, and
+    // leaving the previous teams behind would strand players on teams that no
+    // longer have fixtures.
+    await this.teamModel.deleteMany({ eventId: eventObjectId });
+    await this.playerModel.updateMany(
+      { eventId: eventObjectId },
+      { $set: { team: null } },
+    );
+
+    const teams = await this.teamModel.insertMany(
+      names.map((name) => ({
+        eventId: eventObjectId,
+        groupId: event.groupId ?? null,
+        name,
+        players: [],
+        duration: dto.duration,
+        status: 'pending',
+      })),
+    );
+
+    // Fixtures are derived now, from the team NAMES — assignment comes later and
+    // does not change who plays whom.
+    const fixtures = generateFixturesLimited(names, matchCount);
+    await this.matchModel.deleteMany({ eventId: eventObjectId });
+    const matches = await this.matchModel.insertMany(
+      fixtures.map((fixture) => ({ ...fixture, eventId: eventObjectId })),
+    );
+
+    await Promise.all(
+      names.map((team) =>
+        this.teamChatModel.updateOne(
+          { eventId: eventObjectId, team },
+          { $setOnInsert: { eventId: eventObjectId, team, archived: false } },
+          { upsert: true },
+        ),
+      ),
+    );
+
+    return {
+      teams: teams.map((team) => team.toJSON()),
+      matches: matches.map((match) => match.toJSON()),
+      matchCount,
+      // Stated explicitly so the client can show how the number was reached
+      // rather than reverse-engineering it.
+      schedule: {
+        eventDuration: event.duration,
+        bufferMinutes: MATCH_BUFFER_MINUTES,
+        matchDuration: dto.duration,
+        scheduledMinutes: matchCount * dto.duration,
+      },
+    };
+  }
+
+  /**
+   * `PATCH /events/:id/teams/:teamId` — assign (or re-assign) one team's roster.
+   *
+   * Separate from generation because the client shuffles locally and the
+   * organizer may hand-edit the result. Validated against the joined roster and
+   * against the OTHER teams, so a player cannot end up in two teams — which
+   * would corrupt standings and per-player stats.
+   */
+  async assignTeamPlayers(
+    eventId: string,
+    teamId: string,
+    userId: string,
+    dto: AssignTeamPlayersDto,
+  ) {
+    const event = await this.assertOrganizer(eventId, userId);
+    if (!canShuffle(event.status)) {
+      throw new BadRequestException(
+        `Teams can only be edited during preparation (event is '${event.status}')`,
+      );
+    }
+    if (!Types.ObjectId.isValid(teamId)) {
+      throw new NotFoundException('Team not found');
+    }
+
+    const eventObjectId = event._id as Types.ObjectId;
+    const team = await this.teamModel.findOne({
+      _id: new Types.ObjectId(teamId),
+      eventId: eventObjectId,
+    });
+    if (!team) throw new NotFoundException('Team not found');
+
+    const joined = await this.joinedPlayerIds(eventId);
+    const roster = dto.playerIds.map(String);
+
+    const notJoined = roster.find((id) => !joined.includes(id));
+    if (notJoined) {
+      throw new BadRequestException(
+        `Player ${notJoined} is not a joined player on this event`,
+      );
+    }
+    const duplicate = roster.find((id, i) => roster.indexOf(id) !== i);
+    if (duplicate) {
+      throw new BadRequestException(
+        `Player ${duplicate} is listed twice in this team`,
+      );
+    }
+
+    // Check against sibling teams, not just this one.
+    const others = await this.teamModel
+      .find({ eventId: eventObjectId, _id: { $ne: team._id } })
+      .lean();
+    for (const other of others) {
+      const clash = roster.find((id) =>
+        (other.players ?? []).some((p) => p.toString() === id),
+      );
+      if (clash) {
+        throw new BadRequestException(
+          `Player ${clash} is already in ${other.name}`,
+        );
+      }
+    }
+
+    if (dto.name !== undefined) team.name = dto.name.trim();
+    team.players = roster.map((id) => new Types.ObjectId(id));
+    team.status = roster.length ? 'ready' : 'pending';
+    await team.save();
+
+    // Keep EventPlayer.team in step — it is what player-facing reads use.
+    await this.playerModel.updateMany(
+      { eventId: eventObjectId, team: team.name },
+      { $set: { team: null } },
+    );
+    if (roster.length) {
+      await this.playerModel.updateMany(
+        {
+          eventId: eventObjectId,
+          userId: { $in: roster.map((id) => new Types.ObjectId(id)) },
+        },
+        { $set: { team: team.name } },
+      );
+      await Promise.all(
+        roster.map((playerId) =>
+          this.notificationsService.create({
+            userId: playerId,
+            title: 'Your team is set',
+            body: `You are on ${team.name}. Check the fixtures for kick-off times.`,
+            type: 'event',
+            refId: eventObjectId.toString(),
+          }),
+        ),
+      );
+    }
+
+    return team.toJSON();
+  }
+
+  /** Every team on an event, with players populated for display. */
+  async listTeams(eventId: string) {
+    const event = await this.eventModel.findById(eventId).select('_id').lean();
+    if (!event) throw new NotFoundException('Event not found');
+
+    return this.teamModel
+      .find({ eventId: event._id })
+      .populate('players', 'name profileImage')
+      .sort({ name: 1 })
+      .lean();
   }
 
   /**
    * Server-side colour shuffle — the optional fallback of §4.3.3.
    *
-   * Deals joined players across the first `teamCount` colours, then routes
-   * through the SAME persistence path as a client submission, so fixtures,
-   * chats and notifications behave identically whichever entry point ran.
-   * Neither is privileged: whichever ran last wins.
+   * Now a convenience wrapper over the two-step flow: it generates the teams and
+   * then deals the joined players across them, so a caller that wants the server
+   * to decide still has a one-call path. Takes no body, so the team count comes
+   * from the event and the match duration is derived from its duration.
    */
   async shuffleTeams(eventId: string, userId: string) {
     const event = await this.assertOrganizer(eventId, userId);
@@ -635,102 +875,48 @@ export class EventsService {
     }
 
     const joined = await this.joinedPlayerIds(eventId);
-    if (joined.length < 2) {
+    if (joined.length < MIN_TEAMS) {
       throw new BadRequestException(
-        'At least 2 joined players are needed to shuffle teams',
+        `At least ${MIN_TEAMS} joined players are needed to shuffle teams`,
       );
     }
 
-    // Cap the team count at the player count: dealing 3 players into 4 teams
-    // would leave an empty team, and an empty team still generates fixtures
-    // it can never play.
-    const teamCount = Math.min(event.teamCount ?? 4, joined.length);
-    const teams = dealIntoTeams(shuffled(joined), teamCount);
+    // Cap at the player count: dealing 3 players into 4 teams leaves an empty
+    // team, and an empty team still appears in fixtures it can never play.
+    const teamsCount = Math.max(
+      MIN_TEAMS,
+      Math.min(event.teamCount ?? 4, joined.length),
+    );
 
-    return this.persistTeams(event, teams, joined);
-  }
+    // No body to take a match duration from, so aim for DEFAULT_SHUFFLE_MATCHES
+    // matches and let matchCountFor floor it. The organizer can regenerate with
+    // an explicit duration for a different split.
+    const playable = event.duration - MATCH_BUFFER_MINUTES;
+    const duration = Math.max(
+      1,
+      Math.floor(playable / DEFAULT_SHUFFLE_MATCHES),
+    );
 
-  /**
-   * The single write path for teams (§4.3.2) — everything derived from an
-   * assignment lives here, so both entry points stay consistent.
-   *
-   * Persists `EventPlayer.team`, regenerates fixtures, upserts one chat room
-   * per team, and notifies each assigned player. Callers have already
-   * validated the roster and checked the lifecycle gate.
-   */
-  private async persistTeams(
-    event: EventDocument,
-    teams: SubmittedTeam[],
-    joinedIds: string[],
-  ) {
-    const eventId = event._id as Types.ObjectId;
-    const assigned = new Map<string, string>();
-    for (const team of teams) {
-      for (const playerId of team.playerIds) {
-        assigned.set(String(playerId), team.name.trim());
-      }
+    const generated = await this.generateTeams(eventId, userId, {
+      teamsCount,
+      duration,
+    });
+
+    // Deal the shuffled players across the teams just created.
+    const dealt = dealIntoTeams(shuffled(joined), teamsCount);
+    const teams: unknown[] = [];
+    for (const [index, team] of generated.teams.entries()) {
+      teams.push(
+        await this.assignTeamPlayers(
+          eventId,
+          String((team as { _id: unknown })._id),
+          userId,
+          { playerIds: dealt[index]?.playerIds ?? [] },
+        ),
+      );
     }
 
-    // Clear every joined player first, then set the assigned ones. The clear
-    // is what drops players removed on a resubmission back to `team: null` —
-    // without it a dropped player would keep their old team silently.
-    const ops = joinedIds.map((playerId) => ({
-      updateOne: {
-        filter: {
-          eventId,
-          userId: new Types.ObjectId(playerId),
-        },
-        update: { $set: { team: assigned.get(playerId) ?? null } },
-      },
-    }));
-    if (ops.length) await this.playerModel.bulkWrite(ops);
-
-    const teamNames = teams.map((team) => team.name.trim());
-    const fixtures = generateFixtures(teamNames);
-
-    // Replace wholesale: resubmitting during `preparation` regenerates the
-    // fixture list, and leaving stale rows behind would corrupt standings.
-    // Delete-then-insert rather than upsert, because the team names (and so
-    // the pairings) may have changed entirely.
-    await this.matchModel.deleteMany({ eventId });
-    const created = await this.matchModel.insertMany(
-      fixtures.map((fixture) => ({ ...fixture, eventId })),
-    );
-
-    // Upsert rather than recreate: resubmitting the same team names keeps the
-    // existing rooms and their message history.
-    await Promise.all(
-      teamNames.map((team) =>
-        this.teamChatModel.updateOne(
-          { eventId, team },
-          { $setOnInsert: { eventId, team, archived: false } },
-          { upsert: true },
-        ),
-      ),
-    );
-
-    await Promise.all(
-      [...assigned.entries()].map(([playerId, team]) =>
-        this.notificationsService.create({
-          userId: playerId,
-          title: 'Your team is set',
-          body: `You are on ${team}. Check the fixtures for kick-off times.`,
-          type: 'event',
-          refId: eventId.toString(),
-        }),
-      ),
-    );
-
-    return {
-      teams: teams.map((team) => ({
-        name: team.name.trim(),
-        playerIds: team.playerIds.map(String),
-      })),
-      // The persisted rows, so callers get each fixture's `_id` — ratings and
-      // score entry both address a match by id.
-      fixtures: created.map((match) => match.toJSON()),
-      unassignedPlayerIds: unassignedPlayerIds(teams, joinedIds),
-    };
+    return { ...generated, teams };
   }
 
   /** Fixture list for an event, in match order. */
@@ -1024,6 +1210,19 @@ function withIsFull<T extends { joinedCount?: number; maxPlayers?: number }>(
     ...event,
     isFull: (event.joinedCount ?? 0) >= (event.maxPlayers ?? 0),
   };
+}
+
+/**
+ * Midnight local time today.
+ *
+ * Expiry is measured by DAY, not by timestamp: an event earlier this afternoon
+ * has not "expired" from a user's point of view while the day is still running,
+ * and cutting at `new Date()` would drop it from the list mid-event.
+ */
+function startOfToday(): Date {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
 }
 
 /** Escapes user input so it can be embedded in a RegExp literally. */

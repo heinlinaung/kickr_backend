@@ -98,6 +98,16 @@ export class Event {
   @Prop({ default: 4, min: 2, max: 6 })
   teamCount: number;
 
+  /**
+   * Total event length in MINUTES, minimum 60.
+   *
+   * Drives fixture generation: the schedule is built from
+   * `(duration - MATCH_BUFFER_MINUTES) / team.duration`, so a match list can
+   * never overrun the time actually booked (spec §4.3.4).
+   */
+  @Prop({ default: 90, min: 60 })
+  duration: number;
+
   @Prop({ type: String, default: null })
   coverImage: string | null;
 

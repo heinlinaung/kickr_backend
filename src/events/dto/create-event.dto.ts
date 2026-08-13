@@ -108,4 +108,19 @@ export class CreateEventDto {
   @IsOptional()
   @IsMongoId()
   templateId?: string;
+
+  @ApiProperty({
+    example: 90,
+    required: false,
+    minimum: 60,
+    description:
+      'Total event length in MINUTES, at least 60. Drives fixture generation: ' +
+      'floor((duration - 10) / match duration) matches.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(60)
+  @Max(1440)
+  duration?: number;
 }

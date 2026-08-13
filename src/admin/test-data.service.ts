@@ -592,44 +592,84 @@ export class TestDataService {
     await this.eventsService.setStatus(eventId, owner.id, 'preparation');
 
     const half = Math.ceil(joiners.length / 2);
-    const teams = [
-      { name: 'Red', playerIds: joiners.slice(0, half).map((u) => u.id) },
-      { name: 'Blue', playerIds: joiners.slice(half).map((u) => u.id) },
-    ];
-
-    let fixtureCount = 0;
+    // Two-step flow: generate the empty teams and the schedule, then assign.
+    // Deliberately `any`: it is assigned inside a closure, and TS narrows the
+    // declared union to `never` at the later read sites.
+    let generated: any = null;
     await this.expect(
       record,
-      'owner submits 2 teams and fixtures are generated',
+      'owner generates 2 teams and a fixture list',
       async () => {
-        const res = await this.eventsService.submitTeams(eventId, owner.id, {
-          teams,
-        } as any);
-        fixtureCount = res.fixtures.length;
+        generated = (await this.eventsService.generateTeams(eventId, owner.id, {
+          teamsCount: 2,
+          duration: 30,
+        })) as any;
       },
       'resolve',
     );
-    // 2 teams playing home and away is 2 fixtures.
-    record('2 teams -> 2 fixtures', fixtureCount === 2, `got ${fixtureCount}`);
+
+    // The event is seeded with duration 90, so (90 - 10) / 30 floors to 2.
+    record(
+      'match count derives from event duration',
+      generated?.matchCount === 2,
+      `got ${generated?.matchCount}`,
+    );
+    record(
+      'generated teams start empty',
+      (generated?.teams ?? []).every((t: any) => (t.players ?? []).length === 0),
+    );
+
+    const teamIds = (generated?.teams ?? []).map((t: any) => String(t._id));
+
+    await this.expect(
+      record,
+      'owner assigns players to a generated team',
+      () =>
+        this.eventsService.assignTeamPlayers(eventId, teamIds[0], owner.id, {
+          playerIds: joiners.slice(0, half).map((u) => u.id),
+        }),
+      'resolve',
+    );
 
     await this.expect(
       record,
       'a roster naming a non-joined player is refused',
       () =>
-        this.eventsService.submitTeams(eventId, owner.id, {
-          teams: [
-            { name: 'Red', playerIds: [new Types.ObjectId().toString()] },
-            { name: 'Blue', playerIds: [joiners[1].id] },
-          ],
-        } as any),
+        this.eventsService.assignTeamPlayers(eventId, teamIds[1], owner.id, {
+          playerIds: [new Types.ObjectId().toString()],
+        }),
       'reject',
     );
 
     await this.expect(
       record,
-      'a plain member cannot submit teams',
+      'a player already in another team is refused',
       () =>
-        this.eventsService.submitTeams(eventId, joiners[0].id, { teams } as any),
+        this.eventsService.assignTeamPlayers(eventId, teamIds[1], owner.id, {
+          playerIds: [joiners[0].id],
+        }),
+      'reject',
+    );
+
+    await this.expect(
+      record,
+      'a plain member cannot generate teams',
+      () =>
+        this.eventsService.generateTeams(eventId, joiners[0].id, {
+          teamsCount: 2,
+          duration: 30,
+        }),
+      'reject',
+    );
+
+    await this.expect(
+      record,
+      'a match longer than the event is refused',
+      () =>
+        this.eventsService.generateTeams(eventId, owner.id, {
+          teamsCount: 2,
+          duration: 500,
+        }),
       'reject',
     );
 

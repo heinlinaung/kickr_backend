@@ -1,10 +1,13 @@
 // src/events/events.fixtures.spec.ts
 import {
+  MATCH_BUFFER_MINUTES,
   MAX_TEAMS,
   TEAM_COLOURS,
   computeStandings,
   dealIntoTeams,
   generateFixtures,
+  generateFixturesLimited,
+  matchCountFor,
   shuffled,
 } from './events.fixtures';
 
@@ -78,6 +81,85 @@ describe('generateFixtures — double round-robin (spec §4.3.4)', () => {
 
   it('returns no fixtures for a single team', () => {
     expect(generateFixtures(['Red'])).toEqual([]);
+  });
+});
+
+describe('matchCountFor — duration-driven scheduling', () => {
+  // The two worked examples from the spec, verbatim.
+  it('event 90 min with 30-min matches -> 2', () => {
+    expect(matchCountFor(90, 30)).toBe(2); // (90-10)/30 = 2.66 -> 2
+  });
+
+  it('event 100 min with 30-min matches -> 3', () => {
+    expect(matchCountFor(100, 30)).toBe(3); // (100-10)/30 = 3
+  });
+
+  it('reserves the buffer before dividing', () => {
+    // Without the 10-minute buffer this would be 3, and the schedule would run
+    // to the very end of the booking with no changeover time.
+    expect(matchCountFor(90, 30)).toBe(2);
+    expect(MATCH_BUFFER_MINUTES).toBe(10);
+  });
+
+  it('floors rather than rounding, so a schedule never overruns', () => {
+    // 2.9 matches' worth of time must yield 2, not 3.
+    expect(matchCountFor(97, 30)).toBe(2);
+  });
+
+  it('never schedules more minutes than remain after the buffer', () => {
+    for (const eventDuration of [60, 75, 90, 100, 120, 180]) {
+      for (const matchDuration of [10, 20, 30, 45, 60]) {
+        const count = matchCountFor(eventDuration, matchDuration);
+        expect(count * matchDuration).toBeLessThanOrEqual(
+          eventDuration - MATCH_BUFFER_MINUTES,
+        );
+      }
+    }
+  });
+
+  it('returns 0 when not even one match fits', () => {
+    expect(matchCountFor(60, 90)).toBe(0);
+    // Exactly the buffer leaves no playable time at all.
+    expect(matchCountFor(10, 5)).toBe(0);
+  });
+
+  it('returns 0 for nonsensical inputs rather than throwing', () => {
+    expect(matchCountFor(0, 30)).toBe(0);
+    expect(matchCountFor(90, 0)).toBe(0);
+    expect(matchCountFor(-90, 30)).toBe(0);
+  });
+});
+
+describe('generateFixturesLimited', () => {
+  it('caps the fixture list at the limit', () => {
+    // 4 teams would be 12 fixtures unlimited.
+    expect(generateFixturesLimited(['Red', 'Yellow', 'Blue', 'Black'], 2))
+      .toHaveLength(2);
+  });
+
+  it('takes a prefix of leg 1, so no team plays a rematch early', () => {
+    const teams = ['Red', 'Yellow', 'Blue'];
+    const limited = generateFixturesLimited(teams, 3);
+
+    // Leg 1 pairs every combination once before leg 2 begins, so a 3-match
+    // schedule over 3 teams contains three DIFFERENT pairings.
+    const pairs = limited.map((f) => [f.teamA, f.teamB].sort().join('v'));
+    expect(new Set(pairs).size).toBe(3);
+  });
+
+  it('numbers the truncated list from 1 with no gaps', () => {
+    const limited = generateFixturesLimited(['Red', 'Yellow', 'Blue'], 4);
+    expect(limited.map((f) => f.matchNumber)).toEqual([1, 2, 3, 4]);
+  });
+
+  it('returns nothing for a zero or negative limit', () => {
+    expect(generateFixturesLimited(['Red', 'Yellow'], 0)).toEqual([]);
+    expect(generateFixturesLimited(['Red', 'Yellow'], -1)).toEqual([]);
+  });
+
+  it('cannot exceed the full round-robin however high the limit', () => {
+    // 2 teams meet twice; asking for 10 matches must not invent fixtures.
+    expect(generateFixturesLimited(['Red', 'Yellow'], 10)).toHaveLength(2);
   });
 });
 

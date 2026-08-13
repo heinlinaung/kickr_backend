@@ -21,6 +21,38 @@ export const TEAM_COLOURS = [
 export const MIN_TEAMS = 2;
 export const MAX_TEAMS = TEAM_COLOURS.length;
 
+/**
+ * Minutes held back from the event before scheduling matches.
+ *
+ * Warm-up, changeovers and overrun all come out of the booked slot, so the
+ * fixture list is built against `duration - BUFFER` rather than the full
+ * duration. Without it a schedule that fits exactly on paper runs past the
+ * end of the booking in practice.
+ */
+export const MATCH_BUFFER_MINUTES = 10;
+
+/**
+ * How many matches fit in an event.
+ *
+ * `floor((eventDuration - buffer) / teamDuration)` — floored, so the schedule
+ * never exceeds the time booked. Worked examples from the spec:
+ *
+ *   duration 90,  team 30 -> (90-10)/30  = 2.66 -> 2 matches
+ *   duration 100, team 30 -> (100-10)/30 = 3    -> 3 matches
+ *
+ * Returns 0 when the event is too short to hold even one match; the caller
+ * decides whether that is an error.
+ */
+export function matchCountFor(
+  eventDuration: number,
+  teamDuration: number,
+): number {
+  if (!(eventDuration > 0) || !(teamDuration > 0)) return 0;
+  const playable = eventDuration - MATCH_BUFFER_MINUTES;
+  if (playable <= 0) return 0;
+  return Math.floor(playable / teamDuration);
+}
+
 export interface Fixture {
   matchNumber: number;
   teamA: string;
@@ -42,6 +74,24 @@ export interface Fixture {
  * Scores start `null`, never 0: a goalless draw is a real result, and standings
  * skip unplayed fixtures by testing for null (see `computeStandings`).
  */
+/**
+ * The double round-robin, truncated to `limit` matches.
+ *
+ * The time available decides how many matches are played (`matchCountFor`), so
+ * a full round-robin is generated and then cut to fit. Taking a prefix of the
+ * round-robin rather than choosing pairings freely keeps the schedule fair as
+ * far as it goes: leg 1 is emitted in full before leg 2 begins, so with a
+ * partial schedule every team still meets a different opponent each time
+ * before anyone plays a rematch.
+ */
+export function generateFixturesLimited(
+  teamNames: string[],
+  limit: number,
+): Fixture[] {
+  if (limit <= 0) return [];
+  return generateFixtures(teamNames).slice(0, limit);
+}
+
 export function generateFixtures(teamNames: string[]): Fixture[] {
   const fixtures: Fixture[] = [];
   let matchNumber = 1;

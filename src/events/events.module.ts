@@ -6,6 +6,7 @@ import { EventsService } from './events.service';
 import { Event, EventSchema } from './schemas/event.schema';
 import { EventPlayer, EventPlayerSchema } from './schemas/event-player.schema';
 import { EventMatch, EventMatchSchema } from './schemas/event-match.schema';
+import { Team, TeamSchema } from './schemas/team.schema';
 import {
   EventTeamChat,
   EventTeamChatSchema,
@@ -35,6 +36,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
       { name: Group.name, schema: GroupSchema },
       // Step 2-4 collections: fixtures, team chats, likes and templates.
       { name: EventMatch.name, schema: EventMatchSchema },
+      { name: Team.name, schema: TeamSchema },
       { name: EventTeamChat.name, schema: EventTeamChatSchema },
       { name: EventLike.name, schema: EventLikeSchema },
       { name: EventTemplate.name, schema: EventTemplateSchema },

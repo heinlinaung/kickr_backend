@@ -221,7 +221,7 @@ The same adoption happens on `POST /groups/:id/locations` when you attach one of
   "logoFileId": "6a6b21375c7cd75eb84a157d",
   "wallpaper": "https://ik.imagekit.io/kickr/groups/...-wallpaper-...",
   "wallpaperFileId": "...",
-  "rules": ["No late", "Bring bib", "Respect"],
+  "rules": "No late\nBring bib\nRespect",
   "country": "Thailand",
   "city": "Bangkok",
   "locations": ["6a6b21077d15afe5f7856042", "6a6b21227d15afe5f7856045"],
@@ -283,7 +283,7 @@ The same adoption happens on `POST /groups/:id/locations` when you attach one of
   "isPrivate": false,
   "country": "Thailand",
   "city": "Bangkok",
-  "rules": ["Be on time", "No alcohol before the match"],
+  "rules": "Be on time\nNo alcohol before the match",
   "locationIds": ["6a6b21077d15afe5f7856042"]
 }
 ```
@@ -456,18 +456,33 @@ Uploading again replaces the previous image (the old file is cleaned up server-s
 | Update | `PATCH /groups/:id` with `rules` (owner/admin) |
 
 ```json
-{ "rules": ["No smoking", "Arrive 15-30 min early\n(tell the captain if late)"] }
+{ "rules": "No smoking\nArrive 15-30 min early\n(tell the captain if late)" }
 ```
 
 > `GET`/`POST /groups/:id/rules` **existed briefly and have been removed.** Use the group field instead — a call to those paths now falls through to the `:id` wildcard and will not behave as expected.
 
-**`rules` REPLACES the whole array** — it does not append. To add one rule, send the existing list plus the new entry, or you will silently wipe the others.
+> ### ⚠️ `rules` is now a **string**, not an array
+>
+> It was `string[]` (one entry per rule) and is now a single block of free-form
+> text. A build doing `List<String>.from(j['rules'])` **crashes**; one rendering
+> `rules.join('\n')` silently shows nothing.
+>
+> Existing groups were migrated by joining their entries with `\n`
+> (`scripts/migrate-group-rules-to-text.ts`), so the text you get back has one
+> rule per line for any group created before the change.
+
+**`rules` REPLACES the whole value** — it does not append. To add a rule, send the existing text plus the new line, or you will wipe what was there.
 
 Three properties to rely on:
 
-- **No count cap.** A 6-item list — once rejected with `400` — now succeeds.
-- **No per-rule length limit.** A rule can be a full paragraph.
-- **Newlines inside a rule are preserved verbatim**, including blank lines (`\n\n`). Non-ASCII (Burmese, emoji) round-trips byte-for-byte.
+- **No length cap worth worrying about** — 5000 characters.
+- **Newlines are preserved verbatim**, including blank lines (`\n\n`). Non-ASCII (Burmese, emoji) round-trips byte-for-byte.
+- **Nothing is trimmed**, so leading/trailing newlines survive too.
+
+> **Rendering is the client's job.** HTML collapses newlines by default — render
+> with `white-space: pre-line`, or split on `\n` and lay the lines out yourself.
+> This is the most likely place for the feature to look broken while the API is
+> behaving correctly.
 
 > ⚠️ **You must render with `white-space: pre-line` — or the equivalent.** Flutter's `Text` already honours `\n`, but if you render rules into HTML (a `WebView`, or any web build) newlines **collapse** and a carefully formatted rule list appears as one run-on paragraph. This is the single most likely place for this feature to look broken while the API is behaving correctly. The server stores exactly what you send.
 
@@ -577,7 +592,7 @@ class Group {
   final String ownerId;
   final String? logo;        // ImageKit URL — team crest
   final String? wallpaper;   // ImageKit URL — cover photo
-  final List<String> rules;
+  final String rules;
   final List<String> locationIds; // IDs only; fetch /groups/:id/locations to populate
   final String? country;     // optional, e.g. 'Thailand'
   final String? city;        // optional, e.g. 'Bangkok'
@@ -597,7 +612,7 @@ class Group {
     this.sportType,
     this.logo,
     this.wallpaper,
-    this.rules = const [],
+    this.rules = '',
     this.locationIds = const [],
     this.country,
     this.city,
@@ -625,7 +640,8 @@ class Group {
         ownerId: j['ownerId'] as String,
         logo: j['logo'] as String?,
         wallpaper: j['wallpaper'] as String?,
-        rules: List<String>.from((j['rules'] as List?) ?? const []),
+        // rules is a STRING now (was List<String>) — see the callout above.
+        rules: (j['rules'] as String?) ?? '',
         locationIds: List<String>.from((j['locations'] as List?) ?? const []),
         isPrivate: (j['isPrivate'] as bool?) ?? false,
         maxPlayers: (j['maxPlayers'] as num?)?.toInt() ?? 22,
@@ -714,7 +730,7 @@ class GroupInvite {
 | Group detail — rules | `GET /groups/:id` → `rules` (render `\n` — §3.9) |
 | Group detail — map/venues | `GET /groups/:id/locations` (populated) |
 | Group settings — images | `POST /groups/:id/logo`, `POST /groups/:id/wallpaper` |
-| Group settings — rules | `PATCH /groups/:id` with `rules` — replaces the whole array, no cap (§3.9) |
+| Group settings — rules | `PATCH /groups/:id` with `rules` — a **string**, replaced wholesale (§3.9) |
 | Group settings — venues | `POST` / `DELETE /groups/:id/locations[/:locationId]` (max 5) |
 | Invite / share QR | `GET /groups/:id/qr` → render `inviteLink`; "Regenerate" → `GET /groups/:id/invite-code` |
 | Join via QR scan | `POST /groups/join-by-code` → **`pending`**; show "awaiting approval", then poll `GET /groups/:id` → `memberStatus` |
@@ -733,7 +749,7 @@ class GroupInvite {
 - [ ] `logo` ≠ `wallpaper` (crest vs cover). Both are ready-to-use CDN URLs.
 - [ ] `GET /:id/qr` is **stable** and open to **any authenticated user**; `GET /:id/invite-code` **rotates** and stays owner/admin — don't call it on screen load.
 - [ ] Max **5** locations per group. Team rules have **no limit** — render with `white-space: pre-line` so newlines survive (§3.9).
-- [ ] `rules` on `PATCH /groups/:id` **replaces** the whole array — resend existing rules when adding one. There are **no** `/groups/:id/rules` routes.
+- [ ] `rules` is a **string** (was an array) and `PATCH /groups/:id` **replaces** it wholesale — resend the existing text when adding a line. There are **no** `/groups/:id/rules` routes.
 - [ ] **Join-by-code/QR now needs approval** (§3.6). Don't route into the group on success; branch on `status: "pending"`.
 - [ ] On `GET /groups/:id`, check **`memberStatus == 'approved'`**, not just a non-null `userRole` — a pending requester has `userRole: "member"`.
 - [ ] `group.level` is **inert** — nothing reads it server-side; don't gate features on it.
