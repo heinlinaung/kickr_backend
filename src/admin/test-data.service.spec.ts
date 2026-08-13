@@ -116,9 +116,15 @@ describe('TestDataService', () => {
     events.join = jest.fn().mockResolvedValue({});
     events.leave = jest.fn().mockResolvedValue({});
     events.setStatus = jest.fn().mockResolvedValue({});
-    events.submitTeams = jest
-      .fn()
-      .mockResolvedValue({ fixtures: [{}, {}], teams: [], unassignedPlayerIds: [] });
+    events.generateTeams = jest.fn().mockResolvedValue({
+      teams: [
+        { _id: 't1', name: 'Red', players: [] },
+        { _id: 't2', name: 'Blue', players: [] },
+      ],
+      matches: [{}, {}],
+      matchCount: 2,
+    });
+    events.assignTeamPlayers = jest.fn().mockResolvedValue({});
     events.listMatches = jest.fn().mockResolvedValue([{ matchNumber: 1 }]);
     events.setMatchScore = jest.fn().mockResolvedValue({});
     events.standings = jest
@@ -368,7 +374,8 @@ describe('TestDataService', () => {
     it('full mode builds the event and teams', async () => {
       const res = await seed({ mode: 'full' });
       expect(events.create).toHaveBeenCalled();
-      expect(events.submitTeams).toHaveBeenCalled();
+      expect(events.generateTeams).toHaveBeenCalled();
+      expect(events.assignTeamPlayers).toHaveBeenCalled();
       expect(res.created.event).toBe(1);
     });
 

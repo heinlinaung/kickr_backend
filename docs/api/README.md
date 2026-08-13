@@ -11,6 +11,16 @@ Integration guides written against the **live** API — every request/response s
 
 **Live reference while the server is running:** Swagger UI at `/api-docs`, OpenAPI JSON at `/api-docs-json`.
 
+## ⚠️ Breaking changes — 2026-08-13
+
+**`group.rules` is a string, not an array.** It was `string[]`; it is now one block of free-form text with newlines preserved. A build doing `List<String>.from(j['rules'])` crashes. Existing groups were migrated by joining entries with `\n` — run `scripts/migrate-group-rules-to-text.ts` before deploying.
+
+**`PUT /events/:id/teams` is removed.** Teams are created empty by `POST /events/:id/teams/generate` (which also derives the fixture list from `event.duration`), then populated by `PATCH /events/:id/teams/:teamId`.
+
+**`GET /events/group/:groupId` hides expired and `done` events** unless `?includeExpired=true`.
+
+Full detail in [the changelog](../change-logs/2026-08-13.md).
+
 ## ⚠️ Breaking change — 2026-08-09
 
 **Event `status` values changed.** The `open | full | done` enum is replaced by the 6-state lifecycle `join → before_match → preparation → playing → after_match → done`.

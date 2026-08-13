@@ -1,7 +1,11 @@
 // src/events/events.service.teams.spec.ts
 import { Test } from '@nestjs/testing';
 import { Types } from 'mongoose';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { EventsService } from './events.service';
 import { eventsProviders } from './events.test-providers';
 
@@ -11,6 +15,7 @@ const P1 = '507f191e810c19729de860e1';
 const P2 = '507f191e810c19729de860e2';
 const P3 = '507f191e810c19729de860e3';
 const P4 = '507f191e810c19729de860e4';
+const STRANGER = '507f191e810c19729de860ef';
 
 const eventDoc = (over: Record<string, unknown> = {}) => {
   const doc: any = {
@@ -19,6 +24,7 @@ const eventDoc = (over: Record<string, unknown> = {}) => {
     groupId: null,
     status: 'preparation',
     teamCount: 4,
+    duration: 90,
     matches: [],
     photos: [],
     result: null,
@@ -51,6 +57,7 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
   const memberModel: any = {};
   const teamChatModel: any = {};
   const matchModel: any = {};
+  const teamModel: any = {};
   const notifications: any = {};
 
   beforeEach(async () => {
@@ -73,6 +80,24 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       ),
     );
     matchModel.findOneAndUpdate = jest.fn();
+    playerModel.updateMany = jest.fn().mockResolvedValue({});
+    teamModel.deleteMany = jest.fn().mockResolvedValue({ deletedCount: 0 });
+    // toJSON must echo a REAL ObjectId: shuffleTeams feeds these ids straight
+    // back into assignTeamPlayers, which validates them.
+    teamModel.insertMany = jest.fn().mockImplementation((rows: any[]) =>
+      Promise.resolve(
+        rows.map((row) => {
+          const _id = new Types.ObjectId();
+          return { ...row, _id, toJSON: () => ({ ...row, _id }) };
+        }),
+      ),
+    );
+    teamModel.findOne = jest.fn();
+    teamModel.find = jest.fn().mockReturnValue({
+      populate: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([]),
+    });
     matchModel.find = jest.fn().mockReturnValue({
       sort: jest.fn().mockReturnThis(),
       lean: jest.fn().mockResolvedValue([]),
@@ -88,6 +113,7 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
           memberModel,
           teamChatModel,
           matchModel,
+          teamModel,
           notifications,
         }),
       ],
@@ -98,194 +124,313 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
   const submit = (teams: { name: string; playerIds: string[] }[]) =>
     service.submitTeams(EVENT_ID, CREATOR, { teams } as any);
 
-  describe('submitTeams gating', () => {
+  describe('generateTeams gating', () => {
+    const generate = (over: Record<string, unknown> = {}) =>
+      service.generateTeams(EVENT_ID, CREATOR, {
+        teamsCount: 2,
+        duration: 30,
+        ...over,
+      } as any);
+
     it.each(['join', 'before_match', 'playing', 'after_match', 'done'])(
-      'rejects a submission while %s',
+      'rejects generation while %s',
       async (status) => {
         eventModel.findById.mockResolvedValue(eventDoc({ status }));
-        await expect(
-          submit([
-            { name: 'Red', playerIds: [P1] },
-            { name: 'Blue', playerIds: [P2] },
-          ]),
-        ).rejects.toBeInstanceOf(BadRequestException);
+        await expect(generate()).rejects.toBeInstanceOf(BadRequestException);
       },
     );
 
-    it('accepts a submission during preparation', async () => {
+    it('accepts generation during preparation', async () => {
       eventModel.findById.mockResolvedValue(eventDoc());
-      await expect(
-        submit([
-          { name: 'Red', playerIds: [P1] },
-          { name: 'Blue', playerIds: [P2] },
-        ]),
-      ).resolves.toBeDefined();
+      await expect(generate()).resolves.toBeDefined();
     });
 
-    it('rejects a roster naming a player who never joined', async () => {
+    it('refuses a match duration that does not fit the event', async () => {
+      // 60-minute event, 10 reserved as buffer -> a 90-minute match cannot fit.
+      eventModel.findById.mockResolvedValue(eventDoc({ duration: 60 }));
+      await expect(generate({ duration: 90 })).rejects.toThrow(
+        /does not fit/,
+      );
+    });
+
+    it('refuses a stranger', async () => {
       eventModel.findById.mockResolvedValue(eventDoc());
-      const stranger = '507f191e810c19729de860ff';
       await expect(
-        submit([
-          { name: 'Red', playerIds: [stranger] },
-          { name: 'Blue', playerIds: [P2] },
-        ]),
-      ).rejects.toThrow(/not a joined player/);
+        service.generateTeams(EVENT_ID, STRANGER, {
+          teamsCount: 2,
+          duration: 30,
+        } as any),
+      ).rejects.toBeInstanceOf(ForbiddenException);
     });
   });
 
-  describe('the shared persistence path (§4.3.2)', () => {
-    it('generates a double round-robin from the submitted teams', async () => {
-      const doc = eventDoc();
-      eventModel.findById.mockResolvedValue(doc);
+  describe('generateTeams — teams and schedule', () => {
+    const generate = (over: Record<string, unknown> = {}) =>
+      service.generateTeams(EVENT_ID, CREATOR, {
+        teamsCount: 3,
+        duration: 30,
+        ...over,
+      } as any);
 
-      const res = await submit([
-        { name: 'Red', playerIds: [P1] },
-        { name: 'Blue', playerIds: [P2] },
-        { name: 'Green', playerIds: [P3] },
-        { name: 'Black', playerIds: [P4] },
-      ]);
+    it('creates the requested number of EMPTY teams', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc());
+      const res = await generate();
 
-      // 4 teams -> 12 fixtures, persisted to the eventmatches collection.
-      expect(res.fixtures).toHaveLength(12);
-      expect(matchModel.insertMany.mock.calls[0][0]).toHaveLength(12);
-      // Every row carries its eventId so it can be found again.
-      expect(
-        matchModel.insertMany.mock.calls[0][0].every((r: any) => r.eventId),
-      ).toBe(true);
+      const inserted = teamModel.insertMany.mock.calls[0][0];
+      expect(inserted).toHaveLength(3);
+      // Players are assigned in a SEPARATE step — generation must not fill them.
+      expect(inserted.every((t: any) => t.players.length === 0)).toBe(true);
+      expect(inserted.every((t: any) => t.status === 'pending')).toBe(true);
+      expect(res.teams).toHaveLength(3);
     });
 
-    it('persists each player onto their submitted team', async () => {
+    it('names teams from the colour vocabulary in order', async () => {
       eventModel.findById.mockResolvedValue(eventDoc());
-      await submit([
-        { name: 'Red', playerIds: [P1] },
-        { name: 'Blue', playerIds: [P2] },
-      ]);
+      await generate();
 
-      const ops = playerModel.bulkWrite.mock.calls[0][0];
-      const teamFor = (id: string) =>
-        ops.find((op: any) => op.updateOne.filter.userId.toString() === id)
-          .updateOne.update.$set.team;
-
-      expect(teamFor(P1)).toBe('Red');
-      expect(teamFor(P2)).toBe('Blue');
+      const names = teamModel.insertMany.mock.calls[0][0].map((t: any) => t.name);
+      expect(names).toEqual(['Red', 'Yellow', 'Blue']);
     });
 
-    it('clears the team of a joined player left off the roster', async () => {
+    it('stores the match duration on each team', async () => {
       eventModel.findById.mockResolvedValue(eventDoc());
-      await submit([
-        { name: 'Red', playerIds: [P1] },
-        { name: 'Blue', playerIds: [P2] },
-      ]);
+      await generate({ duration: 25 });
 
-      const ops = playerModel.bulkWrite.mock.calls[0][0];
-      const p3 = ops.find(
-        (op: any) => op.updateOne.filter.userId.toString() === P3,
+      const inserted = teamModel.insertMany.mock.calls[0][0];
+      expect(inserted.every((t: any) => t.duration === 25)).toBe(true);
+    });
+
+    // The spec's worked examples.
+    it.each([
+      [90, 30, 2],
+      [100, 30, 3],
+      [60, 30, 1],
+    ])(
+      'event %i min with %i-min matches -> %i matches',
+      async (eventDuration, matchDuration, expected) => {
+        eventModel.findById.mockResolvedValue(
+          eventDoc({ duration: eventDuration }),
+        );
+        const res = await generate({ duration: matchDuration });
+
+        expect(res.matchCount).toBe(expected);
+        expect(matchModel.insertMany.mock.calls[0][0]).toHaveLength(expected);
+      },
+    );
+
+    it('reports how the schedule was derived', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc({ duration: 100 }));
+      const res = await generate({ duration: 30 });
+
+      expect(res.schedule).toEqual({
+        eventDuration: 100,
+        bufferMinutes: 10,
+        matchDuration: 30,
+        scheduledMinutes: 90,
+      });
+    });
+
+    it('never schedules more minutes than the event holds', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc({ duration: 90 }));
+      const res = await generate({ duration: 30 });
+
+      expect(res.schedule.scheduledMinutes).toBeLessThanOrEqual(90 - 10);
+    });
+
+    it('replaces previous teams and fixtures on re-generation', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc());
+      await generate();
+
+      // Stale teams would otherwise keep players on teams with no fixtures.
+      expect(teamModel.deleteMany).toHaveBeenCalled();
+      expect(matchModel.deleteMany).toHaveBeenCalled();
+      expect(playerModel.updateMany).toHaveBeenCalledWith(
+        expect.anything(),
+        { $set: { team: null } },
       );
-      // Dropped players must fall back to null, not keep a stale team.
-      expect(p3.updateOne.update.$set.team).toBeNull();
-    });
-
-    it('reports joined players left unassigned', async () => {
-      eventModel.findById.mockResolvedValue(eventDoc());
-      const res = await submit([
-        { name: 'Red', playerIds: [P1] },
-        { name: 'Blue', playerIds: [P2] },
-      ]);
-
-      expect(res.unassignedPlayerIds.sort()).toEqual([P3, P4].sort());
     });
 
     it('upserts one chat room per team', async () => {
       eventModel.findById.mockResolvedValue(eventDoc());
-      await submit([
-        { name: 'Red', playerIds: [P1] },
-        { name: 'Blue', playerIds: [P2] },
-      ]);
+      await generate();
 
-      expect(teamChatModel.updateOne).toHaveBeenCalledTimes(2);
-      const teams = teamChatModel.updateOne.mock.calls.map(
-        (c: any[]) => c[0].team,
-      );
-      expect(teams.sort()).toEqual(['Blue', 'Red']);
+      expect(teamChatModel.updateOne).toHaveBeenCalledTimes(3);
     });
 
-    it('notifies only the players who were assigned', async () => {
+    it('notifies nobody — no players are assigned yet', async () => {
       eventModel.findById.mockResolvedValue(eventDoc());
-      await submit([
-        { name: 'Red', playerIds: [P1] },
-        { name: 'Blue', playerIds: [P2] },
-      ]);
+      await generate();
+
+      expect(notifications.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('assignTeamPlayers', () => {
+    const TEAM_ID = '507f1f77bcf86cd799439099';
+
+    /** A saveable team doc double. */
+    const teamDoc = (over: Record<string, unknown> = {}) => {
+      const doc: any = {
+        _id: new Types.ObjectId(TEAM_ID),
+        eventId: new Types.ObjectId(EVENT_ID),
+        name: 'Red',
+        players: [],
+        duration: 30,
+        status: 'pending',
+        save: jest.fn().mockImplementation(function (this: any) {
+          return Promise.resolve(this);
+        }),
+        toJSON: jest.fn().mockImplementation(function (this: any) {
+          const { save, toJSON, ...rest } = this;
+          return rest;
+        }),
+        ...over,
+      };
+      return doc;
+    };
+
+    beforeEach(() => {
+      teamModel.findOne = jest.fn().mockResolvedValue(teamDoc());
+      teamModel.find = jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+    });
+
+    const assign = (playerIds: string[], userId = CREATOR) =>
+      service.assignTeamPlayers(EVENT_ID, TEAM_ID, userId, {
+        playerIds,
+      } as any);
+
+    it('stores the roster and marks the team ready', async () => {
+      const doc = teamDoc();
+      teamModel.findOne.mockResolvedValue(doc);
+      eventModel.findById.mockResolvedValue(eventDoc());
+
+      await assign([P1, P2]);
+
+      expect(doc.players.map(String)).toEqual([P1, P2]);
+      expect(doc.status).toBe('ready');
+      expect(doc.save).toHaveBeenCalled();
+    });
+
+    it('mirrors the assignment onto EventPlayer.team', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc());
+      await assign([P1]);
+
+      // Player-facing reads use EventPlayer.team, so it must stay in step.
+      expect(playerModel.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: { $in: expect.anything() } }),
+        { $set: { team: 'Red' } },
+      );
+    });
+
+    it('notifies each assigned player', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc());
+      await assign([P1, P2]);
 
       expect(notifications.create).toHaveBeenCalledTimes(2);
-      const notified = notifications.create.mock.calls.map(
-        (c: any[]) => c[0].userId,
-      );
-      expect(notified.sort()).toEqual([P1, P2].sort());
     });
 
-    it('regenerates fixtures on resubmission, discarding the old list', async () => {
+    it('an empty roster clears the team back to pending', async () => {
+      const doc = teamDoc({ players: [new Types.ObjectId(P1)], status: 'ready' });
+      teamModel.findOne.mockResolvedValue(doc);
       eventModel.findById.mockResolvedValue(eventDoc());
 
-      await submit([
-        { name: 'Red', playerIds: [P1] },
-        { name: 'Blue', playerIds: [P2] },
-      ]);
+      await assign([]);
 
-      // Stale rows are deleted before the new ones land, so a shrinking or
-      // renamed team cannot leave orphaned fixtures behind.
-      expect(matchModel.deleteMany).toHaveBeenCalledWith({
-        eventId: expect.anything(),
+      expect(doc.players).toEqual([]);
+      expect(doc.status).toBe('pending');
+      expect(notifications.create).not.toHaveBeenCalled();
+    });
+
+    it('rejects a player who never joined the event', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc());
+      const stranger = '507f191e810c19729de860ff';
+
+      await expect(assign([stranger])).rejects.toThrow(/not a joined player/);
+    });
+
+    it('rejects the same player listed twice in one team', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc());
+      await expect(assign([P1, P1])).rejects.toThrow(/listed twice/);
+    });
+
+    it('rejects a player already in another team, naming that team', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc());
+      teamModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([
+          { _id: 'other', name: 'Blue', players: [new Types.ObjectId(P1)] },
+        ]),
       });
-      const inserted = matchModel.insertMany.mock.calls[0][0];
-      expect(inserted).toHaveLength(2);
-      expect(inserted.some((m: any) => m.teamA === 'Old')).toBe(false);
-      // Delete must precede insert or the new fixtures are wiped.
-      expect(matchModel.deleteMany.mock.invocationCallOrder[0]).toBeLessThan(
-        matchModel.insertMany.mock.invocationCallOrder[0],
-      );
+
+      // Two teams claiming one player would corrupt standings and stats.
+      await expect(assign([P1])).rejects.toThrow(/already in Blue/);
     });
 
-    it('is idempotent — the same body twice leaves the same fixtures', async () => {
-      const body = [
-        { name: 'Red', playerIds: [P1] },
-        { name: 'Blue', playerIds: [P2] },
-      ];
-      eventModel.findById.mockResolvedValue(eventDoc());
-      const first = await submit(body);
-      eventModel.findById.mockResolvedValue(eventDoc());
-      const second = await submit(body);
+    it.each(['join', 'before_match', 'playing', 'after_match', 'done'])(
+      'rejects assignment while %s',
+      async (status) => {
+        eventModel.findById.mockResolvedValue(eventDoc({ status }));
+        await expect(assign([P1])).rejects.toBeInstanceOf(BadRequestException);
+      },
+    );
 
-      expect(second.fixtures).toEqual(first.fixtures);
+    it('404s an unknown team id', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc());
+      teamModel.findOne.mockResolvedValue(null);
+
+      await expect(assign([P1])).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('404s a malformed team id without casting it', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc());
+      await expect(
+        service.assignTeamPlayers(EVENT_ID, 'not-an-id', CREATOR, {
+          playerIds: [],
+        } as any),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('renames the team when a name is supplied', async () => {
+      const doc = teamDoc();
+      teamModel.findOne.mockResolvedValue(doc);
+      eventModel.findById.mockResolvedValue(eventDoc());
+
+      await service.assignTeamPlayers(EVENT_ID, TEAM_ID, CREATOR, {
+        playerIds: [P1],
+        name: 'Crimson',
+      } as any);
+
+      expect(doc.name).toBe('Crimson');
     });
   });
 
   describe('shuffleTeams — the server-side fallback (§4.3.3)', () => {
-    it('deals colour teams, not numeric ones', async () => {
-      eventModel.findById.mockResolvedValue(eventDoc());
-      const res = await service.shuffleTeams(EVENT_ID, CREATOR);
-
-      // The old implementation named teams "1", "2", ... in buckets of 6.
-      expect(res.teams.map((t) => t.name).sort()).toEqual(
-        ['Black', 'Blue', 'Red', 'Yellow'].sort(),
+    beforeEach(() => {
+      teamModel.findOne = jest.fn().mockImplementation(() =>
+        Promise.resolve({
+          _id: new Types.ObjectId(),
+          name: 'Red',
+          players: [],
+          save: jest.fn().mockResolvedValue(undefined),
+          toJSON() {
+            return { name: this.name, players: this.players };
+          },
+        }),
       );
+      teamModel.find = jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
     });
 
-    it('routes through the same path — fixtures and chats still happen', async () => {
+    it('generates teams and assigns every joined player', async () => {
       eventModel.findById.mockResolvedValue(eventDoc());
       const res = await service.shuffleTeams(EVENT_ID, CREATOR);
 
-      expect(res.fixtures).toHaveLength(12);
-      expect(teamChatModel.updateOne).toHaveBeenCalledTimes(4);
-    });
-
-    it('assigns every joined player', async () => {
-      eventModel.findById.mockResolvedValue(eventDoc());
-      const res = await service.shuffleTeams(EVENT_ID, CREATOR);
-
-      expect(res.unassignedPlayerIds).toEqual([]);
-      expect(res.teams.flatMap((t) => t.playerIds).sort()).toEqual(
-        [P1, P2, P3, P4].sort(),
+      expect(teamModel.insertMany).toHaveBeenCalled();
+      // One assign call per generated team.
+      expect(res.teams).toHaveLength(
+        teamModel.insertMany.mock.calls[0][0].length,
       );
     });
 
@@ -293,8 +438,9 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       playerModel.find.mockReturnValue(joinedPlayers([P1, P2]));
       eventModel.findById.mockResolvedValue(eventDoc({ teamCount: 4 }));
 
-      const res = await service.shuffleTeams(EVENT_ID, CREATOR);
-      expect(res.teams).toHaveLength(2);
+      await service.shuffleTeams(EVENT_ID, CREATOR);
+
+      expect(teamModel.insertMany.mock.calls[0][0]).toHaveLength(2);
     });
 
     it('refuses to shuffle fewer than two players', async () => {
@@ -306,7 +452,7 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
-    it('is gated to preparation like a client submission', async () => {
+    it('is gated to preparation', async () => {
       eventModel.findById.mockResolvedValue(eventDoc({ status: 'playing' }));
       await expect(
         service.shuffleTeams(EVENT_ID, CREATOR),

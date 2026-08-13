@@ -29,7 +29,8 @@ import { EventsService } from './events.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { UpdateEventStatusDto } from './dto/update-event-status.dto';
-import { SubmitTeamsDto } from './dto/submit-teams.dto';
+import { GenerateTeamsDto } from './dto/generate-teams.dto';
+import { AssignTeamPlayersDto } from './dto/assign-team-players.dto';
 import { UpdateMatchScoreDto } from './dto/update-match-score.dto';
 import { SubmitResultDto } from './dto/submit-result.dto';
 
@@ -92,8 +93,9 @@ export class EventsController {
     summary: "All of one group's events, soonest first",
     description:
       'Approved members see every event in the group, public or private. ' +
-      'Everyone else sees only the public ones. Optionally filter by ' +
-      'lifecycle status.',
+      'Everyone else sees only the public ones. Expired and `done` events are ' +
+      'excluded unless includeExpired=true. Optionally filter by lifecycle ' +
+      'status.',
   })
   @ApiQuery({
     name: 'status',
@@ -103,16 +105,26 @@ export class EventsController {
       'Optional lifecycle filter: join | before_match | preparation | ' +
       'playing | after_match | done.',
   })
+  @ApiQuery({
+    name: 'includeExpired',
+    required: false,
+    example: false,
+    description:
+      'Expired events (date before today) and `done` events are hidden by ' +
+      'default. Set true for the history view.',
+  })
   @ApiResponse({ status: 404, description: 'Group not found' })
   listByGroup(
     @Param('groupId') groupId: string,
     @CurrentUser() user: any,
     @Query('status') status?: string,
+    @Query('includeExpired') includeExpired?: string,
   ) {
     return this.eventsService.listByGroup(
       groupId,
       user._id.toString(),
       status,
+      includeExpired === 'true',
     );
   }
 
@@ -180,24 +192,59 @@ export class EventsController {
 
   // --- Teams & fixtures (spec §4.3) ---------------------------------------
 
-  @Put(':id/teams')
+  @Post(':id/teams/generate')
   @ApiOperation({
-    summary: 'Submit the finalized team list (organizer, preparation only)',
+    summary: 'Create the teams and the fixture list (organizer, preparation)',
     description:
-      'The client shuffles; the server validates the roster, persists it, ' +
-      'generates the double round-robin fixtures, creates one chat per team ' +
-      'and notifies each assigned player. Idempotent — the same body twice ' +
-      'leaves the same state. Returns unassignedPlayerIds for any joined ' +
-      'player left off a team (partial rosters are legal).',
+      'Creates `teamsCount` EMPTY teams named from the colour vocabulary, and ' +
+      'derives the match list from the event duration: ' +
+      'floor((event.duration - 10) / duration) matches, so the schedule can ' +
+      'never overrun the booked slot. Ten minutes are reserved as buffer. ' +
+      'Assign players afterwards with PATCH /events/:id/teams/:teamId. ' +
+      'Re-running replaces the previous teams and fixtures.',
   })
-  @ApiResponse({ status: 400, description: 'Invalid roster, or wrong state' })
+  @ApiResponse({
+    status: 400,
+    description: 'Match duration does not fit the event, or wrong state',
+  })
   @ApiResponse({ status: 403, description: 'Caller is not the organizer' })
-  submitTeams(
+  generateTeams(
     @Param('id') id: string,
     @CurrentUser() user: any,
-    @Body() dto: SubmitTeamsDto,
+    @Body() dto: GenerateTeamsDto,
   ) {
-    return this.eventsService.submitTeams(id, user._id.toString(), dto);
+    return this.eventsService.generateTeams(id, user._id.toString(), dto);
+  }
+
+  @Get(':id/teams')
+  @ApiOperation({ summary: "The event's teams, with players populated" })
+  teams(@Param('id') id: string) {
+    return this.eventsService.listTeams(id);
+  }
+
+  @Patch(':id/teams/:teamId')
+  @ApiOperation({
+    summary: 'Assign or re-assign one team’s roster (organizer, preparation)',
+    description:
+      'Replaces the team’s players outright — the client shuffles locally and ' +
+      'the organizer may hand-edit. Every id must be a joined player, and a ' +
+      'player already in another team is refused by name. Optionally renames ' +
+      'the team in the same call.',
+  })
+  @ApiResponse({ status: 400, description: 'Invalid roster, or wrong state' })
+  @ApiResponse({ status: 404, description: 'No such team on this event' })
+  assignTeamPlayers(
+    @Param('id') id: string,
+    @Param('teamId') teamId: string,
+    @CurrentUser() user: any,
+    @Body() dto: AssignTeamPlayersDto,
+  ) {
+    return this.eventsService.assignTeamPlayers(
+      id,
+      teamId,
+      user._id.toString(),
+      dto,
+    );
   }
 
   @Get(':id/matches')

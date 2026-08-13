@@ -71,6 +71,22 @@ export class UpdateEventDto {
   teamCount?: number;
 
   @ApiProperty({
+    example: 90,
+    required: false,
+    minimum: 60,
+    description:
+      'Total event length in MINUTES, at least 60. Changing it after teams ' +
+      'are generated does NOT re-derive the fixture list — regenerate to ' +
+      'pick up a new duration.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(60)
+  @Max(1440)
+  duration?: number;
+
+  @ApiProperty({
     enum: ['football', 'futsal'],
     example: 'football',
     required: false,

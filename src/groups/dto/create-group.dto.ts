@@ -10,6 +10,7 @@ import {
   ArrayMaxSize,
   Matches,
   MinLength,
+  MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -56,19 +57,17 @@ export class CreateGroupDto {
   locationIds?: string[];
 
   @ApiProperty({
-    example: [
-      'Be on time — arrive 15-30 minutes before kick-off',
-      'No alcohol before the match\n(drink afterwards if you like)',
-    ],
+    example:
+      'Be on time — arrive 15-30 minutes before kick-off\nNo alcohol before the match',
     required: false,
-    type: [String],
     description:
-      'Team rules. No count or length limit; newlines within a rule are preserved.',
+      'Free-form rules text. Newlines are preserved verbatim — render with ' +
+      'white-space: pre-line or split on \\n.',
   })
   @IsOptional()
-  @IsArray()
-  @IsString({ each: true })
-  rules?: string[];
+  @IsString()
+  @MaxLength(5000)
+  rules?: string;
 
   @ApiProperty({ example: 'Thailand', required: false })
   @IsOptional()

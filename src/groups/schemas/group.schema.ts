@@ -42,11 +42,21 @@ export class Group {
   @Prop({ trim: true })
   city: string;
 
-  // No cap and no per-entry length limit (product decision) — newlines within an
-  // entry are preserved, so do NOT add `trim: true` here or leading/trailing
-  // newlines in a rule would be stripped.
-  @Prop({ type: [String], default: [] })
-  rules: string[];
+  /**
+   * Free-form rules text.
+   *
+   * Was `string[]` (one entry per rule); now a single block of text, so the
+   * client owns presentation entirely instead of the API imposing a bullet
+   * structure. `scripts/migrate-group-rules-to-text.ts` joins existing arrays
+   * with newlines.
+   *
+   * Deliberately NO `trim: true`: newlines are meaningful here, and trimming
+   * would strip leading/trailing ones. The client must render with
+   * `white-space: pre-line` (or split on `\n`) or the text collapses into one
+   * paragraph — the most likely way this looks broken while the API is correct.
+   */
+  @Prop({ type: String, default: '' })
+  rules: string;
 
   @Prop({ type: [{ type: Types.ObjectId, ref: 'Location' }], default: [] })
   locations: Types.ObjectId[];

@@ -144,37 +144,34 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
   });
 
   describe('findById → groupRules', () => {
-    it("attaches the parent group's rules", async () => {
-      const rules = [
-        'No smoking',
-        'Arrive 15 min early\n(or tell the captain)',
-      ];
+    it("attaches the parent group's rules as text", async () => {
+      const rules = 'No smoking\nArrive 15 min early\n(or tell the captain)';
       eventModel.findById.mockReturnValue(q({ _id: 'e1', groupId: GROUP_ID }));
-      groupModel.findById.mockReturnValue(q({ rules: rules }));
+      groupModel.findById.mockReturnValue(q({ rules }));
 
       const res: any = await service.findById('e1');
 
-      expect(res.groupRules).toEqual(rules);
-      // newlines inside a rule must survive to the client
-      expect(res.groupRules[1]).toContain('\n');
+      expect(res.groupRules).toBe(rules);
+      // Newlines must survive to the client — rules are now one text block.
+      expect(res.groupRules).toContain('\n');
     });
 
-    it('returns [] for an event with no group, never null', async () => {
+    it("returns '' for an event with no group, never null", async () => {
       eventModel.findById.mockReturnValue(q({ _id: 'e1', groupId: null }));
 
       const res: any = await service.findById('e1');
 
-      expect(res.groupRules).toEqual([]);
+      expect(res.groupRules).toBe('');
       expect(groupModel.findById).not.toHaveBeenCalled();
     });
 
-    it('returns [] when the group has no rules set', async () => {
+    it("returns '' when the group has no rules set", async () => {
       eventModel.findById.mockReturnValue(q({ _id: 'e1', groupId: GROUP_ID }));
       groupModel.findById.mockReturnValue(q({}));
 
       const res: any = await service.findById('e1');
 
-      expect(res.groupRules).toEqual([]);
+      expect(res.groupRules).toBe('');
     });
   });
 

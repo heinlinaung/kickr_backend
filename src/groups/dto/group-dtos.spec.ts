@@ -94,10 +94,10 @@ describe('CreateGroupDto', () => {
 });
 
 describe('UpdateGroupDto', () => {
-  it('accepts more than 3 rules — the cap was removed', async () => {
-    const six = ['a', 'b', 'c', 'd', 'e', 'f'];
-    const out: any = await run(UpdateGroupDto, { rules: six });
-    expect(out.rules).toEqual(six);
+  it('accepts rules as a multi-line text block', async () => {
+    const text = 'a\nb\nc\nd\ne\nf';
+    const out: any = await run(UpdateGroupDto, { rules: text });
+    expect(out.rules).toBe(text);
   });
 
   it('accepts country and city', async () => {
@@ -109,8 +109,9 @@ describe('UpdateGroupDto', () => {
     expect(out.city).toBe('Yangon');
   });
 
-  it('rejects non-string rule entries', async () => {
-    expect(await expectRejected(UpdateGroupDto, { rules: ['a', 5] })).toContain(
+  it('rejects a non-string rules value', async () => {
+    // Was string[]; an array is now the wrong type entirely.
+    expect(await expectRejected(UpdateGroupDto, { rules: ['a'] })).toContain(
       'rules',
     );
   });
@@ -153,30 +154,26 @@ describe('UpdateMemberRoleDto', () => {
 });
 
 describe('CreateGroupDto — rules', () => {
-  it('accepts any number of rules (no cap)', async () => {
-    const six = ['a', 'b', 'c', 'd', 'e', 'f'];
-    const out: any = await run(CreateGroupDto, { name: 'FC', rules: six });
-    expect(out.rules).toEqual(six);
+  it('accepts a long text block (no line cap)', async () => {
+    const text = Array.from({ length: 20 }, (_, i) => `rule ${i}`).join('\n');
+    const out: any = await run(CreateGroupDto, { name: 'FC', rules: text });
+    expect(out.rules).toBe(text);
   });
 
-  it('preserves newlines and non-ASCII text in a rule', async () => {
-    const rules = [
-      '\u1015\u103d\u1032\u1019\u1010\u102d\u102f\u1004\u103a\u1001\u1004\u103a ( 15-30 ) \u1019\u102d\u1014\u1005\u103a\n\u1005\u1031\u102c\u1015\u103c\u102e\u1038',
-      'a\n\nb',
-    ];
-    const out: any = await run(CreateGroupDto, {
-      name: 'FC',
-      rules: rules,
-    });
-    expect(out.rules[0]).toBe(rules[0]);
-    expect(out.rules[1]).toBe('a\n\nb');
+  it('preserves newlines and non-ASCII text verbatim', async () => {
+    // The caveat most likely to regress: no trim, no transform, so interior
+    // blank lines and Burmese script must survive byte-for-byte.
+    const text =
+      '\u1015\u103d\u1032\u1019\u1010\u102d\u102f\u1004\u103a\u1001\u1004\u103a ( 15-30 ) \u1019\u102d\u1014\u1005\u103a\n\u1005\u1031\u102c\u1015\u103c\u102e\u1038\n\na\n\nb';
+    const out: any = await run(CreateGroupDto, { name: 'FC', rules: text });
+    expect(out.rules).toBe(text);
   });
 
-  it('rejects non-string entries', async () => {
+  it('rejects a non-string rules value', async () => {
     expect(
       await expectRejected(CreateGroupDto, {
         name: 'FC',
-        rules: ['ok', 42],
+        rules: ['ok'],
       }),
     ).toContain('rules');
   });

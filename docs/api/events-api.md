@@ -3,7 +3,9 @@
 **Audience:** Flutter developers integrating the KickR mobile app.
 **Base URL (local):** `http://localhost:3000`
 **Swagger UI:** `http://localhost:3000/api-docs` · **OpenAPI JSON:** `/api-docs-json`
-**Status:** build steps 1–4 implemented — lifecycle core, teams/fixtures/standings, after-match (MVP, cover, photos), and discovery (geo, templates, likes). Verified against MongoDB on **2026-08-09**. Remaining gaps are listed in §9; the teams flow is documented in §11.
+**Status:** build steps 1–4 implemented — lifecycle core, teams/fixtures/standings, after-match (MVP, cover, photos), and discovery (geo, templates, likes). Verified against MongoDB on **2026-08-13**. Remaining gaps are listed in §9; the teams flow is documented in §11.
+
+> **Changed 2026-08-13:** teams are a two-step flow now (`POST /teams/generate`, then `PATCH /teams/:teamId`) and `PUT /events/:id/teams` is **gone**. `event.duration` decides how many matches exist. See [the changelog](../change-logs/2026-08-13.md).
 **See also:** [Auth API](./auth-api.md) for obtaining the access token · [Groups & Locations API](./groups-and-locations-api.md) for `groupId` and `locationId`.
 
 > ## ⚠️ Breaking change — event `status` values have changed
@@ -79,6 +81,7 @@ Captured from the live API (`GET /events/group/:groupId`, 2026-08-09):
   "startTime": null,
   "endTime": null,
   "teamCount": 4,
+  "duration": 90,
   "coverImage": null,
   "coverImageFileId": null,
   "photos": [],
@@ -98,7 +101,10 @@ The JSON above is a freshly created event, so most optional fields are empty. Th
 
 | Field | Filled by |
 |---|---|
-| `matches` | **No longer on the event document** — fixtures are their own collection. `GET /events/:id` still attaches them as `matches`, and `GET /events/:id/matches` returns the same rows (§11). |
+| `matches` | **Not on the event document** — fixtures are their own collection. `GET /events/:id` attaches them as `matches`; `GET /events/:id/matches` returns the same rows (§11). |
+| `teams` | Attached to `GET /events/:id` from the Team collection, players populated. Created by `POST /teams/generate` (§11). |
+| `location` | `GET /events/:id` resolves `locationId` into a **location object** (name, lat/lng, url, address). `locationId` is still returned for clients that only need the id. |
+| `userRole` | On `GET /events/:id`: the caller's role in the owning group (`owner`/`admin`/`captain`/`member`), or `null` for a non-member or a groupless event. |
 | `result` | `POST /events/:id/result`, during `after_match` |
 | `coverImage`, `coverImageFileId` | `POST /events/:id/cover` |
 | `photos` | `POST /events/:id/photos`, during `after_match` |
@@ -178,7 +184,7 @@ The event's `createdBy`, **or** — for group events — an approved `owner`/`ad
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | `GET` | `/events` | any user | Public events only. Optional `?region=`, `?near=`/`?radius=`, `?from=`/`?to=`, `?status=`. |
-| `GET` | `/events/group/:groupId` | any user | **NEW** — one group's events. Members see private ones too. |
+| `GET` | `/events/group/:groupId` | any user | **NEW** — one group's events. Members see private ones too. Expired/`done` hidden unless `?includeExpired=true`. |
 | `POST` | `/events` | organizer | Create. Accepts `startTime`, `endTime`, `teamCount`, `templateId`. |
 | `GET` | `/events/:id` | any user | Detail + `groupRules`, `standings`, `likedByMe`. |
 | `PATCH` | `/events/:id` | organizer | **NEW** — edit. Rejected when `done`. |
@@ -187,7 +193,9 @@ The event's `createdBy`, **or** — for group events — an approved `owner`/`ad
 | `POST` | `/events/:id/join` | any user | Gated to `join` + capacity. |
 | `DELETE` | `/events/:id/join` | any user | Gated to `join`. |
 | `GET` | `/events/:id/players` | any user | Joined players. |
-| `PUT` | `/events/:id/teams` | organizer | **NEW** — submit the finalized roster. Gated to `preparation`. See §11. |
+| `POST` | `/events/:id/teams/generate` | organizer | **NEW** — create empty teams + the fixture list from `duration`. `preparation` only. See §11. |
+| `GET` | `/events/:id/teams` | any user | **NEW** — the event's teams, players populated. |
+| `PATCH` | `/events/:id/teams/:teamId` | organizer | **NEW** — assign/rename one team. `preparation` only. |
 | `POST` | `/events/:id/shuffle` | organizer | Server-side colour shuffle (fallback). Gated to `preparation`. See §11. |
 | `GET` | `/events/:id/matches` | any user | **NEW** — fixture list. |
 | `PATCH` | `/events/:id/matches/:matchNumber` | organizer | **NEW** — enter a score. `playing`/`after_match`. |
@@ -367,7 +375,10 @@ Do **not** design screens against these — the fields exist but nothing fills t
 - [ ] `date` is the scheduling field; `startTime`/`endTime` are optional extras.
 - [ ] Join failures — "not open" and "full" — are **both** `400`; read the message.
 - [ ] Deleting an event is a **hard delete** with no notification to joined players.
-- [ ] Submit teams with `PUT /events/:id/teams` — **you send the roster, the server generates the fixtures**. Never author `matches[]` client-side.
+- [ ] Teams are a **two-step** flow: `POST /teams/generate` creates them empty, then `PATCH /teams/:teamId` assigns players. Never author `matches[]` client-side.
+- [ ] **`event.duration` decides how many matches exist** — `floor((duration - 10) / matchDuration)`. Ten minutes are reserved as buffer.
+- [ ] `group.rules` is now a **string, not an array**. Render with `white-space: pre-line`.
+- [ ] `GET /events/group/:groupId` **hides expired and `done` events** by default. Pass `includeExpired=true` for history.
 - [ ] A **partial roster is legal**. Check `unassignedPlayerIds` in the response and warn the user, or players silently start with no team.
 - [ ] Scores are `null` until entered — **not `0`**, which is a real scoreline. Render a dash for `null`.
 - [ ] `standings` is derived on every read. Never cache or write it back.
@@ -379,52 +390,98 @@ Do **not** design screens against these — the fields exist but nothing fills t
 
 The `preparation`-phase flow, end to end. **The client decides who plays where; the server owns everything derived from that.**
 
-### 11.1 Submitting the roster — `PUT /events/:id/teams`
+### 11.1 Create the teams — `POST /events/:id/teams/generate`
 
-Shuffle locally, then send the finalized teams. Organizer only, `preparation` only.
+Teams are created **empty**, and the fixture list is derived from the event's
+duration. Organizer only, `preparation` only.
 
 ```
-PUT /events/6a7055f42e55b9cdbe427eb4/teams
-{
-  "teams": [
-    { "name": "Red",    "playerIds": ["665f…a1", "665f…a2"] },
-    { "name": "Yellow", "playerIds": ["665f…a3", "665f…a4"] },
-    { "name": "Blue",   "playerIds": ["665f…a5", "665f…a6"] },
-    { "name": "Black",  "playerIds": ["665f…a7", "665f…a8"] }
-  ]
-}
+POST /events/6a7055f42e55b9cdbe427eb4/teams/generate
+{ "teamsCount": 3, "duration": 30 }
 ```
+
+| Field | Rule |
+|---|---|
+| `teamsCount` | 2–6. Teams are named from the colour vocabulary in order |
+| `duration` | Minutes **per match**, ≥ 1 |
 
 Response:
 
 ```json
 {
-  "teams": [{ "name": "Red", "playerIds": ["665f…a1", "665f…a2"] }],
-  "fixtures": [
-    { "matchNumber": 1, "teamA": "Red", "teamB": "Yellow",
+  "teams": [
+    { "_id": "…", "name": "Red", "players": [], "duration": 30, "status": "pending" }
+  ],
+  "matches": [
+    { "_id": "…", "matchNumber": 1, "teamA": "Red", "teamB": "Yellow",
       "scoreA": null, "scoreB": null, "playedAt": null }
   ],
-  "unassignedPlayerIds": []
+  "matchCount": 2,
+  "schedule": {
+    "eventDuration": 90, "bufferMinutes": 10,
+    "matchDuration": 30, "scheduledMinutes": 60
+  }
 }
 ```
 
-`PUT`, not `POST`: the call replaces the whole assignment, so sending the same body twice leaves the same state.
+**How the match count is derived:**
 
-**Rejected with `400` unless** every `playerId` is a joined player, no player appears in two teams, no id repeats within a team, team names are unique and non-empty, and there are 2–6 teams. The message names the offending id — surface it directly.
+```
+matchCount = floor((event.duration - 10) / duration)
+```
 
-**Partial rosters are accepted on purpose** (reserves, late arrivals). Anyone left out keeps `team: null` and comes back in `unassignedPlayerIds`. Warn the user before submitting rather than discovering it at kick-off.
+Ten minutes come off the top as buffer (warm-up, changeovers, overrun), and the
+result is **floored** — so the schedule can never exceed the booked slot.
 
-`teamCount` on the event is **advisory** — a hint for your UI. The real count is `teams.length`.
+| `event.duration` | `duration` | Matches | Why |
+|---|---|---|---|
+| 90 | 30 | **2** | (90−10)/30 = 2.66 → 2 |
+| 100 | 30 | **3** | (100−10)/30 = 3 |
+| 60 | 90 | — | `400`: not even one match fits |
 
-### 11.2 The server-side fallback — `POST /events/:id/shuffle`
+A duration too long for the event is rejected with `400` rather than silently
+producing an empty fixture list.
 
-No body. Deals joined players across the first `teamCount` colours (Red, Yellow, Blue, Black, Green, Orange) and returns the same shape as `PUT /teams`. Useful for a web client or if the mobile shuffle isn't ready. Both endpoints share one write path — whichever ran last wins, neither is privileged.
+**Re-running replaces everything** — previous teams, fixtures and player
+assignments are cleared first. That is the intended way to change the team count
+or match length; editing `event.duration` afterwards does **not** re-derive the
+schedule on its own.
 
-> **Changed:** this used to assign numeric teams (`"1"`, `"2"`) in buckets of 6. It now produces colour teams and fixtures.
+### 11.2 Assign players — `PATCH /events/:id/teams/:teamId`
+
+Shuffle locally, then assign each team. Replaces that team's roster outright.
+
+```
+PATCH /events/6a7055f42e55b9cdbe427eb4/teams/6a70…f1
+{ "playerIds": ["665f…a1", "665f…a2"], "name": "Red" }
+```
+
+`name` is optional — supply it to rename in the same call.
+
+Rejected with `400` when a `playerId` is not a joined player, appears twice in
+the body, or is **already in another team** (the message names that team). Two
+teams claiming one player would corrupt standings and per-player stats.
+
+An empty `playerIds` clears the team and returns it to `status: "pending"`.
+Assigning players flips it to `"ready"` and notifies each one.
+
+`EventPlayer.team` is kept in step automatically, so player-facing reads stay
+consistent with the team documents.
+
+### 11.2b The server-side fallback — `POST /events/:id/shuffle`
+
+No body. Generates the teams (using `event.teamCount`) and deals the joined
+players across them in one call — a convenience wrapper over §11.1 + §11.2 for
+callers that want the server to decide. Because it takes no body, it picks a
+match duration from the event rather than accepting one.
+
+> **Changed:** this used to assign numeric teams (`"1"`, `"2"`) in buckets of 6.
 
 ### 11.3 Fixtures
 
-Generated server-side as a **double round-robin**: every pair meets twice, home and away swapped in the second leg. 4 teams → 12 fixtures, 6 per team. 3 → 6, 2 → 2.
+Generated server-side as a **double round-robin**, then **truncated to the number of matches the event's duration allows** (§11.1). A full round-robin over 4 teams is 12 fixtures; a 90-minute event with 30-minute matches keeps only the first 2.
+
+Truncation takes a prefix of the round-robin, and leg 1 is emitted in full before leg 2 — so in a partial schedule every team meets a different opponent before anyone plays a rematch.
 
 Fixtures are **never client-authored**. You cannot send `matches[]`; a stale app therefore cannot persist a divergent fixture format.
 
