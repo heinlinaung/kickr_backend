@@ -14,8 +14,13 @@ import { Group, GroupDocument } from '../groups/schemas/group.schema';
 import { CreateLocationDto } from './dto/create-location.dto';
 import { UpdateLocationDto } from './dto/update-location.dto';
 
-/** Group roles allowed to EDIT a group-owned location's details. */
-const EDIT_ROLES = ['owner', 'admin', 'captain'];
+/**
+ * Group roles allowed to EDIT a group-owned location's details.
+ *
+ * `vice-captain` mirrors `captain` deliberately: a deputy that cannot do what
+ * the captain does would be surprising, and editing a venue is reversible.
+ */
+const EDIT_ROLES = ['owner', 'admin', 'captain', 'vice-captain'];
 /** Group roles allowed to DELETE a group-owned location (structural change). */
 const DELETE_ROLES = ['owner', 'admin'];
 

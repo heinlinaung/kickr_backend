@@ -12,7 +12,10 @@ export class GroupMember {
   @Prop({ required: true, type: Types.ObjectId, ref: 'User' })
   userId: Types.ObjectId;
 
-  @Prop({ default: 'member', enum: ['owner', 'admin', 'captain', 'member'] })
+  @Prop({
+    default: 'member',
+    enum: ['owner', 'admin', 'captain', 'vice-captain', 'member'],
+  })
   role: string;
 
   @Prop({ default: 1, enum: [1, 2, 3] })

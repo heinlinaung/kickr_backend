@@ -104,7 +104,7 @@ The JSON above is a freshly created event, so most optional fields are empty. Th
 | `matches` | **Not on the event document** — fixtures are their own collection. `GET /events/:id` attaches them as `matches`; `GET /events/:id/matches` returns the same rows (§11). |
 | `teams` | Attached to `GET /events/:id` from the Team collection, players populated. Created by `POST /teams/generate` (§11). |
 | `location` | `GET /events/:id` resolves `locationId` into a **location object** (name, lat/lng, url, address). `locationId` is still returned for clients that only need the id. |
-| `userRole` | On `GET /events/:id`: the caller's role in the owning group (`owner`/`admin`/`captain`/`member`), or `null` for a non-member or a groupless event. |
+| `userRole` | On `GET /events/:id`: the caller's role in the owning group (`owner`/`admin`/`captain`/`vice-captain`/`member`), or `null` for a non-member or a groupless event. |
 | `result` | `POST /events/:id/result`, during `after_match` |
 | `coverImage`, `coverImageFileId` | `POST /events/:id/cover` |
 | `photos` | `POST /events/:id/photos`, during `after_match` |
@@ -276,7 +276,7 @@ Note the empty-list-vs-404 distinction: an unknown group is `404`, but a real gr
 Only `title` and `date` are required. New events always start at `status: "join"` — you cannot set the status on create.
 
 - **`groupId`** — you must be an approved **owner/admin** of that group, else `403`.
-- **`locationId`** — you must be able to edit that location: its creator, **or** an owner/admin/captain of the group that owns it. (This changed: previously only the personal creator could attach one, which blocked group admins from using their own group's ground.)
+- **`locationId`** — you must be able to edit that location: its creator, **or** an owner/admin/captain/vice-captain of the group that owns it. (This changed: previously only the personal creator could attach one, which blocked group admins from using their own group's ground.)
 
 ### 6.2 `PATCH /events/:id`
 
