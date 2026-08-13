@@ -292,6 +292,16 @@ describe('LocationsService', () => {
       ).resolves.toBeDefined();
     });
 
+    it('lets a group VICE-CAPTAIN edit a group-owned location', async () => {
+      // vice-captain mirrors captain for edits by decision.
+      locationModel.findById.mockResolvedValue(groupLocation());
+      asRole('vice-captain');
+
+      await expect(
+        service.update(LOC_ID, OTHER, { name: 'Updated' }),
+      ).resolves.toBeDefined();
+    });
+
     it('lets a group ADMIN edit a group-owned location', async () => {
       locationModel.findById.mockResolvedValue(groupLocation());
       asRole('admin');
@@ -339,6 +349,16 @@ describe('LocationsService', () => {
     it('captain may EDIT but NOT DELETE a group-owned location', async () => {
       locationModel.findById.mockResolvedValue(groupLocation());
       asRole('captain');
+      await expect(service.remove(LOC_ID, OTHER)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+    });
+
+    it('vice-captain may EDIT but NOT DELETE a group-owned location', async () => {
+      // Deleting a venue the group relies on is structural, so it stays with
+      // owner/admin — vice-captain inherits captain's limit too.
+      locationModel.findById.mockResolvedValue(groupLocation());
+      asRole('vice-captain');
       await expect(service.remove(LOC_ID, OTHER)).rejects.toBeInstanceOf(
         ForbiddenException,
       );

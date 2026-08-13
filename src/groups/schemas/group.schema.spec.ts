@@ -26,11 +26,12 @@ describe('Group schema (v2 extensions)', () => {
 });
 
 describe('GroupMember schema (roles + levels)', () => {
-  it('role enum includes captain', () => {
+  it('role enum covers every assignable role', () => {
     expect(GroupMemberSchema.path('role').options.enum).toEqual([
       'owner',
       'admin',
       'captain',
+      'vice-captain',
       'member',
     ]);
   });

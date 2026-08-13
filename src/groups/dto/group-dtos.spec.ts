@@ -137,13 +137,20 @@ describe('UpdateMemberRoleDto', () => {
     ).toContain('role');
   });
 
-  it('accepts admin/captain/member and coerces level from a string', async () => {
-    for (const role of ['admin', 'captain', 'member']) {
+  it('accepts every assignable role and coerces level from a string', async () => {
+    for (const role of ['admin', 'captain', 'vice-captain', 'member']) {
       const out: any = await run(UpdateMemberRoleDto, { role });
       expect(out.role).toBe(role);
     }
     const out: any = await run(UpdateMemberRoleDto, { level: '3' });
     expect(out.level).toBe(3);
+  });
+
+  it('rejects an unknown role', async () => {
+    // Guards against a typo like 'vicecaptain' silently becoming a real role.
+    expect(
+      await expectRejected(UpdateMemberRoleDto, { role: 'vicecaptain' }),
+    ).toContain('role');
   });
 
   it('rejects an out-of-range level', async () => {

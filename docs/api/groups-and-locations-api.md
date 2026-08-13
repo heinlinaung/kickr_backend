@@ -71,7 +71,7 @@ A **Location** is a place (pitch/venue). Important semantics:
 
 - **Two kinds of location**, distinguished by `groupId`:
   - **Personal** (`groupId: null`) — only `createdBy` can edit or delete it.
-  - **Group-owned** (`groupId` set) — the group's **owner / admin / captain** can edit it, and **owner / admin** can delete it, regardless of who created it. The creator always keeps access too.
+  - **Group-owned** (`groupId` set) — the group's **owner / admin / captain / vice-captain** can edit it, and **owner / admin** can delete it, regardless of who created it. The creator always keeps access too.
   Locations created through `POST /groups/:id/locations` are automatically group-owned.
 - **Not a shared registry, and NOT deduplicated.** Every `POST /locations` inserts a new row. If two users add the same pitch you get two rows — this is intentional. Do not build UI that assumes venues are unique/global.
 - **Reusable by its owner.** One location can be attached to several of that user's own groups/events.
@@ -104,8 +104,8 @@ A **Location** is a place (pitch/venue). Important semantics:
 | `POST` | `/locations` | Create. Always inserts. `createdBy` = caller. Pass `groupId` to make it group-owned (owner/admin of that group only); omit it for a personal location. |
 | `GET` | `/locations` | Locations the caller **created**, newest first. Note: group-owned locations you can edit but didn't create are **not** listed here — use `GET /groups/:id/locations`. |
 | `GET` | `/locations/:id` | Any location by id. |
-| `PATCH` | `/locations/:id` | Creator, **or** owner/admin/**captain** of the owning group → `403` otherwise. |
-| `DELETE` | `/locations/:id` | Creator, **or** owner/**admin** of the owning group (**not captain**) → `403` otherwise. |
+| `PATCH` | `/locations/:id` | Creator, **or** owner/admin/**captain**/**vice-captain** of the owning group → `403` otherwise. |
+| `DELETE` | `/locations/:id` | Creator, **or** owner/**admin** of the owning group (**not captain or vice-captain**) → `403` otherwise. |
 
 #### Who can do what
 
@@ -113,10 +113,10 @@ A **Location** is a place (pitch/venue). Important semantics:
 |---|---|---|
 | Creator | edit ✅ delete ✅ | edit ✅ delete ✅ |
 | Group **owner** / **admin** | ❌ | edit ✅ delete ✅ |
-| Group **captain** | ❌ | edit ✅ **delete ❌** |
+| Group **captain** / **vice-captain** | ❌ | edit ✅ **delete ❌** |
 | Plain member / non-member | ❌ | ❌ |
 
-Captains can correct a venue's details but not remove it — removing a pitch the group relies on is a structural change reserved for owner/admin.
+Captains and vice-captains can correct a venue's details but not remove it — removing a pitch the group relies on is a structural change reserved for owner/admin.
 
 > Attaching *your personal* location to a group does **not** hand that group's staff edit rights over it. Only locations created in a group context (or otherwise carrying that `groupId`) are group-managed. This stops one user's rename from leaking into another user's groups.
 
@@ -140,7 +140,7 @@ Captains can correct a venue's details but not remove it — removing a pitch th
 | `lng` | ✅ | −180…180 |
 | `url` | — | must be a valid URL |
 | `metadata` | — | free-form object |
-| **`groupId`** | **—** | **Omit for a personal location.** Set it to make the location **group-owned**, so the group's owner/admin/captain can maintain it (see the matrix above). |
+| **`groupId`** | **—** | **Omit for a personal location.** Set it to make the location **group-owned**, so the group's owner/admin/captain/vice-captain can maintain it (see the matrix above). |
 
 **About `groupId`:**
 - **Omitted / `null`** → personal location, editable only by you.
@@ -180,7 +180,7 @@ final group = await api.createGroup(
   handle: 'bangkok-fc',
   locationIds: [loc.id],
 );
-// the location is now group-owned: the group's owner/admin/captain can edit it
+// the location is now group-owned: owner/admin/captain/vice-captain can edit it
 ```
 
 **What the server does on step 2** — for each id in `locationIds`:
@@ -317,7 +317,7 @@ Validation rules to enforce **client-side** so users get instant feedback:
 }
 ```
 
-- `role`: `owner` | `admin` | `captain` | `member`
+- `role`: `owner` | `admin` | `captain` | `vice-captain` | `member`
 - `level`: `1` | `2` | `3` — seniority within the group (default `1`; `3` is highest)
 - `status`: `pending` | `approved` — **only `approved` members are returned by this endpoint**; pending ones come from `GET /groups/:id/invitations`.
 - `userId` is **populated** here (an object), unlike most other refs.
@@ -329,7 +329,9 @@ Validation rules to enforce **client-side** so users get instant feedback:
 ```
 
 Both optional, but send at least one (`400` otherwise). Constraints:
-- `role` may be `admin` | `captain` | `member` — **`owner` is not assignable** (`400`).
+- `role` may be `admin` | `captain` | `vice-captain` | `member` — **`owner` is not assignable** (`400`). A group has exactly one owner, and changing it needs an ownership-transfer flow that does not exist yet.
+
+  `vice-captain` carries the **same permissions as `captain`**: it can edit a group-owned location, but not delete one. Neither is an event organizer — that stays the event's creator plus the group's owner/admin.
 - **The owner cannot be modified** at all → `403 Cannot change the group owner`.
 
 > ⚠️ Path has two ids: `:id` is the **group**, `:userId` is the **target member**. The requester is taken from the token.
@@ -346,7 +348,7 @@ Group detail includes the caller's membership, so you don't need a second call t
 
 | `userRole` | `memberStatus` | Meaning |
 |---|---|---|
-| `"owner"` / `"admin"` / `"captain"` / `"member"` | `"approved"` | A real member — gate admin UI on `userRole`. |
+| `"owner"` / `"admin"` / `"captain"` / `"vice-captain"` / `"member"` | `"approved"` | A real member — gate admin UI on `userRole`. |
 | `"member"` | `"pending"` | **Requested to join, NOT yet a member.** Show the waiting state. |
 | `null` | `null` | Not a member at all — show Join / Request. |
 
@@ -415,7 +417,7 @@ Both paths now behave identically — **both end in `pending`**:
 - Sending neither → `400 Provide either locationId or location`.
 - Max **5** per group → `400 A group may have at most 5 locations`.
 - With `locationId`, **you must be the creator of that location** → `403`/`404` otherwise. (Attaching is stricter than editing: group staff can edit a group-owned location, but you can only attach rows you created.)
-- The **inline form is preferred** — it creates the location already owned by the group, so the group's owner/admin/captain can maintain it later.
+- The **inline form is preferred** — it creates the location already owned by the group, so the group's owner/admin/captain/vice-captain can maintain it later.
 - `GET /groups/:id/locations` returns them **populated** (full objects) — use this for display.
 - `DELETE /groups/:id/locations/:locationId` **detaches only**; the location row survives for the owner's other groups/events.
 
@@ -500,7 +502,7 @@ POST /groups/:id/leave
 { "data": { "message": "You have left the group" } }
 ```
 
-Self-service — **no role check**. An `admin`, `captain` or `member` can leave without anyone's approval; the membership row is deleted outright.
+Self-service — **no role check**. An `admin`, `captain`, `vice-captain` or `member` can leave without anyone's approval; the membership row is deleted outright.
 
 | Case | Status | Message |
 |---|---|---|
@@ -562,9 +564,10 @@ class KickrLocation {
   bool canEdit(String userId, {String? myRoleInGroup}) =>
       createdBy == userId ||
       (isGroupOwned &&
-          const ['owner', 'admin', 'captain'].contains(myRoleInGroup));
+          const ['owner', 'admin', 'captain', 'vice-captain']
+              .contains(myRoleInGroup));
 
-  /// Same, minus captain — deleting is owner/admin only.
+  /// Same, minus captain/vice-captain — deleting is owner/admin only.
   bool canDelete(String userId, {String? myRoleInGroup}) =>
       createdBy == userId ||
       (isGroupOwned && const ['owner', 'admin'].contains(myRoleInGroup));
@@ -576,7 +579,7 @@ class KickrLocation {
         if (url != null) 'url': url,
         if (metadata.isNotEmpty) 'metadata': metadata,
         // optional: makes the location group-owned so the group's
-        // owner/admin/captain can maintain it. You must be an owner/admin of
+        // owner/admin/captain/vice-captain can maintain it. You must be an owner/admin of
         // that group. Omit for a personal location.
         if (groupId != null) 'groupId': groupId,
         // never send `geo` — the server derives it
@@ -656,7 +659,7 @@ class GroupMember {
   final String id;
   final String userId;
   final String userName;
-  final String role;   // owner | admin | captain | member
+  final String role;   // owner | admin | captain | vice-captain | member
   final int level;     // 1..3
   final String status; // pending | approved
 
@@ -754,7 +757,7 @@ class GroupInvite {
 - [ ] On `GET /groups/:id`, check **`memberStatus == 'approved'`**, not just a non-null `userRole` — a pending requester has `userRole: "member"`.
 - [ ] `group.level` is **inert** — nothing reads it server-side; don't gate features on it.
 - [ ] Locations are **not deduplicated** — the same pitch may exist many times, once per creator.
-- [ ] Check `location.groupId` before showing Edit/Delete: personal = creator only; group-owned = owner/admin/captain edit, owner/admin delete.
+- [ ] Check `location.groupId` before showing Edit/Delete: personal = creator only; group-owned = owner/admin/captain/vice-captain edit, owner/admin delete.
 - [ ] `groupId` is **optional on create** — omit for personal, set it (as group owner/admin) for group-owned. It sets ownership only; it does **not** attach the location to the group.
 - [ ] Creating a location **before** its group? Omit `groupId` and pass the id in `locationIds` on `POST /groups` — the server transfers ownership (§2.3). A location already owned by another group is skipped, never stolen.
 - [ ] You can only **attach** locations you created; editing extends to group staff for group-owned rows.

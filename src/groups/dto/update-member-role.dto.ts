@@ -6,11 +6,13 @@ export class UpdateMemberRoleDto {
   @ApiProperty({
     example: 'captain',
     required: false,
-    enum: ['admin', 'captain', 'member'],
-    description: "'owner' is not assignable",
+    enum: ['admin', 'captain', 'vice-captain', 'member'],
+    description:
+      "'owner' is not assignable — a group has exactly one, and changing it " +
+      'needs an ownership-transfer flow that does not exist yet.',
   })
   @IsOptional()
-  @IsIn(['admin', 'captain', 'member'])
+  @IsIn(['admin', 'captain', 'vice-captain', 'member'])
   role?: string;
 
   @ApiProperty({ example: 2, required: false, enum: [1, 2, 3] })
