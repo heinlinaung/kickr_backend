@@ -138,7 +138,13 @@ describe('UpdateMemberRoleDto', () => {
   });
 
   it('accepts every assignable role and coerces level from a string', async () => {
-    for (const role of ['admin', 'captain', 'vice-captain', 'member']) {
+    for (const role of [
+      'admin',
+      'captain',
+      'vice-captain',
+      'referee',
+      'member',
+    ]) {
       const out: any = await run(UpdateMemberRoleDto, { role });
       expect(out.role).toBe(role);
     }

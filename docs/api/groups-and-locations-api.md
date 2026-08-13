@@ -317,7 +317,7 @@ Validation rules to enforce **client-side** so users get instant feedback:
 }
 ```
 
-- `role`: `owner` | `admin` | `captain` | `vice-captain` | `member`
+- `role`: `owner` | `admin` | `captain` | `vice-captain` | `referee` | `member`
 - `level`: `1` | `2` | `3` — seniority within the group (default `1`; `3` is highest)
 - `status`: `pending` | `approved` — **only `approved` members are returned by this endpoint**; pending ones come from `GET /groups/:id/invitations`.
 - `userId` is **populated** here (an object), unlike most other refs.
@@ -329,9 +329,11 @@ Validation rules to enforce **client-side** so users get instant feedback:
 ```
 
 Both optional, but send at least one (`400` otherwise). Constraints:
-- `role` may be `admin` | `captain` | `vice-captain` | `member` — **`owner` is not assignable** (`400`). A group has exactly one owner, and changing it needs an ownership-transfer flow that does not exist yet.
+- `role` may be `admin` | `captain` | `vice-captain` | `referee` | `member` — **`owner` is not assignable** (`400`). A group has exactly one owner, and changing it needs an ownership-transfer flow that does not exist yet.
 
   `vice-captain` carries the **same permissions as `captain`**: it can edit a group-owned location, but not delete one. Neither is an event organizer — that stays the event's creator plus the group's owner/admin.
+
+  `referee` is currently a **label only** — it grants exactly what `member` does, with no location or event rights. Assign it to mark who officiates; do not gate any UI on it expecting extra permissions.
 - **The owner cannot be modified** at all → `403 Cannot change the group owner`.
 
 > ⚠️ Path has two ids: `:id` is the **group**, `:userId` is the **target member**. The requester is taken from the token.
@@ -348,7 +350,7 @@ Group detail includes the caller's membership, so you don't need a second call t
 
 | `userRole` | `memberStatus` | Meaning |
 |---|---|---|
-| `"owner"` / `"admin"` / `"captain"` / `"vice-captain"` / `"member"` | `"approved"` | A real member — gate admin UI on `userRole`. |
+| `"owner"` / `"admin"` / `"captain"` / `"vice-captain"` / `"referee"` / `"member"` | `"approved"` | A real member — gate admin UI on `userRole`. |
 | `"member"` | `"pending"` | **Requested to join, NOT yet a member.** Show the waiting state. |
 | `null` | `null` | Not a member at all — show Join / Request. |
 
@@ -502,7 +504,7 @@ POST /groups/:id/leave
 { "data": { "message": "You have left the group" } }
 ```
 
-Self-service — **no role check**. An `admin`, `captain`, `vice-captain` or `member` can leave without anyone's approval; the membership row is deleted outright.
+Self-service — **no role check**. Any non-owner role can leave without anyone's approval; the membership row is deleted outright.
 
 | Case | Status | Message |
 |---|---|---|
@@ -659,7 +661,7 @@ class GroupMember {
   final String id;
   final String userId;
   final String userName;
-  final String role;   // owner | admin | captain | vice-captain | member
+  final String role;   // owner | admin | captain | vice-captain | referee | member
   final int level;     // 1..3
   final String status; // pending | approved
 
