@@ -104,7 +104,8 @@ The JSON above is a freshly created event, so most optional fields are empty. Th
 | `matches` | **Not on the event document** — fixtures are their own collection. `GET /events/:id` attaches them as `matches`; `GET /events/:id/matches` returns the same rows (§11). |
 | `teams` | Attached to `GET /events/:id` from the Team collection, players populated. Created by `POST /teams/generate` (§11). |
 | `location` | `GET /events/:id` resolves `locationId` into a **location object** (name, lat/lng, url, address). `locationId` is still returned for clients that only need the id. |
-| `userRole` | On `GET /events/:id`: the caller's role in the owning group (`owner`/`admin`/`captain`/`vice-captain`/`referee`/`member`), or `null` for a non-member or a groupless event. |
+| `userRole` | On `GET /events/:id`: the caller's role in the owning group (`owner`/`admin`/`captain`/`vice-captain`/`referee`/`member`), or `null` for a non-member or a groupless event. **Not a join indicator** — see `joinedByMe`. |
+| `joinedByMe` | On `GET /events/:id`: `true` when the caller is on the roster. Use this for the Join/Leave button. `false` (never absent) when there is no caller, and `false` after leaving — a cancelled row is kept for reactivation but does not count. |
 | `result` | `POST /events/:id/result`, during `after_match` |
 | `coverImage`, `coverImageFileId` | `POST /events/:id/cover` |
 | `photos` | `POST /events/:id/photos`, during `after_match` |
@@ -186,7 +187,7 @@ The event's `createdBy`, **or** — for group events — an approved `owner`/`ad
 | `GET` | `/events` | any user | Public events only. Optional `?region=`, `?near=`/`?radius=`, `?from=`/`?to=`, `?status=`. |
 | `GET` | `/events/group/:groupId` | any user | **NEW** — one group's events. Members see private ones too. Expired/`done` hidden unless `?includeExpired=true`. |
 | `POST` | `/events` | organizer | Create. Accepts `startTime`, `endTime`, `teamCount`, `templateId`. |
-| `GET` | `/events/:id` | any user | Detail + `groupRules`, `standings`, `likedByMe`. |
+| `GET` | `/events/:id` | any user | Detail + `groupRules`, `standings`, `likedByMe`, `joinedByMe`. |
 | `PATCH` | `/events/:id` | organizer | **NEW** — edit. Rejected when `done`. |
 | `DELETE` | `/events/:id` | organizer | **NEW** — hard delete. Rejected when `done`. |
 | `PATCH` | `/events/:id/status` | organizer | **NEW** — advance the lifecycle. |
@@ -382,6 +383,7 @@ Do **not** design screens against these — the fields exist but nothing fills t
 - [ ] A **partial roster is legal**. Check `unassignedPlayerIds` in the response and warn the user, or players silently start with no team.
 - [ ] Scores are `null` until entered — **not `0`**, which is a real scoreline. Render a dash for `null`.
 - [ ] `standings` is derived on every read. Never cache or write it back.
+- [ ] **`joinedByMe` is the only field that says whether YOU joined.** `joinedCount` counts everyone; `userRole` is your group role and reads `owner` even for a creator who never joined.
 - [ ] Resubmitting teams during `preparation` **regenerates fixtures wholesale**, discarding entered scores.
 
 ---

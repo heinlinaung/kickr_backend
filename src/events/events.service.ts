@@ -446,11 +446,29 @@ export class EventsService {
     const teamNames = [...new Set(matches.flatMap((m) => [m.teamA, m.teamB]))];
 
     let likedByMe = false;
+    // Whether the CALLER is on the roster. `joinedCount` says how many people
+    // joined, and `userRole` reports the caller's GROUP role — neither answers
+    // "am I in?", so a group owner who never joined still showed `owner` with
+    // no way to tell they were not playing.
+    let joinedByMe = false;
     if (userId) {
-      likedByMe = !!(await this.likeModel.exists({
-        eventId: new Types.ObjectId(eventId),
-        userId: new Types.ObjectId(userId),
-      }));
+      const [liked, player] = await Promise.all([
+        this.likeModel.exists({
+          // event._id, not a re-cast of the caller's string: the loaded
+          // document's id is already known good.
+          eventId: event._id,
+          userId: new Types.ObjectId(userId),
+        }),
+        // status: 'joined' matters — a cancelled row still exists, and
+        // reactivation reuses it, so its presence alone is not membership.
+        this.playerModel.exists({
+          eventId: event._id,
+          userId: new Types.ObjectId(userId),
+          status: 'joined',
+        }),
+      ]);
+      likedByMe = !!liked;
+      joinedByMe = !!player;
     }
 
     return {
@@ -466,6 +484,7 @@ export class EventsService {
       matches,
       standings: computeStandings(matches, teamNames),
       likedByMe,
+      joinedByMe,
     };
   }
 
