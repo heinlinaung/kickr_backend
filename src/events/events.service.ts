@@ -301,6 +301,61 @@ export class EventsService {
     return events.map(withIsFull);
   }
 
+  /**
+   * Every event the CALLER has joined, soonest first.
+   *
+   * Deliberately not derived from `GET /events`: that route hard-filters
+   * `isPublic: true`, so a private group's event you joined would never appear.
+   * Membership in the event is the only gate here — if you are on the roster,
+   * you can see it, group member or not.
+   *
+   * Also distinct from the profile's `matchHistory`, which is newest-first,
+   * carries a narrow projection, and is suppressed by
+   * `privacy.showMatchHistory` — a privacy control that makes no sense applied
+   * to your own list.
+   */
+  async listMine(
+    userId: string,
+    status?: string,
+    includeExpired = false,
+  ) {
+    const rows = await this.playerModel
+      .find({
+        userId: new Types.ObjectId(userId),
+        // A cancelled row survives for reactivation, so filter on the status
+        // rather than mere presence — otherwise an event you left comes back.
+        status: 'joined',
+      })
+      .select('eventId')
+      .lean();
+
+    // No $in against an empty array.
+    if (!rows.length) return [];
+
+    const filter: Record<string, unknown> = {
+      _id: { $in: rows.map((row) => row.eventId) },
+    };
+
+    if (status !== undefined) {
+      if (!isEventStatus(status)) {
+        throw new BadRequestException(`Unknown status '${status}'`);
+      }
+      filter.status = status;
+    }
+
+    // Same rule as listByGroup, so the two lists agree on what "expired" means.
+    if (!includeExpired) {
+      filter.date = { $gte: startOfToday() };
+      if (status === undefined) filter.status = { $ne: 'done' };
+    }
+
+    const events = await this.eventModel.find(filter).sort({ date: 1 }).lean();
+    // joinedByMe is true by construction — every row here came from the
+    // caller's own roster entries — but stated explicitly so a card rendered
+    // from this list looks the same as one rendered from event detail.
+    return events.map((event) => ({ ...withIsFull(event), joinedByMe: true }));
+  }
+
   async create(userId: string, dto: CreateEventDto): Promise<EventDocument> {
     if (dto.groupId) {
       const member = await this.memberModel.findOne({

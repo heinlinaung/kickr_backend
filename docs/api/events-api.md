@@ -185,6 +185,7 @@ The event's `createdBy`, **or** — for group events — an approved `owner`/`ad
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | `GET` | `/events` | any user | Public events only. Optional `?region=`, `?near=`/`?radius=`, `?from=`/`?to=`, `?status=`. |
+| `GET` | `/events/mine` | any user | **NEW** — events the caller has joined, soonest first. Expired/`done` hidden unless `?includeExpired=true`. |
 | `GET` | `/events/group/:groupId` | any user | **NEW** — one group's events. Members see private ones too. Expired/`done` hidden unless `?includeExpired=true`. |
 | `POST` | `/events` | organizer | Create. Accepts `startTime`, `endTime`, `teamCount`, `templateId`. |
 | `GET` | `/events/:id` | any user | Detail + `groupRules`, `standings`, `likedByMe`, `joinedByMe`. |
@@ -220,6 +221,31 @@ The event's `createdBy`, **or** — for group events — an approved `owner`/`ad
 Returns **only** events with `isPublic: true`, soonest first. Optional `?region=` matches the owning group's country **or** city, case-insensitive; events with no group are excluded when it is set.
 
 > ⚠️ **This will not show a group's private events**, even to its members. For a group's schedule use §5.2.
+
+### 5.1b `GET /events/mine` — events you joined
+
+```http
+GET /events/mine
+GET /events/mine?includeExpired=true
+GET /events/mine?status=join
+```
+
+Every event where **you** are on the roster, soonest first. Unlike `GET /events`
+this is not restricted to public events — a private group's event you joined
+appears here, which is the point.
+
+- An event you **left** is excluded (the roster row survives as `cancelled` for
+  reactivation, but does not count).
+- Expired events (date before today) and `done` events are hidden unless
+  `includeExpired=true`, matching `GET /events/group/:groupId`.
+- An explicit `?status=` overrides the `done` exclusion.
+- Rows carry `isFull` and `joinedByMe: true`, so a card renders identically
+  whether it came from here or from `GET /events/:id`.
+
+> Not the same as the profile's `matchHistory` (`GET /users/:id/profile`), which
+> is newest-first, carries a narrow projection, and is suppressed entirely when
+> the user sets `privacy.showMatchHistory: false`. This route has no privacy
+> gate — it is your own data.
 
 ### 5.2 `GET /events/group/:groupId` — one group's events
 

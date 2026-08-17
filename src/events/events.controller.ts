@@ -86,6 +86,46 @@ export class EventsController {
 
   /**
    * Declared BEFORE `@Get(':id')` on purpose — Nest matches routes in
+   * declaration order, and `mine` would otherwise be swallowed as an `:id`
+   * (yielding a 404 for a malformed ObjectId rather than this list).
+   */
+  @Get('mine')
+  @ApiOperation({
+    summary: 'Events the caller has joined, soonest first',
+    description:
+      'Every event where the caller is on the roster — including private ' +
+      'group events, which GET /events cannot show. Expired and `done` ' +
+      'events are hidden unless includeExpired=true. An event you have left ' +
+      'is excluded.',
+  })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    example: 'join',
+    description: 'Optional lifecycle filter.',
+  })
+  @ApiQuery({
+    name: 'includeExpired',
+    required: false,
+    example: false,
+    description:
+      'Expired events (date before today) and `done` events are hidden by ' +
+      'default. Set true for the history view.',
+  })
+  listMine(
+    @CurrentUser() user: any,
+    @Query('status') status?: string,
+    @Query('includeExpired') includeExpired?: string,
+  ) {
+    return this.eventsService.listMine(
+      user._id.toString(),
+      status,
+      includeExpired === 'true',
+    );
+  }
+
+  /**
+   * Declared BEFORE `@Get(':id')` on purpose — Nest matches routes in
    * declaration order, and `group` would otherwise be swallowed as an `:id`.
    */
   @Get('group/:groupId')
