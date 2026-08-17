@@ -185,7 +185,7 @@ The event's `createdBy`, **or** — for group events — an approved `owner`/`ad
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | `GET` | `/events` | any user | Public events only. Optional `?region=`, `?near=`/`?radius=`, `?from=`/`?to=`, `?status=`. |
-| `GET` | `/events/mine` | any user | **NEW** — events the caller has joined, soonest first. Expired/`done` hidden unless `?includeExpired=true`. |
+| `GET` | `/events/joined` | any user | **NEW** — events the caller has joined, **public and private alike**, soonest first. Expired/`done` hidden unless `?includeExpired=true`. |
 | `GET` | `/events/group/:groupId` | any user | **NEW** — one group's events. Members see private ones too. Expired/`done` hidden unless `?includeExpired=true`. |
 | `POST` | `/events` | organizer | Create. Accepts `startTime`, `endTime`, `teamCount`, `templateId`. |
 | `GET` | `/events/:id` | any user | Detail + `groupRules`, `standings`, `likedByMe`, `joinedByMe`. |
@@ -222,17 +222,22 @@ Returns **only** events with `isPublic: true`, soonest first. Optional `?region=
 
 > ⚠️ **This will not show a group's private events**, even to its members. For a group's schedule use §5.2.
 
-### 5.1b `GET /events/mine` — events you joined
+### 5.1b `GET /events/joined` — events you joined
 
 ```http
-GET /events/mine
-GET /events/mine?includeExpired=true
-GET /events/mine?status=join
+GET /events/joined
+GET /events/joined?includeExpired=true
+GET /events/joined?status=join
 ```
 
-Every event where **you** are on the roster, soonest first. Unlike `GET /events`
-this is not restricted to public events — a private group's event you joined
-appears here, which is the point.
+Every event where **you** are on the roster, soonest first.
+
+**Visibility is not filtered at all here.** If you are on the roster you see the
+event — public or private, group-owned or standalone, and regardless of whether
+you belong to the owning group. Being on the roster *is* the permission. This is
+the one listing route that behaves that way: `GET /events` hard-filters
+`isPublic: true`, and `GET /events/group/:groupId` shows a group's private
+events only to approved members.
 
 - An event you **left** is excluded (the roster row survives as `cancelled` for
   reactivation, but does not count).

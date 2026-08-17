@@ -314,7 +314,7 @@ export class EventsService {
    * `privacy.showMatchHistory` — a privacy control that makes no sense applied
    * to your own list.
    */
-  async listMine(
+  async listJoined(
     userId: string,
     status?: string,
     includeExpired = false,
@@ -441,6 +441,14 @@ export class EventsService {
    * client can render it unconditionally; `[]` for events with no group.
    */
   async findById(eventId: string, userId?: string) {
+    // Validate before Mongoose casts: a malformed id otherwise throws a raw
+    // BSONError and surfaces as a 500. Notably this is what a mistyped static
+    // segment hits — `/events/mine` falls through to `@Get(':id')` and should
+    // read as "no such event", not as a server fault.
+    if (!Types.ObjectId.isValid(eventId)) {
+      throw new NotFoundException('Event not found');
+    }
+
     const event = await this.eventModel.findById(eventId).lean();
     if (!event) throw new NotFoundException('Event not found');
 

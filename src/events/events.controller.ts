@@ -86,10 +86,14 @@ export class EventsController {
 
   /**
    * Declared BEFORE `@Get(':id')` on purpose — Nest matches routes in
-   * declaration order, and `mine` would otherwise be swallowed as an `:id`
+   * declaration order, and `joined` would otherwise be swallowed as an `:id`
    * (yielding a 404 for a malformed ObjectId rather than this list).
+   *
+   * Named for the RELATIONSHIP, not possession: a user also *owns* events they
+   * created, so `/events/mine` read as "events I created" — the opposite of
+   * what this returns. It also leaves `/events/created` free for that.
    */
-  @Get('mine')
+  @Get('joined')
   @ApiOperation({
     summary: 'Events the caller has joined, soonest first',
     description:
@@ -112,12 +116,12 @@ export class EventsController {
       'Expired events (date before today) and `done` events are hidden by ' +
       'default. Set true for the history view.',
   })
-  listMine(
+  listJoined(
     @CurrentUser() user: any,
     @Query('status') status?: string,
     @Query('includeExpired') includeExpired?: string,
   ) {
-    return this.eventsService.listMine(
+    return this.eventsService.listJoined(
       user._id.toString(),
       status,
       includeExpired === 'true',

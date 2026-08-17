@@ -139,7 +139,7 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
     });
   });
 
-  describe('listMine — events the caller joined', () => {
+  describe('listJoined — events the caller joined', () => {
     const playerModel: any = {};
 
     /** playerModel.find(...).select(...).lean() -> roster rows */
@@ -164,7 +164,7 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
     it("only counts rows with status 'joined'", async () => {
       // A cancelled row survives for reactivation; counting it would resurrect
       // an event the user left.
-      await service.listMine(USER);
+      await service.listJoined(USER);
 
       expect(playerModel.find).toHaveBeenCalledWith(
         expect.objectContaining({ status: 'joined' }),
@@ -172,7 +172,7 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
     });
 
     it('queries only the events on the roster', async () => {
-      await service.listMine(USER);
+      await service.listJoined(USER);
 
       expect(eventModel.find).toHaveBeenCalledWith(
         expect.objectContaining({ _id: { $in: ['e1', 'e2'] } }),
@@ -182,13 +182,13 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
     it('returns [] without querying events when nothing was joined', async () => {
       playerModel.find.mockReturnValue(joinedRows([]));
 
-      await expect(service.listMine(USER)).resolves.toEqual([]);
+      await expect(service.listJoined(USER)).resolves.toEqual([]);
       // No $in against an empty array.
       expect(eventModel.find).not.toHaveBeenCalled();
     });
 
     it('hides expired and done events by default', async () => {
-      await service.listMine(USER);
+      await service.listJoined(USER);
 
       const filter = eventModel.find.mock.calls[0][0];
       expect(filter.date.$gte).toBeInstanceOf(Date);
@@ -196,7 +196,7 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
     });
 
     it('includeExpired returns everything', async () => {
-      await service.listMine(USER, undefined, true);
+      await service.listJoined(USER, undefined, true);
 
       const filter = eventModel.find.mock.calls[0][0];
       expect(filter.date).toBeUndefined();
@@ -204,14 +204,14 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
     });
 
     it('an explicit status overrides the done exclusion', async () => {
-      await service.listMine(USER, 'done');
+      await service.listJoined(USER, 'done');
 
       const filter = eventModel.find.mock.calls[0][0];
       expect(filter.status).toBe('done');
     });
 
     it('rejects an unknown status', async () => {
-      await expect(service.listMine(USER, 'bogus')).rejects.toBeInstanceOf(
+      await expect(service.listJoined(USER, 'bogus')).rejects.toBeInstanceOf(
         BadRequestException,
       );
     });
@@ -221,7 +221,7 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
       const chain = findChain([]);
       eventModel.find.mockReturnValue(chain);
 
-      await service.listMine(USER);
+      await service.listJoined(USER);
 
       expect(chain.sort).toHaveBeenCalledWith({ date: 1 });
     });
@@ -231,7 +231,7 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
         findChain([{ _id: 'e1', joinedCount: 2, maxPlayers: 2 }]),
       );
 
-      const res: any = await service.listMine(USER);
+      const res: any = await service.listJoined(USER);
 
       expect(res[0].joinedByMe).toBe(true);
       expect(res[0].isFull).toBe(true);

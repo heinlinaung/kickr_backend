@@ -1,4 +1,5 @@
 import { Test } from '@nestjs/testing';
+import { NotFoundException } from '@nestjs/common';
 import { EventsService } from './events.service';
 import { eventsProviders } from './events.test-providers';
 
@@ -114,6 +115,9 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
 
   const GROUP_ID = '507f1f77bcf86cd799439099';
   const CALLER = '507f191e810c19729de860ea';
+  // A real 24-char hex id: findById validates before casting, so the old 'e1'
+  // placeholder would now (correctly) 404.
+  const EVENT_ID = '507f1f77bcf86cd799439011';
 
   /** chainable mongoose query stub */
   const q = (result: any) => ({
@@ -145,15 +149,26 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
     service = m.get(EventsService);
   });
 
+  describe('findById → malformed id', () => {
+    it('404s instead of throwing a raw cast error', async () => {
+      // A mistyped static segment (e.g. /events/mine) falls through to
+      // @Get(':id'); casting it would surface a BSONError as a 500.
+      await expect(service.findById('mine')).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(eventModel.findById).not.toHaveBeenCalled();
+    });
+  });
+
   describe('findById → joinedByMe', () => {
     const anEvent = () =>
-      eventModel.findById.mockReturnValue(q({ _id: 'e1', groupId: null }));
+      eventModel.findById.mockReturnValue(q({ _id: EVENT_ID, groupId: null }));
 
     it('is true when the caller is on the roster', async () => {
       anEvent();
       playerModel.exists.mockResolvedValue({ _id: 'p1' });
 
-      const res: any = await service.findById('e1', CALLER);
+      const res: any = await service.findById(EVENT_ID, CALLER);
 
       expect(res.joinedByMe).toBe(true);
     });
@@ -162,7 +177,7 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
       anEvent();
       playerModel.exists.mockResolvedValue(null);
 
-      const res: any = await service.findById('e1', CALLER);
+      const res: any = await service.findById(EVENT_ID, CALLER);
 
       expect(res.joinedByMe).toBe(false);
     });
@@ -171,7 +186,7 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
       // Leaving sets status 'cancelled' and keeps the row for reactivation, so
       // its mere presence is not membership.
       anEvent();
-      await service.findById('e1', CALLER);
+      await service.findById(EVENT_ID, CALLER);
 
       expect(playerModel.exists).toHaveBeenCalledWith(
         expect.objectContaining({ status: 'joined' }),
@@ -181,7 +196,7 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
     it('is false — never undefined — when there is no caller', async () => {
       anEvent();
 
-      const res: any = await service.findById('e1');
+      const res: any = await service.findById(EVENT_ID);
 
       expect(res.joinedByMe).toBe(false);
       expect(playerModel.exists).not.toHaveBeenCalled();
@@ -190,14 +205,14 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
     it('is independent of the group role', async () => {
       // A group owner who never joined must still read as not joined — the
       // gap that prompted this field.
-      eventModel.findById.mockReturnValue(q({ _id: 'e1', groupId: GROUP_ID }));
+      eventModel.findById.mockReturnValue(q({ _id: EVENT_ID, groupId: GROUP_ID }));
       groupModel.findById.mockReturnValue(q({ rules: '' }));
       memberModel.findOne = jest
         .fn()
         .mockReturnValue(q({ role: 'owner', status: 'approved' }));
       playerModel.exists.mockResolvedValue(null);
 
-      const res: any = await service.findById('e1', CALLER);
+      const res: any = await service.findById(EVENT_ID, CALLER);
 
       expect(res.userRole).toBe('owner');
       expect(res.joinedByMe).toBe(false);
@@ -207,10 +222,10 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
   describe('findById → groupRules', () => {
     it("attaches the parent group's rules as text", async () => {
       const rules = 'No smoking\nArrive 15 min early\n(or tell the captain)';
-      eventModel.findById.mockReturnValue(q({ _id: 'e1', groupId: GROUP_ID }));
+      eventModel.findById.mockReturnValue(q({ _id: EVENT_ID, groupId: GROUP_ID }));
       groupModel.findById.mockReturnValue(q({ rules }));
 
-      const res: any = await service.findById('e1');
+      const res: any = await service.findById(EVENT_ID);
 
       expect(res.groupRules).toBe(rules);
       // Newlines must survive to the client — rules are now one text block.
@@ -218,19 +233,19 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
     });
 
     it("returns '' for an event with no group, never null", async () => {
-      eventModel.findById.mockReturnValue(q({ _id: 'e1', groupId: null }));
+      eventModel.findById.mockReturnValue(q({ _id: EVENT_ID, groupId: null }));
 
-      const res: any = await service.findById('e1');
+      const res: any = await service.findById(EVENT_ID);
 
       expect(res.groupRules).toBe('');
       expect(groupModel.findById).not.toHaveBeenCalled();
     });
 
     it("returns '' when the group has no rules set", async () => {
-      eventModel.findById.mockReturnValue(q({ _id: 'e1', groupId: GROUP_ID }));
+      eventModel.findById.mockReturnValue(q({ _id: EVENT_ID, groupId: GROUP_ID }));
       groupModel.findById.mockReturnValue(q({}));
 
-      const res: any = await service.findById('e1');
+      const res: any = await service.findById(EVENT_ID);
 
       expect(res.groupRules).toBe('');
     });
