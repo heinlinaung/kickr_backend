@@ -185,6 +185,7 @@ The event's `createdBy`, **or** — for group events — an approved `owner`/`ad
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | `GET` | `/events` | any user | Public events only. Optional `?region=`, `?near=`/`?radius=`, `?from=`/`?to=`, `?status=`. |
+| `GET` | `/events/joined` | any user | **NEW** — events the caller has joined, **public and private alike**, soonest first. Expired/`done` hidden unless `?includeExpired=true`. |
 | `GET` | `/events/group/:groupId` | any user | **NEW** — one group's events. Members see private ones too. Expired/`done` hidden unless `?includeExpired=true`. |
 | `POST` | `/events` | organizer | Create. Accepts `startTime`, `endTime`, `teamCount`, `templateId`. |
 | `GET` | `/events/:id` | any user | Detail + `groupRules`, `standings`, `likedByMe`, `joinedByMe`. |
@@ -220,6 +221,36 @@ The event's `createdBy`, **or** — for group events — an approved `owner`/`ad
 Returns **only** events with `isPublic: true`, soonest first. Optional `?region=` matches the owning group's country **or** city, case-insensitive; events with no group are excluded when it is set.
 
 > ⚠️ **This will not show a group's private events**, even to its members. For a group's schedule use §5.2.
+
+### 5.1b `GET /events/joined` — events you joined
+
+```http
+GET /events/joined
+GET /events/joined?includeExpired=true
+GET /events/joined?status=join
+```
+
+Every event where **you** are on the roster, soonest first.
+
+**Visibility is not filtered at all here.** If you are on the roster you see the
+event — public or private, group-owned or standalone, and regardless of whether
+you belong to the owning group. Being on the roster *is* the permission. This is
+the one listing route that behaves that way: `GET /events` hard-filters
+`isPublic: true`, and `GET /events/group/:groupId` shows a group's private
+events only to approved members.
+
+- An event you **left** is excluded (the roster row survives as `cancelled` for
+  reactivation, but does not count).
+- Expired events (date before today) and `done` events are hidden unless
+  `includeExpired=true`, matching `GET /events/group/:groupId`.
+- An explicit `?status=` overrides the `done` exclusion.
+- Rows carry `isFull` and `joinedByMe: true`, so a card renders identically
+  whether it came from here or from `GET /events/:id`.
+
+> Not the same as the profile's `matchHistory` (`GET /users/:id/profile`), which
+> is newest-first, carries a narrow projection, and is suppressed entirely when
+> the user sets `privacy.showMatchHistory: false`. This route has no privacy
+> gate — it is your own data.
 
 ### 5.2 `GET /events/group/:groupId` — one group's events
 
