@@ -105,7 +105,7 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
   const playerModel: any = {};
   const memberModel: any = {};
   const groupModel: any = {};
-  // findById reports likedByMe; create() may resolve a template.
+  // findById reports likedByMe/joinedByMe; create() may resolve a template.
   const likeModel: any = { exists: jest.fn().mockResolvedValue(null) };
   const templateModel: any = { findById: jest.fn() };
   // §4.6: event location attach moved from assertOwnedBy to assertCanEdit so
@@ -113,6 +113,7 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
   const locations = { assertOwnedBy: jest.fn(), assertCanEdit: jest.fn() };
 
   const GROUP_ID = '507f1f77bcf86cd799439099';
+  const CALLER = '507f191e810c19729de860ea';
 
   /** chainable mongoose query stub */
   const q = (result: any) => ({
@@ -125,6 +126,7 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
     jest.clearAllMocks();
     Object.assign(eventModel, { find: jest.fn(), findById: jest.fn() });
     Object.assign(groupModel, { find: jest.fn(), findById: jest.fn() });
+    playerModel.exists = jest.fn().mockResolvedValue(null);
 
     const m = await Test.createTestingModule({
       providers: [
@@ -141,6 +143,65 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
       ],
     }).compile();
     service = m.get(EventsService);
+  });
+
+  describe('findById → joinedByMe', () => {
+    const anEvent = () =>
+      eventModel.findById.mockReturnValue(q({ _id: 'e1', groupId: null }));
+
+    it('is true when the caller is on the roster', async () => {
+      anEvent();
+      playerModel.exists.mockResolvedValue({ _id: 'p1' });
+
+      const res: any = await service.findById('e1', CALLER);
+
+      expect(res.joinedByMe).toBe(true);
+    });
+
+    it('is false when the caller has not joined', async () => {
+      anEvent();
+      playerModel.exists.mockResolvedValue(null);
+
+      const res: any = await service.findById('e1', CALLER);
+
+      expect(res.joinedByMe).toBe(false);
+    });
+
+    it("only counts a 'joined' row, not a cancelled one", async () => {
+      // Leaving sets status 'cancelled' and keeps the row for reactivation, so
+      // its mere presence is not membership.
+      anEvent();
+      await service.findById('e1', CALLER);
+
+      expect(playerModel.exists).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'joined' }),
+      );
+    });
+
+    it('is false — never undefined — when there is no caller', async () => {
+      anEvent();
+
+      const res: any = await service.findById('e1');
+
+      expect(res.joinedByMe).toBe(false);
+      expect(playerModel.exists).not.toHaveBeenCalled();
+    });
+
+    it('is independent of the group role', async () => {
+      // A group owner who never joined must still read as not joined — the
+      // gap that prompted this field.
+      eventModel.findById.mockReturnValue(q({ _id: 'e1', groupId: GROUP_ID }));
+      groupModel.findById.mockReturnValue(q({ rules: '' }));
+      memberModel.findOne = jest
+        .fn()
+        .mockReturnValue(q({ role: 'owner', status: 'approved' }));
+      playerModel.exists.mockResolvedValue(null);
+
+      const res: any = await service.findById('e1', CALLER);
+
+      expect(res.userRole).toBe('owner');
+      expect(res.joinedByMe).toBe(false);
+    });
   });
 
   describe('findById → groupRules', () => {
