@@ -39,6 +39,17 @@ export class Team {
   duration: number;
 
   /**
+   * Intended squad size for this team.
+   *
+   * The organizer's target, not a constraint: `players` is filled in a separate
+   * step and is NOT validated against this, so a team can sit under or over it
+   * while the roster is being edited. The client uses it to show "4/5 assigned"
+   * rather than to block a submission.
+   */
+  @Prop({ required: true, min: 1 })
+  numberOfPlayers: number;
+
+  /**
    * `pending` until players are assigned, `ready` once they are. Purely
    * derived from `players` today, but stored so the client can filter without
    * inspecting array lengths.

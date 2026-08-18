@@ -795,6 +795,7 @@ export class EventsService {
         name,
         players: [],
         duration: dto.duration,
+        numberOfPlayers: dto.numberOfPlayers,
         status: 'pending',
       })),
     );
@@ -876,6 +877,18 @@ export class EventsService {
     if (duplicate) {
       throw new BadRequestException(
         `Player ${duplicate} is listed twice in this team`,
+      );
+    }
+
+    // Enforce the squad size set at generation time. This is now a hard limit,
+    // not just a display target: an over-filled team would field more players
+    // than the organizer planned for, and nothing downstream would catch it.
+    // Under-filling stays legal — a roster is built up incrementally.
+    if (roster.length > team.numberOfPlayers) {
+      throw new BadRequestException(
+        `${team.name} holds at most ${team.numberOfPlayers} player(s); ` +
+          `received ${roster.length}. Regenerate the teams with a larger ` +
+          'numberOfPlayers to raise the limit.',
       );
     }
 
@@ -982,6 +995,10 @@ export class EventsService {
     const generated = await this.generateTeams(eventId, userId, {
       teamsCount,
       duration,
+      // The shuffle deals every joined player, so the squad size each team is
+      // aiming for IS its share of the roster — rounded up, since a remainder
+      // lands on the earlier teams.
+      numberOfPlayers: Math.ceil(joined.length / teamsCount),
     });
 
     // Deal the shuffled players across the teams just created.

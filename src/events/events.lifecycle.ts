@@ -6,13 +6,12 @@
  * function over plain values so the rules can be unit-tested exhaustively
  * (every legal AND illegal pair) without a database.
  *
- * The 6 states replace the old `open|full|done` trio. Capacity is no longer a
+ * The 5 states replace the old `open|full|done` trio. Capacity is no longer a
  * status — a full event stays in `join` and `isFull` is derived on read.
  */
 
 export const EVENT_STATUSES = [
   'join',
-  'before_match',
   'preparation',
   'playing',
   'after_match',
@@ -24,21 +23,24 @@ export type EventStatus = (typeof EVENT_STATUSES)[number];
 /**
  * Legal transitions, per spec §4.1.
  *
- * Reverse edges exist for the two states an organizer can plausibly enter by
- * mistake: `before_match -> join` reopens registration, and
- * `preparation -> before_match` backs out of team assignment. There is
- * deliberately no edge out of `done` — archival is terminal.
+ * `before_match` was removed: it sat between `join` and `preparation` without
+ * gating anything of its own — the same actions were permitted either side of
+ * it — so closing registration and starting team assignment are now one step.
+ *
+ * One reverse edge survives, `preparation -> join`, which reopens registration
+ * after backing out of team assignment. It absorbs what
+ * `preparation -> before_match -> join` used to do. There is deliberately no
+ * edge out of `done` — archival is terminal.
  */
 const TRANSITIONS: Readonly<Record<EventStatus, readonly EventStatus[]>> = {
-  join: ['before_match'],
-  before_match: ['preparation', 'join'],
-  preparation: ['playing', 'before_match'],
+  join: ['preparation'],
+  preparation: ['playing', 'join'],
   playing: ['after_match'],
   after_match: ['done'],
   done: [],
 };
 
-/** True when `value` is one of the six lifecycle states. */
+/** True when `value` is one of the five lifecycle states. */
 export function isEventStatus(value: unknown): value is EventStatus {
   return (
     typeof value === 'string' && EVENT_STATUSES.includes(value as EventStatus)

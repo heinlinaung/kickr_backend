@@ -38,4 +38,18 @@ export class GenerateTeamsDto {
   @Min(1)
   @Max(600)
   duration: number;
+
+  @ApiProperty({
+    example: 5,
+    minimum: 1,
+    description:
+      'Intended squad size per team. A target for the client to show ' +
+      'progress against, not a constraint — assigning players is a separate ' +
+      'step and is not validated against it.',
+  })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  numberOfPlayers: number;
 }

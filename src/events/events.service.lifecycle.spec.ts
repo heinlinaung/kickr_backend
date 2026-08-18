@@ -146,9 +146,9 @@ describe('EventsService — lifecycle', () => {
       const doc = eventDoc({ status: 'join' });
       eventModel.findById.mockResolvedValue(doc);
 
-      await service.setStatus(EVENT_ID, CREATOR, 'before_match');
+      await service.setStatus(EVENT_ID, CREATOR, 'preparation');
 
-      expect(doc.status).toBe('before_match');
+      expect(doc.status).toBe('preparation');
       expect(doc.save).toHaveBeenCalled();
     });
 
@@ -187,15 +187,14 @@ describe('EventsService — lifecycle', () => {
       const doc = eventDoc({ status: 'join' });
       eventModel.findById.mockResolvedValue(doc);
       await expect(
-        service.setStatus(EVENT_ID, STRANGER, 'before_match'),
+        service.setStatus(EVENT_ID, STRANGER, 'preparation'),
       ).rejects.toBeInstanceOf(ForbiddenException);
       expect(doc.save).not.toHaveBeenCalled();
     });
 
     it('walks the whole happy path end to end', async () => {
       const path = [
-        ['join', 'before_match'],
-        ['before_match', 'preparation'],
+        ['join', 'preparation'],
         ['preparation', 'playing'],
         ['playing', 'after_match'],
         ['after_match', 'done'],
@@ -396,7 +395,7 @@ describe('EventsService — lifecycle', () => {
       expect(eventModel.deleteOne).not.toHaveBeenCalled();
     });
 
-    it.each(['join', 'before_match', 'preparation', 'playing', 'after_match'])(
+    it.each(['join', 'preparation', 'playing', 'after_match'])(
       'allows edit in %s',
       async (status) => {
         const doc = eventDoc({ status });
