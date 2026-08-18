@@ -129,6 +129,7 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       service.generateTeams(EVENT_ID, CREATOR, {
         teamsCount: 2,
         duration: 30,
+        numberOfPlayers: 5,
         ...over,
       } as any);
 
@@ -169,6 +170,7 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       service.generateTeams(EVENT_ID, CREATOR, {
         teamsCount: 3,
         duration: 30,
+        numberOfPlayers: 5,
         ...over,
       } as any);
 
@@ -198,6 +200,22 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
 
       const inserted = teamModel.insertMany.mock.calls[0][0];
       expect(inserted.every((t: any) => t.duration === 25)).toBe(true);
+    });
+
+    it('stores numberOfPlayers on each team', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc());
+      await generate({ numberOfPlayers: 7 });
+
+      const inserted = teamModel.insertMany.mock.calls[0][0];
+      expect(inserted.every((t: any) => t.numberOfPlayers === 7)).toBe(true);
+    });
+
+    it('does NOT validate numberOfPlayers against the joined roster', async () => {
+      // It is the organizer's target, not a constraint — 4 joined players and a
+      // target of 11 is a legitimate mid-setup state, not an error.
+      eventModel.findById.mockResolvedValue(eventDoc());
+
+      await expect(generate({ numberOfPlayers: 11 })).resolves.toBeDefined();
     });
 
     // The spec's worked examples.

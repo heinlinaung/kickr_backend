@@ -795,6 +795,7 @@ export class EventsService {
         name,
         players: [],
         duration: dto.duration,
+        numberOfPlayers: dto.numberOfPlayers,
         status: 'pending',
       })),
     );
@@ -982,6 +983,10 @@ export class EventsService {
     const generated = await this.generateTeams(eventId, userId, {
       teamsCount,
       duration,
+      // The shuffle deals every joined player, so the squad size each team is
+      // aiming for IS its share of the roster — rounded up, since a remainder
+      // lands on the earlier teams.
+      numberOfPlayers: Math.ceil(joined.length / teamsCount),
     });
 
     // Deal the shuffled players across the teams just created.

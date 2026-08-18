@@ -430,20 +430,22 @@ duration. Organizer only, `preparation` only.
 
 ```
 POST /events/6a7055f42e55b9cdbe427eb4/teams/generate
-{ "teamsCount": 3, "duration": 30 }
+{ "teamsCount": 3, "duration": 30, "numberOfPlayers": 5 }
 ```
 
 | Field | Rule |
 |---|---|
 | `teamsCount` | 2–6. Teams are named from the colour vocabulary in order |
 | `duration` | Minutes **per match**, ≥ 1 |
+| `numberOfPlayers` | Intended squad size per team, 1–50. Stored on each team as a **target**, not a constraint — see below |
 
 Response:
 
 ```json
 {
   "teams": [
-    { "_id": "…", "name": "Red", "players": [], "duration": 30, "status": "pending" }
+    { "_id": "…", "name": "Red", "players": [], "duration": 30,
+      "numberOfPlayers": 5, "status": "pending" }
   ],
   "matches": [
     { "_id": "…", "matchNumber": 1, "teamA": "Red", "teamB": "Yellow",
@@ -475,6 +477,13 @@ result is **floored** — so the schedule can never exceed the booked slot.
 A duration too long for the event is rejected with `400` rather than silently
 producing an empty fixture list.
 
+**`numberOfPlayers` is a target, not a limit.** It is the squad size the
+organizer is aiming for, so the client can render "3/5 assigned". Assigning
+players (§11.2) does **not** validate against it — a team may sit under or over
+while the roster is being edited, and nothing rejects it. It is not checked
+against the joined roster either, so 6 joined players with a target of 11 is
+accepted.
+
 **Re-running replaces everything** — previous teams, fixtures and player
 assignments are cleared first. That is the intended way to change the team count
 or match length; editing `event.duration` afterwards does **not** re-derive the
@@ -504,7 +513,8 @@ consistent with the team documents.
 ### 11.2b The server-side fallback — `POST /events/:id/shuffle`
 
 No body. Generates the teams (using `event.teamCount`) and deals the joined
-players across them in one call — a convenience wrapper over §11.1 + §11.2 for
+players across them in one call. `numberOfPlayers` is derived as each team's
+share of the roster (rounded up), since there is no body to take it from — a convenience wrapper over §11.1 + §11.2 for
 callers that want the server to decide. Because it takes no body, it picks a
 match duration from the event rather than accepting one.
 

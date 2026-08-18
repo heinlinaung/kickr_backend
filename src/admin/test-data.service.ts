@@ -603,6 +603,7 @@ export class TestDataService {
         generated = (await this.eventsService.generateTeams(eventId, owner.id, {
           teamsCount: 2,
           duration: 30,
+          numberOfPlayers: 6,
         })) as any;
       },
       'resolve',
@@ -658,6 +659,7 @@ export class TestDataService {
         this.eventsService.generateTeams(eventId, joiners[0].id, {
           teamsCount: 2,
           duration: 30,
+          numberOfPlayers: 6,
         }),
       'reject',
     );
@@ -669,6 +671,7 @@ export class TestDataService {
         this.eventsService.generateTeams(eventId, owner.id, {
           teamsCount: 2,
           duration: 500,
+          numberOfPlayers: 6,
         }),
       'reject',
     );
