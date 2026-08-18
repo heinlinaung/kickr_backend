@@ -6,10 +6,18 @@ Integration guides written against the **live** API — every request/response s
 |---|---|
 | [auth-api.md](./auth-api.md) | Signup (incl. the optional `name`), login, **refresh**, forgot/reset password. Token storage and the 401→refresh→retry loop. |
 | [groups-and-locations-api.md](./groups-and-locations-api.md) | Locations (venues) and Groups (fields, `country`/`city`, images, rules, members/roles, search, QR invites, joining). |
-| [events-api.md](./events-api.md) | Events — the 6-state lifecycle, derived `isFull`, listing a group's events, create/edit/delete, join/leave. ⚠️ **breaking status change**. |
+| [events-api.md](./events-api.md) | Events — the 5-state lifecycle, derived `isFull`, listing a group's events, create/edit/delete, join/leave. ⚠️ **breaking status change**. |
 | [admin-api.md](./admin-api.md) | **Back-office only**, behind the `x-admin-key` shared secret — force-add users to a group or event, and seed a throwaway test fixture (§9). Not for the mobile app. |
 
 **Live reference while the server is running:** Swagger UI at `/api-docs`, OpenAPI JSON at `/api-docs-json`.
+
+## ⚠️ Breaking changes — 2026-08-18
+
+**`before_match` removed from the event lifecycle.** `join` now advances straight to `preparation`, and `preparation → join` reopens registration. `PATCH /events/:id/status` with `"before_match"` returns `400`. Run `scripts/migrate-remove-before-match.ts` before deploying, or events sitting in that state are stranded — the new enum refuses every move out of it.
+
+**`numberOfPlayers` is now enforced.** `PATCH /events/:id/teams/:teamId` rejects a roster larger than the team's `numberOfPlayers`. Under-filling is still fine.
+
+Full detail in [the changelog](../change-logs/2026-08-18.md).
 
 ## ⚠️ Breaking changes — 2026-08-13
 
@@ -23,7 +31,7 @@ Full detail in [the changelog](../change-logs/2026-08-13.md).
 
 ## ⚠️ Breaking change — 2026-08-09
 
-**Event `status` values changed.** The `open | full | done` enum is replaced by the 6-state lifecycle `join → before_match → preparation → playing → after_match → done`.
+**Event `status` values changed.** The `open | full | done` enum is replaced by the match lifecycle `join → preparation → playing → after_match → done`. (That release also had a `before_match` state between `join` and `preparation`; it was removed on 2026-08-18 — see below.)
 
 `open` becomes `join`; **`full` is removed entirely** — a full event stays in `join` and capacity is exposed as the derived boolean `isFull`. Any build matching `"open"` or `"full"` breaks. See [events-api §2.2 and §3](./events-api.md).
 

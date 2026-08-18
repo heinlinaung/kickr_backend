@@ -294,6 +294,7 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
         name: 'Red',
         players: [],
         duration: 30,
+        numberOfPlayers: 5,
         status: 'pending',
         save: jest.fn().mockImplementation(function (this: any) {
           return Promise.resolve(this);
@@ -366,6 +367,29 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       const stranger = '507f191e810c19729de860ff';
 
       await expect(assign([stranger])).rejects.toThrow(/not a joined player/);
+    });
+
+    it('rejects a roster larger than numberOfPlayers', async () => {
+      // The squad size set at generation time is a hard limit: you cannot
+      // assign more players than the organizer planned for.
+      teamModel.findOne.mockResolvedValue(teamDoc({ numberOfPlayers: 1 }));
+      eventModel.findById.mockResolvedValue(eventDoc());
+
+      await expect(assign([P1, P2])).rejects.toThrow(/holds at most 1/);
+    });
+
+    it('accepts a roster exactly at numberOfPlayers', async () => {
+      teamModel.findOne.mockResolvedValue(teamDoc({ numberOfPlayers: 2 }));
+      eventModel.findById.mockResolvedValue(eventDoc());
+
+      await expect(assign([P1, P2])).resolves.toBeDefined();
+    });
+
+    it('accepts an UNDER-filled roster — built up incrementally', async () => {
+      teamModel.findOne.mockResolvedValue(teamDoc({ numberOfPlayers: 5 }));
+      eventModel.findById.mockResolvedValue(eventDoc());
+
+      await expect(assign([P1])).resolves.toBeDefined();
     });
 
     it('rejects the same player listed twice in one team', async () => {

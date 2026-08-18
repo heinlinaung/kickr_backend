@@ -317,7 +317,7 @@ Common `failed` causes:
     "checks": [
       { "name": "created 22 users", "passed": true, "detail": "created 22, rejected 0" },
       { "name": "plain member cannot update a group location", "passed": true },
-      { "name": "join is refused once status is 'before_match'", "passed": true },
+      { "name": "join is refused once status is 'preparation'", "passed": true },
       { "name": "an MVP who never joined is refused", "passed": true }
     ],
     "passed": 24,
@@ -340,7 +340,7 @@ check with `passed: false` is a genuine behavioural regression and carries a
 | Users | 22 created with the right role split; an existing address is refused |
 | Group | All 22 land as approved members |
 | Locations | Owner and group admin can update; a plain member is refused |
-| Join/leave gating | Allowed in `join`, refused once `before_match`; double-join refused |
+| Join/leave gating | Allowed in `join`, refused once `preparation`; double-join refused |
 | Teams | 2 teams → 2 fixtures; non-joined player refused; plain member cannot submit |
 | Lifecycle | Score entry refused during `preparation`; `playing → join` refused |
 | After-match | MVP recorded; an MVP who never joined refused |

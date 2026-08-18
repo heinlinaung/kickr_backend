@@ -146,8 +146,8 @@ export class EventsController {
     required: false,
     example: 'join',
     description:
-      'Optional lifecycle filter: join | before_match | preparation | ' +
-      'playing | after_match | done.',
+      'Optional lifecycle filter: join | preparation | playing | ' +
+      'after_match | done.',
   })
   @ApiQuery({
     name: 'includeExpired',
@@ -205,9 +205,9 @@ export class EventsController {
   @ApiOperation({
     summary: 'Advance the event lifecycle',
     description:
-      'join -> before_match -> preparation -> playing -> after_match -> done. ' +
-      'before_match may reopen to join, and preparation may revert to ' +
-      'before_match. done is terminal.',
+      'join -> preparation -> playing -> after_match -> done. ' +
+      'preparation may revert to join, reopening registration. ' +
+      'done is terminal.',
   })
   @ApiResponse({ status: 409, description: 'Illegal transition' })
   @ApiResponse({ status: 403, description: 'Caller is not the organizer' })

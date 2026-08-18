@@ -880,6 +880,18 @@ export class EventsService {
       );
     }
 
+    // Enforce the squad size set at generation time. This is now a hard limit,
+    // not just a display target: an over-filled team would field more players
+    // than the organizer planned for, and nothing downstream would catch it.
+    // Under-filling stays legal — a roster is built up incrementally.
+    if (roster.length > team.numberOfPlayers) {
+      throw new BadRequestException(
+        `${team.name} holds at most ${team.numberOfPlayers} player(s); ` +
+          `received ${roster.length}. Regenerate the teams with a larger ` +
+          'numberOfPlayers to raise the limit.',
+      );
+    }
+
     // Check against sibling teams, not just this one.
     const others = await this.teamModel
       .find({ eventId: eventObjectId, _id: { $ne: team._id } })

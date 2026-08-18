@@ -572,24 +572,24 @@ export class TestDataService {
       await this.eventsService.join(eventId, joiner.id).catch(() => undefined);
     }
 
-    // --- stage: before_match -------------------------------------------
-    await this.eventsService.setStatus(eventId, owner.id, 'before_match');
+    // --- stage: preparation, teams -------------------------------------
+    // `join` moves straight here now; `before_match` was removed because it
+    // gated nothing the neighbouring states did not.
+    await this.eventsService.setStatus(eventId, owner.id, 'preparation');
+
     const late = users.find((u) => !joiners.includes(u) && u.role !== 'owner')!;
     await this.expect(
       record,
-      "join is refused once status is 'before_match'",
+      "join is refused once status is 'preparation'",
       () => this.eventsService.join(eventId, late.id),
       'reject',
     );
     await this.expect(
       record,
-      "leave is refused once status is 'before_match'",
+      "leave is refused once status is 'preparation'",
       () => this.eventsService.leave(eventId, joiners[1].id),
       'reject',
     );
-
-    // --- stage: preparation, teams -------------------------------------
-    await this.eventsService.setStatus(eventId, owner.id, 'preparation');
 
     const half = Math.ceil(joiners.length / 2);
     // Two-step flow: generate the empty teams and the schedule, then assign.

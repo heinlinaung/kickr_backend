@@ -5,13 +5,20 @@
 **Swagger UI:** `http://localhost:3000/api-docs` · **OpenAPI JSON:** `/api-docs-json`
 **Status:** build steps 1–4 implemented — lifecycle core, teams/fixtures/standings, after-match (MVP, cover, photos), and discovery (geo, templates, likes). Verified against MongoDB on **2026-08-13**. Remaining gaps are listed in §9; the teams flow is documented in §11.
 
+> **Changed 2026-08-18:** **`before_match` is gone from the lifecycle** — `join`
+> now advances straight to `preparation`, and `preparation → join` reopens
+> registration. Sending `"before_match"` to `PATCH /events/:id/status` is a
+> `400`. Run `scripts/migrate-remove-before-match.ts` before deploying.
+> Also: `assignTeamPlayers` now **rejects a roster larger than the team's
+> `numberOfPlayers`**.
+
 > **Changed 2026-08-13:** teams are a two-step flow now (`POST /teams/generate`, then `PATCH /teams/:teamId`) and `PUT /events/:id/teams` is **gone**. `event.duration` decides how many matches exist. See [the changelog](../change-logs/2026-08-13.md).
 **See also:** [Auth API](./auth-api.md) for obtaining the access token · [Groups & Locations API](./groups-and-locations-api.md) for `groupId` and `locationId`.
 
 > ## ⚠️ Breaking change — event `status` values have changed
 >
-> The old `open | full | done` enum is **gone**. Events now use a 6-state lifecycle:
-> `join → before_match → preparation → playing → after_match → done`.
+> The old `open | full | done` enum is **gone**. Events now use a 5-state lifecycle:
+> `join → preparation → playing → after_match → done`.
 >
 > - `open` → **`join`**
 > - `full` → **removed entirely.** A full event stays in `join`; use the new derived **`isFull`** boolean instead.
@@ -138,13 +145,12 @@ if (event.isFull) showFullBadge();
 ## 3. The lifecycle
 
 ```
-join → before_match → preparation → playing → after_match → done
+join → preparation → playing → after_match → done
 ```
 
 | Status | Meaning |
 |---|---|
 | `join` | Registration open. Players can join/leave. |
-| `before_match` | Registration closed, waiting for match time. |
 | `preparation` | Teams being assigned; fixtures submitted here. |
 | `playing` | Match in progress; scores can be entered. |
 | `after_match` | Match over; MVP/photos/ratings belong here. |
@@ -154,9 +160,8 @@ join → before_match → preparation → playing → after_match → done
 
 | From | To |
 |---|---|
-| `join` | `before_match` |
-| `before_match` | `preparation`, **`join`** (reopen registration) |
-| `preparation` | `playing`, **`before_match`** (revert) |
+| `join` | `preparation` |
+| `preparation` | `playing`, **`join`** (reopen registration) |
 | `playing` | `after_match` |
 | `after_match` | `done` |
 | `done` | — terminal |
@@ -335,7 +340,7 @@ PATCH /events/6a7055f42e55b9cdbe427eb4/status
 Authorization: Bearer <accessToken>
 Content-Type: application/json
 
-{ "status": "before_match" }
+{ "status": "preparation" }
 ```
 
 Returns the updated event. Organizer only.
@@ -375,7 +380,7 @@ Re-joining after leaving works — the cancelled row is reactivated.
 
 ### 8.2 `DELETE /events/:id/join`
 
-Only while `status == 'join'`. Once the organizer closes registration, `400` with a message telling the player to ask the organizer to reopen it. Reopening is legal (`before_match → join`).
+Only while `status == 'join'`. Once the organizer moves the event to `preparation`, `400` with a message telling the player to ask the organizer to reopen it. Reopening is legal (`preparation → join`).
 
 `404` if you had not joined.
 
@@ -477,12 +482,14 @@ result is **floored** — so the schedule can never exceed the booked slot.
 A duration too long for the event is rejected with `400` rather than silently
 producing an empty fixture list.
 
-**`numberOfPlayers` is a target, not a limit.** It is the squad size the
-organizer is aiming for, so the client can render "3/5 assigned". Assigning
-players (§11.2) does **not** validate against it — a team may sit under or over
-while the roster is being edited, and nothing rejects it. It is not checked
-against the joined roster either, so 6 joined players with a target of 11 is
-accepted.
+**`numberOfPlayers` is a hard upper limit.** Assigning more players than this
+to a team is rejected with `400` (§11.2). **Under**-filling stays legal — a
+roster is built up incrementally, so "3/5 assigned" is a normal state the client
+should render rather than an error.
+
+It is not checked against the joined roster, so 6 joined players with a target
+of 11 is accepted at generation time; the limit only binds when players are
+actually assigned.
 
 **Re-running replaces everything** — previous teams, fixtures and player
 assignments are cleared first. That is the intended way to change the team count
@@ -501,8 +508,12 @@ PATCH /events/6a7055f42e55b9cdbe427eb4/teams/6a70…f1
 `name` is optional — supply it to rename in the same call.
 
 Rejected with `400` when a `playerId` is not a joined player, appears twice in
-the body, or is **already in another team** (the message names that team). Two
-teams claiming one player would corrupt standings and per-player stats.
+the body, is **already in another team** (the message names that team), or when
+the roster **exceeds the team's `numberOfPlayers`**. Two teams claiming one
+player would corrupt standings and per-player stats; an over-filled team would
+field more players than the organizer planned for.
+
+To raise the limit, regenerate the teams with a larger `numberOfPlayers`.
 
 An empty `playerIds` clears the team and returns it to `status: "pending"`.
 Assigning players flips it to `"ready"` and notifies each one.

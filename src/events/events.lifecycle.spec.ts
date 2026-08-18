@@ -18,11 +18,11 @@ import {
  * pair — including the 30 that must be rejected — rather than spot-checking.
  */
 const LEGAL: ReadonlyArray<[EventStatus, EventStatus]> = [
-  ['join', 'before_match'],
-  ['before_match', 'preparation'],
-  ['before_match', 'join'],
+  ['join', 'preparation'],
   ['preparation', 'playing'],
-  ['preparation', 'before_match'],
+  // The one reverse edge: reopens registration after backing out of team
+  // assignment. Absorbs what preparation -> before_match -> join used to do.
+  ['preparation', 'join'],
   ['playing', 'after_match'],
   ['after_match', 'done'],
 ];
@@ -31,10 +31,11 @@ const isLegal = (from: EventStatus, to: EventStatus) =>
   LEGAL.some(([f, t]) => f === from && t === to);
 
 describe('event lifecycle — transition table', () => {
-  it('declares exactly the six spec states, in lifecycle order', () => {
+  it('declares exactly the five spec states, in lifecycle order', () => {
+    // `before_match` was removed: it gated nothing the neighbouring states did
+    // not, so closing registration and starting team assignment are one step.
     expect([...EVENT_STATUSES]).toEqual([
       'join',
-      'before_match',
       'preparation',
       'playing',
       'after_match',
@@ -42,7 +43,16 @@ describe('event lifecycle — transition table', () => {
     ]);
   });
 
-  // 6 x 6 = 36 ordered pairs. Every one is asserted, so adding an edge to the
+  it('no longer recognises before_match', () => {
+    expect(isEventStatus('before_match')).toBe(false);
+    // And it cannot be reached or left, so an event cannot get stranded there.
+    expect(canTransition('join', 'before_match' as EventStatus)).toBe(false);
+    expect(canTransition('before_match' as EventStatus, 'preparation')).toBe(
+      false,
+    );
+  });
+
+  // 5 x 5 = 25 ordered pairs. Every one is asserted, so adding an edge to the
   // implementation without updating the spec transcription above fails here.
   describe.each(EVENT_STATUSES)('from %s', (from) => {
     it.each(EVENT_STATUSES)(`-> %s`, (to) => {
@@ -50,7 +60,7 @@ describe('event lifecycle — transition table', () => {
     });
   });
 
-  it('allows exactly seven transitions in total', () => {
+  it('allows exactly five transitions in total', () => {
     const count = EVENT_STATUSES.flatMap((from) =>
       EVENT_STATUSES.filter((to) => canTransition(from, to)),
     ).length;
@@ -82,18 +92,18 @@ describe('event lifecycle — transition table', () => {
   });
 
   it('never allows skipping a state forward', () => {
-    // e.g. join -> playing, join -> done, before_match -> after_match
-    expect(canTransition('join', 'preparation')).toBe(false);
+    // join -> preparation IS legal now (before_match is gone), so the skips
+    // start one step further along.
     expect(canTransition('join', 'playing')).toBe(false);
+    expect(canTransition('join', 'after_match')).toBe(false);
     expect(canTransition('join', 'done')).toBe(false);
-    expect(canTransition('before_match', 'playing')).toBe(false);
     expect(canTransition('preparation', 'after_match')).toBe(false);
+    expect(canTransition('preparation', 'done')).toBe(false);
     expect(canTransition('playing', 'done')).toBe(false);
   });
 
   it('allows reopening registration but not un-playing a match', () => {
-    expect(canTransition('before_match', 'join')).toBe(true);
-    expect(canTransition('preparation', 'before_match')).toBe(true);
+    expect(canTransition('preparation', 'join')).toBe(true);
     // no way back out of playing / after_match
     expect(canTransition('playing', 'preparation')).toBe(false);
     expect(canTransition('after_match', 'playing')).toBe(false);
@@ -121,7 +131,7 @@ describe('event lifecycle — action gates', () => {
     canSubmitResult: { fn: canSubmitResult, allowed: ['after_match'] },
     canModify: {
       fn: canModify,
-      allowed: ['join', 'before_match', 'preparation', 'playing', 'after_match'],
+      allowed: ['join', 'preparation', 'playing', 'after_match'],
     },
   };
 
@@ -139,7 +149,7 @@ describe('event lifecycle — action gates', () => {
 
   it('scoring is impossible before kick-off', () => {
     expect(canEnterScore('join')).toBe(false);
-    expect(canEnterScore('before_match')).toBe(false);
+    expect(canEnterScore('preparation')).toBe(false);
     expect(canEnterScore('preparation')).toBe(false);
   });
 
