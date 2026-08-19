@@ -689,7 +689,50 @@ Pending
 
 ---
 
-# 16. Important Business Rules
+# 16. Tournament Phases & Format
+
+A tournament can run through one or both of the following phases.
+
+```text
+Tournament
+   |
+   +-- Phases
+         |
+         +-- League Phase
+         |     |
+         |     +-- Groups (optional)
+         |     +-- Standings
+         |     +-- Fixtures / Matches
+         |
+         +-- Knockout Phase
+               |
+               +-- Rounds
+               |     +-- Round of 16
+               |     +-- Quarter Final
+               |     +-- Semi Final
+               |     +-- Final
+               |
+               +-- Fixtures / Matches
+```
+
+## 16.1 League Phase
+
+Teams are optionally split into **Groups**, play round-robin **Fixtures / Matches** against other teams in their group, and results build a **Standings** table (points, wins, draws, losses, goal difference, etc.).
+
+## 16.2 Knockout Phase
+
+Teams advance through single-elimination **Rounds** (e.g. Round of 16 → Quarter Final → Semi Final → Final), each round made up of **Fixtures / Matches**. Which teams enter the Knockout Phase, and in what seeding, is governed by the tournament's **Qualification Rules**.
+
+## 16.3 Phase Business Rules
+
+1. A tournament can use League Phase only, Knockout Phase only, or both (League Phase feeding into Knockout Phase).
+2. Groups are optional within the League Phase; a tournament may run a single combined league table instead.
+3. Qualification Rules determine how teams move from the League Phase into the Knockout Phase (e.g. top 2 per group).
+4. Once a phase starts, its structure (groups, number of rounds) should not be changed without organizer confirmation.
+
+---
+
+# 17. Important Business Rules
 
 ### Team Rules
 
@@ -720,7 +763,7 @@ Pending
 
 ---
 
-# 17. Recommended Data Relationship
+# 18. Recommended Data Relationship
 
 Conceptually, the relationship should be:
 
@@ -762,7 +805,7 @@ This is important because the same team can participate in different tournaments
 
 ---
 
-# 18. Complete User Flow
+# 19. Complete User Flow
 
 ## Group Admin Creates Team
 
@@ -848,7 +891,7 @@ Joined     Rejected
 
 ---
 
-# 19. Final Architecture
+# 20. Final Architecture
 
 The recommended structure is:
 
@@ -874,11 +917,29 @@ GROUP
     ├── Tournament A
     │   │
     │   ├── Tournament Teams
+    │   │
     │   ├── Phases
+    │   │   │
     │   │   ├── League Phase
+    │   │   │   ├── Groups (optional)
+    │   │   │   ├── Standings
+    │   │   │   └── Fixtures / Matches
+    │   │   │
     │   │   └── Knockout Phase
+    │   │       │
+    │   │       ├── Rounds
+    │   │       │   ├── Round of 16
+    │   │       │   ├── Quarter Final
+    │   │       │   ├── Semi Final
+    │   │       │   └── Final
+    │   │       │
+    │   │       └── Fixtures / Matches
+    │   │
     │   ├── Qualification Rules
+    │   │
     │   └── Tournament Settings
+    │       ├── Entry Fee per Team
+    │       └── Prize Pool
     │
     └── Tournament B
 
