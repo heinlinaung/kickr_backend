@@ -205,6 +205,7 @@ The event's `createdBy`, **or** — for group events — an approved `owner`/`ad
 | `PATCH` | `/events/:id/teams/:teamId` | organizer | **NEW** — assign/rename one team. `preparation` only. |
 | `POST` | `/events/:id/shuffle` | organizer | Server-side colour shuffle (fallback). Gated to `preparation`. See §11. |
 | `GET` | `/events/:id/matches` | any user | **NEW** — fixture list. |
+| `POST` | `/events/:id/matches` | organizer | **NEW** — add one fixture by hand (§11.3b). |
 | `PATCH` | `/events/:id/matches/:matchNumber` | organizer | **NEW** — enter a score. `playing`/`after_match`. |
 | `GET` | `/events/:id/standings` | any user | **NEW** — derived table. |
 | `POST` | `/events/:id/result` | organizer | **NEW** — MVP (+ optional overall score). `after_match` only. |
@@ -542,6 +543,40 @@ Fixtures are **never client-authored**. You cannot send `matches[]`; a stale app
 Each fixture is a document in its own collection with a stable `_id`, so it can be referenced from elsewhere — player ratings (§8) attach to a specific match. `GET /events/:id` still returns them inline as `matches` for convenience, so the response shape you consume is unchanged.
 
 Resubmitting during `preparation` regenerates teams and fixtures wholesale. Once the event leaves `preparation` they are locked.
+
+### 11.3b Add a fixture by hand — `POST /events/:id/matches`
+
+An escape hatch for schedules the generator cannot express. A 60-minute event
+with 30-minute matches fits `floor((60-10)/30)` = **1** match, so 3 teams leave
+one team with no fixture at all. This adds one.
+
+```
+POST /events/6a7055f42e55b9cdbe427eb4/matches
+{ "teamA": "Blue", "teamB": "Red" }
+```
+
+Organizer only. Both names must belong to this event (case-insensitive; the
+stored casing is used). Created **unplayed** — score it with `PATCH` like any
+other fixture.
+
+`matchNumber` is **not** accepted: it is uniquely indexed per event, so the
+server appends after the current highest rather than letting a caller pick a
+number they cannot see.
+
+**What it deliberately does NOT do**, by decision:
+
+- **No round-robin check.** `matches[]` may stop forming a valid double
+  round-robin. Standings still compute correctly — the fold is defined over the
+  fixtures as stored, whatever they are.
+- **No duration budget check.** Scheduled minutes may exceed what
+  `event.duration` allows.
+- **No renumbering** of existing fixtures.
+- **No lifecycle gate** — allowed in any state, since an organizer may need it
+  late.
+
+> ⚠️ **Add AFTER generating, not before.** `POST /teams/generate` and
+> `POST /shuffle` both replace the fixture list wholesale, so a hand-added
+> match is lost.
 
 ### 11.4 Scores — `PATCH /events/:id/matches/:matchNumber`
 

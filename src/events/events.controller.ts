@@ -31,6 +31,7 @@ import { UpdateEventDto } from './dto/update-event.dto';
 import { UpdateEventStatusDto } from './dto/update-event-status.dto';
 import { GenerateTeamsDto } from './dto/generate-teams.dto';
 import { AssignTeamPlayersDto } from './dto/assign-team-players.dto';
+import { AddMatchDto } from './dto/add-match.dto';
 import { UpdateMatchScoreDto } from './dto/update-match-score.dto';
 import { SubmitResultDto } from './dto/submit-result.dto';
 
@@ -289,6 +290,31 @@ export class EventsController {
       user._id.toString(),
       dto,
     );
+  }
+
+  @Post(':id/matches')
+  @ApiOperation({
+    summary: 'Add one fixture by hand (organizer only)',
+    description:
+      'An escape hatch for schedules the generator cannot express — e.g. 3 ' +
+      'teams in a 60-minute event fits only one match, leaving a team with no ' +
+      'fixture. Appends a single match; does NOT renumber, check the double ' +
+      'round-robin, or check the duration budget. Both team names must belong ' +
+      'to this event. Created unplayed — score it via PATCH as usual. ' +
+      'NOTE: a later /teams/generate or /shuffle replaces the whole fixture ' +
+      'list, so add after generating, not before.',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Unknown team name, a team against itself, or no teams yet',
+  })
+  @ApiResponse({ status: 403, description: 'Caller is not the organizer' })
+  addMatch(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() dto: AddMatchDto,
+  ) {
+    return this.eventsService.addMatch(id, user._id.toString(), dto);
   }
 
   @Get(':id/matches')
