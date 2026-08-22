@@ -48,7 +48,9 @@ export class EventsController {
     required: false,
     example: 'Myanmar',
     description:
-      "Filters by the owning group's country OR city (case-insensitive). " +
+      "Filters by the owning group's country OR city. Group values are " +
+      'stored lowercase and the input is lowercased before matching, so ' +
+      'casing does not matter. Exact whole-value match, not a substring. ' +
       'Events with no group are excluded when set.',
   })
   @ApiQuery({

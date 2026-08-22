@@ -12,7 +12,7 @@ import {
   MinLength,
   MaxLength,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 
 export class CreateGroupDto {
   @ApiProperty({ example: 'Bangkok FC', minLength: 2 })
@@ -69,14 +69,20 @@ export class CreateGroupDto {
   @MaxLength(5000)
   rules?: string;
 
-  @ApiProperty({ example: 'Thailand', required: false })
+  @ApiProperty({ example: 'thailand', required: false })
   @IsOptional()
   @IsString()
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
   country?: string;
 
-  @ApiProperty({ example: 'Bangkok', required: false })
+  @ApiProperty({ example: 'bangkok', required: false })
   @IsOptional()
   @IsString()
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toLowerCase() : value,
+  )
   city?: string;
 
   @ApiProperty({ example: false, required: false })

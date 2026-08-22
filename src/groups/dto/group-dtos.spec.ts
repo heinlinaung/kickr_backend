@@ -77,6 +77,16 @@ describe('CreateGroupDto', () => {
     expect(out.handle).toBe('bangkok-fc');
   });
 
+  it('lowercases country and city on create too', async () => {
+    const out: any = await run(CreateGroupDto, {
+      name: 'Bangkok FC',
+      country: 'Thailand',
+      city: 'BANGKOK',
+    });
+    expect(out.country).toBe('thailand');
+    expect(out.city).toBe('bangkok');
+  });
+
   it('rejects an unknown sportType, accepts football', async () => {
     expect(
       await expectRejected(CreateGroupDto, {
@@ -100,13 +110,23 @@ describe('UpdateGroupDto', () => {
     expect(out.rules).toBe(text);
   });
 
-  it('accepts country and city', async () => {
+  it('lowercases country and city', async () => {
+    // Stored lowercase so `GET /events?region=` can match a canonical form.
     const out: any = await run(UpdateGroupDto, {
       country: 'Myanmar',
       city: 'Yangon',
     });
-    expect(out.country).toBe('Myanmar');
-    expect(out.city).toBe('Yangon');
+    expect(out.country).toBe('myanmar');
+    expect(out.city).toBe('yangon');
+  });
+
+  it('trims surrounding whitespace on country and city', async () => {
+    const out: any = await run(UpdateGroupDto, {
+      country: '  THAILAND  ',
+      city: '  Bangkok ',
+    });
+    expect(out.country).toBe('thailand');
+    expect(out.city).toBe('bangkok');
   });
 
   it('rejects a non-string rules value', async () => {

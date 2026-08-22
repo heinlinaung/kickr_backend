@@ -189,9 +189,12 @@ export class EventsService {
     const filter: Record<string, unknown> = { isPublic: true };
 
     if (region?.trim()) {
-      const rx = new RegExp(`^${escapeRegex(region.trim())}$`, 'i');
+      // country/city are stored lowercase, so this is an exact match on a
+      // canonical form rather than a case-insensitive regex. That lets the
+      // {country, city} index actually be used — a /^…$/i regex cannot use it.
+      const needle = region.trim().toLowerCase();
       const groups = await this.groupModel
-        .find({ $or: [{ country: rx }, { city: rx }] })
+        .find({ $or: [{ country: needle }, { city: needle }] })
         .select('_id')
         .lean();
 
@@ -1425,7 +1428,3 @@ function startOfToday(): Date {
   return d;
 }
 
-/** Escapes user input so it can be embedded in a RegExp literally. */
-function escapeRegex(input: string): string {
-  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}

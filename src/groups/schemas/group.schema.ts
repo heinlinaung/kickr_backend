@@ -36,10 +36,16 @@ export class Group {
   // Where the team is based. Deliberately on the Group rather than derived from
   // Group.locations -> Location: a team's country/city is a property of the team,
   // not of any one pitch it plays on, and GET /events?region= filters on it.
-  @Prop({ trim: true })
+  //
+  // Stored LOWERCASE. `?region=` matches these values, and mixed casing made
+  // that filter silently miss: a group saved as "Yangon" was invisible to
+  // `?region=yangon`. Normalising on write means one canonical form in the
+  // database rather than a case-insensitive comparison at every read site.
+  // Free text for now — no country/city reference list exists yet.
+  @Prop({ trim: true, lowercase: true })
   country: string;
 
-  @Prop({ trim: true })
+  @Prop({ trim: true, lowercase: true })
   city: string;
 
   /**

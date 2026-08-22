@@ -261,7 +261,7 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
       expect(groupModel.find).not.toHaveBeenCalled();
     });
 
-    it('matches a region against country OR city, case-insensitively', async () => {
+    it('matches a region against country OR city', async () => {
       groupModel.find.mockReturnValue(q([{ _id: GROUP_ID }]));
       eventModel.find.mockReturnValue(q([{ _id: 'e1' }]));
 
@@ -269,10 +269,12 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
 
       const groupFilter = groupModel.find.mock.calls[0][0];
       expect(groupFilter.$or).toHaveLength(2);
-      const [byCountry, byCity] = groupFilter.$or;
-      expect(byCountry.country.flags).toContain('i');
-      expect(byCountry.country.test('Yangon')).toBe(true);
-      expect(byCity.city.test('Yangon')).toBe(true);
+      // Exact match on the canonical lowercase form, not a regex — country and
+      // city are stored lowercase, so this can use the {country, city} index.
+      expect(groupFilter.$or).toEqual([
+        { country: 'yangon' },
+        { city: 'yangon' },
+      ]);
 
       const eventFilter = eventModel.find.mock.calls[0][0];
       expect(eventFilter.groupId).toEqual({ $in: [GROUP_ID] });
@@ -297,14 +299,29 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
       expect(eventModel.find).toHaveBeenCalledWith({ isPublic: true });
     });
 
-    it('treats regex metacharacters in region as literal text', async () => {
+    it('normalises the caller\'s casing to the stored lowercase form', async () => {
+      // Values are stored lowercase, so a caller typing "Yangon" must still
+      // match. Previously handled by an /i regex; now by normalising the input.
+      groupModel.find.mockReturnValue(q([]));
+
+      await service.list('u1', { region: '  YaNgOn  ' });
+
+      expect(groupModel.find.mock.calls[0][0].$or).toEqual([
+        { country: 'yangon' },
+        { city: 'yangon' },
+      ]);
+    });
+
+    it('treats regex metacharacters as literal text', async () => {
+      // No regex is built any more, so '.' cannot act as a wildcard — but the
+      // guarantee still matters, so it stays asserted.
       groupModel.find.mockReturnValue(q([]));
 
       await service.list('u1', { region: 'Yan.on' });
 
-      const rx = groupModel.find.mock.calls[0][0].$or[0].country;
-      expect(rx.test('Yangon')).toBe(false); // '.' must not act as a wildcard
-      expect(rx.test('Yan.on')).toBe(true);
+      const [byCountry] = groupModel.find.mock.calls[0][0].$or;
+      expect(byCountry.country).toBe('yan.on');
+      expect(byCountry.country).not.toBeInstanceOf(RegExp);
     });
   });
 });
