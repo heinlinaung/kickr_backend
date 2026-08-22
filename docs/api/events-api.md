@@ -237,7 +237,9 @@ or `after_match`.
 
 ### 5.1 `GET /events` — public discovery
 
-Returns **only** events with `isPublic: true`, soonest first. Optional `?region=` matches the owning group's country **or** city, case-insensitive; events with no group are excluded when it is set.
+Returns **only** events with `isPublic: true`, soonest first. Optional `?region=` matches the owning group's country **or** city; events with no group are excluded when it is set.
+
+Group `country`/`city` are stored lowercase, and `region` is lowercased before matching — so `?region=Yangon`, `?region=yangon` and `?region=YANGON` are equivalent. The match is exact on the whole value, not a substring or pattern: `?region=yan` will not find `yangon`.
 
 > ⚠️ **This will not show a group's private events**, even to its members. For a group's schedule use §5.2.
 

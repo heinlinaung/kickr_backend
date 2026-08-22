@@ -42,10 +42,12 @@ export class User {
   @Prop()
   biography: string;
 
-  @Prop()
+  // Lowercase for the same reason as Group.country — one canonical form, so
+  // comparisons and future grouping do not depend on how the user typed it.
+  @Prop({ trim: true, lowercase: true })
   country: string;
 
-  @Prop()
+  @Prop({ trim: true, lowercase: true })
   city: string;
 
   @Prop()

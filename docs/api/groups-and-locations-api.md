@@ -222,7 +222,7 @@ The same adoption happens on `POST /groups/:id/locations` when you attach one of
   "wallpaper": "https://ik.imagekit.io/kickr/groups/...-wallpaper-...",
   "wallpaperFileId": "...",
   "rules": "No late\nBring bib\nRespect",
-  "country": "Thailand",
+  "country": "thailand",
   "city": "Bangkok",
   "locations": ["6a6b21077d15afe5f7856042", "6a6b21227d15afe5f7856045"],
   "isPrivate": false,
@@ -245,7 +245,7 @@ The same adoption happens on `POST /groups/:id/locations` when you attach one of
 1. **`logo` vs `wallpaper`** — `logo` is the team crest (small, circular in the UI); `wallpaper` is the cover/banner photo. Both are full ImageKit CDN URLs, ready to pass straight to `Image.network`. The `*FileId` fields are for server-side replace/delete — ignore them in the app.
 2. **`locations` on the group object is a list of ID strings, NOT objects.** To render names/coords, call `GET /groups/:id/locations`, which returns them **populated**. Don't try to read `.name` off the group's `locations`.
 3. **`rules` entries may contain newlines and are unlimited in count and length.** See §3.9 — this needs specific handling or long rules render as one run-on paragraph.
-4. **`country` / `city` are optional free text** and may be absent on older groups. They describe where the *team* is based (not a pitch), and drive the `GET /events?region=` filter.
+4. **`country` / `city` are optional free text, stored LOWERCASE.** Send any casing — `"Thailand"`, `"THAILAND"` — and the API normalises it to `"thailand"` and trims surrounding whitespace. They may be absent on older groups. They describe where the *team* is based (not a pitch), and drive the `GET /events?region=` filter, which matches the canonical lowercase form.
 
 ### 3.2 Endpoints
 
@@ -281,7 +281,7 @@ The same adoption happens on `POST /groups/:id/locations` when you attach one of
   "handle": "bangkok-fc",
   "maxPlayers": 22,
   "isPrivate": false,
-  "country": "Thailand",
+  "country": "thailand",
   "city": "Bangkok",
   "rules": "Be on time\nNo alcohol before the match",
   "locationIds": ["6a6b21077d15afe5f7856042"]
@@ -297,7 +297,7 @@ Validation rules to enforce **client-side** so users get instant feedback:
 | `sportType` | one of `football`, `futsal`, `padel`, `basketball` | `sportType must be one of the following values: ...` |
 | `locationIds` | max 5, each a valid ObjectId **owned by the caller** | `400` / `403` if not yours |
 | `rules` | any number of strings, any length | only non-string entries are rejected |
-| `country`, `city` | optional free text | — |
+| `country`, `city` | optional free text, **lowercased and trimmed on write** | — |
 
 > **Removed fields:** `locationName`, `latitude`, `longitude` no longer exist. Sending them returns `400 property locationName should not exist` (strict whitelist). Use `locationIds` / the locations endpoints instead.
 
@@ -599,7 +599,7 @@ class Group {
   final String? wallpaper;   // ImageKit URL — cover photo
   final String rules;
   final List<String> locationIds; // IDs only; fetch /groups/:id/locations to populate
-  final String? country;     // optional, e.g. 'Thailand'
+  final String? country;     // optional, lowercase from the API, e.g. 'thailand'
   final String? city;        // optional, e.g. 'Bangkok'
   final bool isPrivate;
   final int maxPlayers;
