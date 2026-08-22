@@ -35,6 +35,7 @@ import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { GenerateTeamsDto } from './dto/generate-teams.dto';
 import { AssignTeamPlayersDto } from './dto/assign-team-players.dto';
+import { AddMatchDto } from './dto/add-match.dto';
 import { UpdateMatchScoreDto } from './dto/update-match-score.dto';
 import { SubmitResultDto } from './dto/submit-result.dto';
 import { CreateEventTemplateDto } from './dto/create-event-template.dto';
@@ -1016,6 +1017,79 @@ export class EventsService {
     }
 
     return { ...generated, teams };
+  }
+
+  /**
+   * `POST /events/:id/matches` — add one fixture by hand.
+   *
+   * Deliberately narrow. It does NOT touch the round-robin, check the duration
+   * budget, or renumber anything: the generated schedule sometimes leaves a
+   * team without a fixture (3 teams in a 60-minute event fits one match), and
+   * this is the escape hatch for that. It appends; nothing else changes.
+   *
+   * Consequences, accepted by decision:
+   *  - `matches[]` may no longer form a valid double round-robin. Standings
+   *    still compute correctly — the fold is defined over the fixtures as
+   *    stored, whatever they are.
+   *  - Total scheduled minutes may exceed what the event's duration allows.
+   *  - A later `POST /teams/generate` or `/shuffle` REPLACES the fixture list
+   *    wholesale, so a hand-added match is lost. Add after generating, not
+   *    before.
+   */
+  async addMatch(eventId: string, userId: string, dto: AddMatchDto) {
+    const event = await this.assertOrganizer(eventId, userId);
+    const eventObjectId = event._id as Types.ObjectId;
+
+    const teamA = dto.teamA.trim();
+    const teamB = dto.teamB.trim();
+    if (teamA.toLowerCase() === teamB.toLowerCase()) {
+      throw new BadRequestException('A team cannot play itself');
+    }
+
+    // Both names must be real teams on this event. The name keys the fixture,
+    // so a typo would otherwise create a match that no team can be matched to
+    // and that quietly skews standings under a phantom name.
+    const teams = await this.teamModel
+      .find({ eventId: eventObjectId })
+      .select('name')
+      .lean();
+    if (!teams.length) {
+      throw new BadRequestException(
+        'This event has no teams yet — generate them before adding a fixture',
+      );
+    }
+    const byName = new Map(teams.map((t) => [t.name.toLowerCase(), t.name]));
+    for (const name of [teamA, teamB]) {
+      if (!byName.has(name.toLowerCase())) {
+        throw new BadRequestException(
+          `'${name}' is not a team on this event. Teams: ` +
+            teams.map((t) => t.name).join(', '),
+        );
+      }
+    }
+
+    // Append after the current highest. matchNumber is uniquely indexed per
+    // event, so the caller must not choose it — they cannot see what is free.
+    const last = await this.matchModel
+      .findOne({ eventId: eventObjectId })
+      .sort({ matchNumber: -1 })
+      .select('matchNumber')
+      .lean();
+    const matchNumber = (last?.matchNumber ?? 0) + 1;
+
+    const created = await this.matchModel.create({
+      eventId: eventObjectId,
+      matchNumber,
+      // Store the canonical casing from the team record, so fixtures and teams
+      // always agree on the name even if the caller typed 'blue'.
+      teamA: byName.get(teamA.toLowerCase()),
+      teamB: byName.get(teamB.toLowerCase()),
+      scoreA: null,
+      scoreB: null,
+      playedAt: null,
+    });
+
+    return created.toJSON();
   }
 
   /** Fixture list for an event, in match order. */

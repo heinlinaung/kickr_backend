@@ -502,6 +502,89 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
     });
   });
 
+  describe('addMatch — manual fixture', () => {
+    const teamRows = (names: string[]) => ({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue(names.map((name) => ({ name }))),
+    });
+    /** matchModel.findOne(...).sort(...).select(...).lean() -> highest match */
+    const highest = (matchNumber: number | null) => ({
+      sort: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue(matchNumber === null ? null : { matchNumber }),
+    });
+
+    beforeEach(() => {
+      eventModel.findById.mockResolvedValue(eventDoc());
+      teamModel.find = jest.fn().mockReturnValue(teamRows(['Red', 'Yellow', 'Blue']));
+      matchModel.findOne = jest.fn().mockReturnValue(highest(2));
+      matchModel.create = jest
+        .fn()
+        .mockImplementation((row: any) =>
+          Promise.resolve({ ...row, _id: 'new', toJSON: () => ({ ...row, _id: 'new' }) }),
+        );
+    });
+
+    const add = (teamA: string, teamB: string, userId = CREATOR) =>
+      service.addMatch(EVENT_ID, userId, { teamA, teamB } as any);
+
+    it('appends after the highest existing matchNumber', async () => {
+      const res: any = await add('Blue', 'Red');
+      expect(res.matchNumber).toBe(3);
+    });
+
+    it('starts at 1 when the event has no fixtures yet', async () => {
+      matchModel.findOne.mockReturnValue(highest(null));
+      const res: any = await add('Blue', 'Red');
+      expect(res.matchNumber).toBe(1);
+    });
+
+    it('creates the fixture unplayed', async () => {
+      const res: any = await add('Blue', 'Red');
+      // null, not 0 — 0 is a real goalless scoreline.
+      expect(res.scoreA).toBeNull();
+      expect(res.scoreB).toBeNull();
+      expect(res.playedAt).toBeNull();
+    });
+
+    it('rejects a team name that is not on the event', async () => {
+      await expect(add('Green', 'Red')).rejects.toThrow(/not a team on this event/);
+    });
+
+    it('rejects a team playing itself', async () => {
+      await expect(add('Red', 'Red')).rejects.toThrow(/cannot play itself/);
+    });
+
+    it('rejects when the event has no teams yet', async () => {
+      teamModel.find.mockReturnValue(teamRows([]));
+      await expect(add('Red', 'Blue')).rejects.toThrow(/no teams yet/);
+    });
+
+    it('normalises casing to the stored team name', async () => {
+      // Fixtures key on the name, so 'blue' must not create a phantom team.
+      const res: any = await add('blue', 'rED');
+      expect(res.teamA).toBe('Blue');
+      expect(res.teamB).toBe('Red');
+    });
+
+    it('refuses a non-organizer', async () => {
+      await expect(add('Blue', 'Red', STRANGER)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(matchModel.create).not.toHaveBeenCalled();
+    });
+
+    it.each(['join', 'preparation', 'playing', 'after_match', 'done'])(
+      'is allowed in %s — no lifecycle gate by decision',
+      async (status) => {
+        // Deliberately ungated: this is an escape hatch for a schedule the
+        // generator could not express, and an organizer may need it late.
+        eventModel.findById.mockResolvedValue(eventDoc({ status }));
+        await expect(add('Blue', 'Red')).resolves.toBeDefined();
+      },
+    );
+  });
+
   describe('setMatchScore', () => {
     /** The event doc only carries the lifecycle now; fixtures are their own rows. */
     const atStatus = (status = 'playing') => eventDoc({ status });
