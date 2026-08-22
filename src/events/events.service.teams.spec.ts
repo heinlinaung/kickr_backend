@@ -656,6 +656,90 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
     });
   });
 
+  describe('setMatchScore — who may score', () => {
+    const GROUP_ID = '507f191e810c19729de860cc';
+    const REFEREE = '507f191e810c19729de860f1';
+
+    /** A group event, so the group-role check actually runs. */
+    const groupEvent = () =>
+      eventDoc({ status: 'playing', groupId: new Types.ObjectId(GROUP_ID) });
+
+    /** memberModel.findOne resolves only if `role` is in the queried $in list. */
+    const asRole = (role: string) =>
+      memberModel.findOne.mockImplementation((filter: any) => {
+        const allowed = filter?.role?.$in ?? [];
+        return Promise.resolve(
+          allowed.includes(role) ? { role, status: 'approved' } : null,
+        );
+      });
+
+    beforeEach(() => {
+      eventModel.findById.mockResolvedValue(groupEvent());
+      matchModel.findOneAndUpdate = jest.fn().mockImplementation((_f, u) => {
+        const row = { matchNumber: 1, teamA: 'Red', teamB: 'Blue', ...u.$set };
+        return Promise.resolve({ ...row, toJSON: () => row });
+      });
+    });
+
+    const score = (userId: string) =>
+      service.setMatchScore(EVENT_ID, userId, 1, { scoreA: 2, scoreB: 1 });
+
+    it('lets a group REFEREE enter a score', async () => {
+      // The role exists to officiate; scoring is the one thing it grants.
+      asRole('referee');
+      await expect(score(REFEREE)).resolves.toMatchObject({ scoreA: 2 });
+    });
+
+    it('still lets an owner and an admin score', async () => {
+      asRole('owner');
+      await expect(score(REFEREE)).resolves.toBeDefined();
+      asRole('admin');
+      await expect(score(REFEREE)).resolves.toBeDefined();
+    });
+
+    it('refuses a captain — officiating is not a captain concern', async () => {
+      asRole('captain');
+      await expect(score(REFEREE)).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('refuses a plain member', async () => {
+      asRole('member');
+      await expect(score(REFEREE)).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('does NOT let a referee manage the event', async () => {
+      // The whole point of the separate check: scoring only. If this starts
+      // passing, referee has been added to ORGANIZER_ROLES by mistake.
+      asRole('referee');
+      eventModel.findById.mockResolvedValue(
+        eventDoc({ status: 'preparation', groupId: new Types.ObjectId(GROUP_ID) }),
+      );
+
+      await expect(
+        service.generateTeams(EVENT_ID, REFEREE, {
+          teamsCount: 2, duration: 30, numberOfPlayers: 3,
+        } as any),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      await expect(
+        service.setStatus(EVENT_ID, REFEREE, 'playing'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+
+      await expect(service.remove(EVENT_ID, REFEREE)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+    });
+
+    it('the lifecycle gate still applies to a referee', async () => {
+      // Being allowed to score does not mean scoring any time.
+      asRole('referee');
+      eventModel.findById.mockResolvedValue(
+        eventDoc({ status: 'preparation', groupId: new Types.ObjectId(GROUP_ID) }),
+      );
+      await expect(score(REFEREE)).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
   describe('standings', () => {
     it('derives the table from stored fixtures', async () => {
       eventModel.findById.mockReturnValue({

@@ -183,6 +183,19 @@ Anything else → **`409`**. You cannot skip states (`join → playing` is rejec
 
 The event's `createdBy`, **or** — for group events — an approved `owner`/`admin` of the event's group. The creator keeps control even if they later lose their group role. Anyone else gets `403`.
 
+**One exception: entering match scores.** A group **`referee`** may call
+`PATCH /events/:id/matches/:matchNumber` — officiating is what the role is for.
+It grants nothing else: a referee cannot edit or delete the event, advance the
+lifecycle, generate teams, or upload anything.
+
+| Action | owner / admin | referee | captain / vice-captain / member |
+|---|---|---|---|
+| Enter a match score | ✅ | ✅ | ❌ |
+| Everything else on the event | ✅ | ❌ | ❌ |
+
+The lifecycle gate still applies to a referee — scores only during `playing`
+or `after_match`.
+
 ---
 
 ## 4. Endpoints
@@ -206,7 +219,7 @@ The event's `createdBy`, **or** — for group events — an approved `owner`/`ad
 | `POST` | `/events/:id/shuffle` | organizer | Server-side colour shuffle (fallback). Gated to `preparation`. See §11. |
 | `GET` | `/events/:id/matches` | any user | **NEW** — fixture list. |
 | `POST` | `/events/:id/matches` | organizer | **NEW** — add one fixture by hand (§11.3b). |
-| `PATCH` | `/events/:id/matches/:matchNumber` | organizer | **NEW** — enter a score. `playing`/`after_match`. |
+| `PATCH` | `/events/:id/matches/:matchNumber` | organizer **or referee** | **NEW** — enter a score. `playing`/`after_match`. |
 | `GET` | `/events/:id/standings` | any user | **NEW** — derived table. |
 | `POST` | `/events/:id/result` | organizer | **NEW** — MVP (+ optional overall score). `after_match` only. |
 | `POST` | `/events/:id/cover` | organizer | **NEW** — cover image (multipart `file`). |

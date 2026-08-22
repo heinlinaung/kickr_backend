@@ -74,6 +74,17 @@ const DEFAULT_RADIUS_METRES = 10_000;
  */
 const DEFAULT_SHUFFLE_MATCHES = 3;
 
+/** Group roles that may manage an event: edit, delete, transition, teams. */
+const ORGANIZER_ROLES = ['owner', 'admin'] as const;
+
+/**
+ * Group roles that may enter a match score.
+ *
+ * `referee` is added here and NOWHERE else — officiating is the one thing the
+ * role is for. It grants no other event permission.
+ */
+const SCORER_ROLES = ['owner', 'admin', 'referee'] as const;
+
 /** Filters accepted by `GET /events` (spec §6). */
 export interface ListEventsQuery {
   region?: string;
@@ -126,6 +137,7 @@ export class EventsService {
   async assertOrganizer(
     eventId: string,
     userId: string,
+    allowedRoles: readonly string[] = ORGANIZER_ROLES,
   ): Promise<EventDocument> {
     const event = await this.eventModel.findById(eventId);
     if (!event) throw new NotFoundException('Event not found');
@@ -135,12 +147,13 @@ export class EventsService {
         groupId: event.groupId,
         userId: new Types.ObjectId(userId),
         status: 'approved',
-        role: { $in: ['owner', 'admin'] },
+        role: { $in: [...allowedRoles] },
       });
       // The creator keeps control even if they later lose their group role.
       if (!member && event.createdBy.toString() !== userId) {
         throw new ForbiddenException(
-          'Only the event creator or a group owner/admin can manage this event',
+          `Only the event creator or a group ${allowedRoles.join('/')} ` +
+            'can perform this action',
         );
       }
     } else if (event.createdBy.toString() !== userId) {
@@ -148,6 +161,19 @@ export class EventsService {
     }
 
     return event;
+  }
+
+  /**
+   * Like `assertOrganizer`, but also admits a group `referee`.
+   *
+   * Scoring is the one action a referee owns — they officiate the match, so
+   * they enter its result. Everything else (editing the event, generating
+   * teams, deleting, uploads) stays with owner/admin, which is why this is a
+   * separate call rather than widening `ORGANIZER_ROLES`: that list guards
+   * twelve other operations a referee has no business performing.
+   */
+  private assertCanScore(eventId: string, userId: string) {
+    return this.assertOrganizer(eventId, userId, SCORER_ROLES);
   }
 
   /**
@@ -1117,7 +1143,8 @@ export class EventsService {
     matchNumber: number,
     dto: UpdateMatchScoreDto,
   ) {
-    const event = await this.assertOrganizer(eventId, userId);
+    // Referees may score; see assertCanScore.
+    const event = await this.assertCanScore(eventId, userId);
     if (!canEnterScore(event.status)) {
       throw new BadRequestException(
         `Scores can only be entered once the match is underway (event is '${event.status}')`,
