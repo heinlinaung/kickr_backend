@@ -333,7 +333,7 @@ Both optional, but send at least one (`400` otherwise). Constraints:
 
   `vice-captain` carries the **same permissions as `captain`**: it can edit a group-owned location, but not delete one. Neither is an event organizer — that stays the event's creator plus the group's owner/admin.
 
-  `referee` is currently a **label only** — it grants exactly what `member` does, with no location or event rights. Assign it to mark who officiates; do not gate any UI on it expecting extra permissions.
+  `referee` grants exactly one permission: **entering match scores** on the group's events (`PATCH /events/:id/matches/:matchNumber`). It carries no other event rights — no editing, no lifecycle transitions, no team generation — and no location rights.
 - **The owner cannot be modified** at all → `403 Cannot change the group owner`.
 
 > ⚠️ Path has two ids: `:id` is the **group**, `:userId` is the **target member**. The requester is taken from the token.

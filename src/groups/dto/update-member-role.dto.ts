@@ -10,7 +10,9 @@ export class UpdateMemberRoleDto {
     description:
       "'owner' is not assignable — a group has exactly one, and changing it " +
       'needs an ownership-transfer flow that does not exist yet. ' +
-      "'referee' is a label only: it grants exactly what 'member' does.",
+      "'referee' may enter match scores on the group's events " +
+      "(PATCH /events/:id/matches/:matchNumber). It grants nothing else — " +
+      "no event management, no location rights.",
   })
   @IsOptional()
   @IsIn(['admin', 'captain', 'vice-captain', 'referee', 'member'])

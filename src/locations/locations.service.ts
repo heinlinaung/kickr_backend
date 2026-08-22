@@ -20,9 +20,9 @@ import { UpdateLocationDto } from './dto/update-location.dto';
  * `vice-captain` mirrors `captain` deliberately: a deputy that cannot do what
  * the captain does would be surprising, and editing a venue is reversible.
  *
- * `referee` is deliberately ABSENT — it is currently a label only, carrying
- * exactly what `member` does. Add it here if refereeing ever needs to imply
- * venue rights; its omission is a decision, not an oversight.
+ * `referee` is deliberately ABSENT. The role does carry one permission —
+ * entering match scores — but venues are not its business. Its omission here
+ * is a decision, not an oversight.
  */
 const EDIT_ROLES = ['owner', 'admin', 'captain', 'vice-captain'];
 /** Group roles allowed to DELETE a group-owned location (structural change). */
