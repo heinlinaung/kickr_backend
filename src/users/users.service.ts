@@ -21,6 +21,42 @@ import {
 } from '../events/schemas/event-player.schema';
 import { Event, EventDocument } from '../events/schemas/event.schema';
 
+/**
+ * Fields returned by user search — a display card, nothing more.
+ *
+ * Deliberately excludes email, phoneNumber, cognitoSub, dateOfBirth and the
+ * privacy block. Search is the widest-reach read in the app, so it returns the
+ * least.
+ */
+const SEARCH_RESULT_FIELDS = [
+  '_id',
+  'name',
+  'username',
+  'displayName',
+  'profileImage',
+  'country',
+  'city',
+  'preferredSport',
+] as const;
+
+/** Escapes user input so it can be embedded in a RegExp literally. */
+function escapeRegex(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Clamps a caller-supplied page size into 1-50, falling back to `fallback`.
+ *
+ * `?limit=abc` reaches us as NaN, and a bare Math.min/Math.max clamp cannot
+ * reject it — every comparison against NaN is false, so the NaN flows straight
+ * through to Mongoose's .limit(). Hence the explicit isFinite check.
+ */
+const DEFAULT_SEARCH_LIMIT = 20;
+function clampLimit(limit: number, fallback = DEFAULT_SEARCH_LIMIT): number {
+  if (!Number.isFinite(limit)) return fallback;
+  return Math.min(Math.max(Math.trunc(limit), 1), 50);
+}
+
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
@@ -181,6 +217,54 @@ export class UsersService {
       mvpCount: 0, // TODO(§4.5)
       avgRating: 0, // TODO(§4.10)
     };
+  }
+
+  /**
+   * Find users by name, username, displayName — or by an EXACT email address.
+   *
+   * Mirrors `GroupsService.search`: case-insensitive substring, capped result
+   * set, and visibility respected.
+   *
+   * Two deliberate restrictions on the email path:
+   *  - **Exact match only.** Substring matching on email would turn this into
+   *    an address-harvesting endpoint: `?q=@gmail.com` would enumerate users.
+   *    A caller must already know the full address.
+   *  - **Email is never returned.** Even an exact hit answers "this account
+   *    exists" and nothing more, so a result set cannot be mined for addresses
+   *    the caller did not already have.
+   *
+   * Users with `profileVisibility: 'private'` are excluded — `getPublicProfile`
+   * already 404s them, so listing them here would advertise accounts that
+   * cannot be opened.
+   */
+  async search(q: string, limit = DEFAULT_SEARCH_LIMIT) {
+    const term = (q ?? '').trim();
+    // An empty query would otherwise match every user via an empty regex.
+    if (!term) return [];
+
+    const rx = new RegExp(escapeRegex(term), 'i');
+    const or: Record<string, unknown>[] = [
+      { name: rx },
+      { username: rx },
+      { displayName: rx },
+    ];
+    // Email is matched only when the term IS an address, and only in full.
+    if (term.includes('@')) or.push({ email: term.toLowerCase() });
+
+    const users = await this.userModel
+      .find({
+        $or: or,
+        // `private` is stored; a user who never set privacy has the field
+        // absent, so $ne also matches those — they default to public.
+        'privacy.profileVisibility': { $ne: 'private' },
+      })
+      // Select only the card fields. email/phoneNumber/cognitoSub are never
+      // loaded, so they cannot leak even if the shaping below changes.
+      .select(SEARCH_RESULT_FIELDS.join(' '))
+      .limit(clampLimit(limit))
+      .lean();
+
+    return users;
   }
 
   async getPublicProfile(targetUserId: string) {

@@ -18,6 +18,7 @@ const TEMPLATE_ID = '507f191e810c19729de860d1';
 /** eventModel.find(...).sort(...).lean() */
 const findChain = (rows: any[]) => ({
   sort: jest.fn().mockReturnThis(),
+  limit: jest.fn().mockReturnThis(),
   lean: jest.fn().mockResolvedValue(rows),
 });
 
@@ -136,6 +137,99 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
       // An absent filter is not a malformed one — no geo lookup should run.
       await expect(service.list(USER, { near: '' })).resolves.toEqual([]);
       expect(locationModel.aggregate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('search — free text over public events', () => {
+    const filter = () => eventModel.find.mock.calls[0][0];
+
+    it('matches title and description case-insensitively', async () => {
+      await service.search('friday');
+
+      const or = filter().$or;
+      expect(or.map((c: any) => Object.keys(c)[0])).toEqual([
+        'title',
+        'description',
+      ]);
+      expect(or[0].title.flags).toContain('i');
+      expect(or[0].title.test('FRIDAY night football')).toBe(true);
+    });
+
+    it('returns [] for an empty query without querying', async () => {
+      await expect(service.search('')).resolves.toEqual([]);
+      await expect(service.search('  ')).resolves.toEqual([]);
+      expect(eventModel.find).not.toHaveBeenCalled();
+    });
+
+    it('only ever returns public events', async () => {
+      // A private group event must not surface here, member or not.
+      await service.search('friday');
+      expect(filter().isPublic).toBe(true);
+    });
+
+    it('hides expired and done events by default', async () => {
+      await service.search('friday');
+      expect(filter().date.$gte).toBeInstanceOf(Date);
+      expect(filter().status).toEqual({ $ne: 'done' });
+    });
+
+    it('includeExpired returns past and done events', async () => {
+      await service.search('friday', true);
+      expect(filter().date).toBeUndefined();
+      expect(filter().status).toBeUndefined();
+    });
+
+    it('treats regex metacharacters as literal text', async () => {
+      await service.search('a.c');
+      const rx = filter().$or[0].title;
+      expect(rx.test('abc')).toBe(false);
+      expect(rx.test('a.c')).toBe(true);
+    });
+
+    it('sorts soonest first and caps the result set', async () => {
+      const c = findChain([]);
+      c.limit = jest.fn().mockReturnThis();
+      eventModel.find.mockReturnValue(c);
+
+      await service.search('friday');
+
+      expect(c.sort).toHaveBeenCalledWith({ date: 1 });
+      expect(c.limit).toHaveBeenCalledWith(20);
+    });
+
+    it('caps limit at 50 and floors it at 1', async () => {
+      const mk = () => {
+        const c = findChain([]);
+        eventModel.find.mockReturnValue(c);
+        return c;
+      };
+      let c = mk();
+      await service.search('x', false, 5000);
+      expect(c.limit).toHaveBeenCalledWith(50);
+
+      c = mk();
+      await service.search('x', false, 0);
+      expect(c.limit).toHaveBeenCalledWith(1);
+    });
+
+    it('falls back to the default for a non-numeric limit', async () => {
+      // `?limit=abc` arrives as NaN. The clamp cannot catch it — every NaN
+      // comparison is false — so it must be rejected explicitly, or Mongoose
+      // receives .limit(NaN).
+      const c = findChain([]);
+      eventModel.find.mockReturnValue(c);
+
+      await service.search('x', false, Number('abc'));
+      expect(c.limit).toHaveBeenCalledWith(20);
+    });
+
+    it('attaches the derived isFull to each row', async () => {
+      const c = findChain([{ _id: 'e1', joinedCount: 4, maxPlayers: 4 }]);
+      c.limit = jest.fn().mockReturnThis();
+      eventModel.find.mockReturnValue(c);
+
+      const res: any = await service.search('friday');
+      expect(res[0].isFull).toBe(true);
     });
   });
 
