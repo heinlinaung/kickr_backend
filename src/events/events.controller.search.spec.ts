@@ -23,23 +23,23 @@ describe('EventsController — search', () => {
 
   it('GET /events/search delegates the query', async () => {
     await controller.searchEvents('friday night');
-    expect(svc.search).toHaveBeenCalledWith('friday night', false, undefined);
+    expect(svc.search).toHaveBeenCalledWith('friday night', false, undefined, undefined);
   });
 
   it('coerces a missing query to an empty string', async () => {
     await controller.searchEvents(undefined);
-    expect(svc.search).toHaveBeenCalledWith('', false, undefined);
+    expect(svc.search).toHaveBeenCalledWith('', false, undefined, undefined);
   });
 
   describe('includeExpired', () => {
     it("is true only for the exact string 'true'", async () => {
       await controller.searchEvents('friday', 'true');
-      expect(svc.search).toHaveBeenCalledWith('friday', true, undefined);
+      expect(svc.search).toHaveBeenCalledWith('friday', true, undefined, undefined);
     });
 
     it('defaults to false when absent', async () => {
       await controller.searchEvents('friday', undefined);
-      expect(svc.search).toHaveBeenCalledWith('friday', false, undefined);
+      expect(svc.search).toHaveBeenCalledWith('friday', false, undefined, undefined);
     });
 
     it('is false for any other value, so a typo never widens visibility', async () => {
@@ -47,7 +47,7 @@ describe('EventsController — search', () => {
       for (const v of ['1', 'yes', 'TRUE', '']) {
         jest.clearAllMocks();
         await controller.searchEvents('friday', v);
-        expect(svc.search).toHaveBeenCalledWith('friday', false, undefined);
+        expect(svc.search).toHaveBeenCalledWith('friday', false, undefined, undefined);
       }
     });
   });
@@ -55,12 +55,28 @@ describe('EventsController — search', () => {
   describe('limit', () => {
     it('passes a numeric limit through as a number', async () => {
       await controller.searchEvents('friday', undefined, '35');
-      expect(svc.search).toHaveBeenCalledWith('friday', false, 35);
+      expect(svc.search).toHaveBeenCalledWith('friday', false, 35, undefined);
     });
 
     it('stays undefined when absent, so the service default wins', async () => {
       await controller.searchEvents('friday', undefined, undefined);
-      expect(svc.search).toHaveBeenCalledWith('friday', false, undefined);
+      expect(svc.search).toHaveBeenCalledWith('friday', false, undefined, undefined);
+    });
+
+    it('forwards the cursor verbatim', async () => {
+      // Opaque to the controller — it must not parse or validate it.
+      await controller.searchEvents(
+        'friday',
+        undefined,
+        undefined,
+        'eyJpIjoiYWJjIn0',
+      );
+      expect(svc.search).toHaveBeenCalledWith(
+        'friday',
+        false,
+        undefined,
+        'eyJpIjoiYWJjIn0',
+      );
     });
 
     it('forwards a non-numeric limit as NaN for the service to reject', async () => {

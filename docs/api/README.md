@@ -14,16 +14,18 @@ Integration guides written against the **live** API — every request/response s
 
 ## New — search endpoints
 
-Two additive routes, no breaking change:
+Two new routes. Both are additive — nothing existing changed — but they are
+**cursor-paginated from the start**, so their `data` is a page object rather than
+the plain array the older listing routes return:
 
 - **`GET /events/search?q=`** — free text over event `title`/`description`, public events only, soonest first. See [events-api §5.3](./events-api.md).
 - **`GET /users/search?q=`** — people by name/username/displayName, or by an **exact** email. See [users-api §3](./users-api.md).
 
 Both share the same three rules, and all three surprise people:
 
-1. **An empty `q` returns `[]`**, not every row — neither route is a listing call.
-2. **`limit` is capped at 50** with no pagination behind it.
-3. **Neither ranks by relevance.** Events come back soonest-first; users come back unordered.
+1. **An empty `q` returns an empty page**, not every row — neither route is a listing call.
+2. **Both return a page object, not an array**: `data` is `{ items, nextCursor, hasMore }`. Pagination is **cursor-based** — send `nextCursor` back verbatim, and stop when `hasMore` is `false`. `limit` (max 50) is a page size, not a result cap.
+3. **Neither ranks by relevance.** Events come back soonest-first; users in `_id` order.
 
 The user route additionally matches an email **only in full** (`?q=@gmail.com` finds nobody) and **never returns the `email` field**, so results cannot be mined for addresses.
 

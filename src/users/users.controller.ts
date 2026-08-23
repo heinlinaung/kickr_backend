@@ -71,19 +71,32 @@ export class UsersController {
       'email matching would let anyone enumerate registered addresses. The ' +
       'email itself is never returned. Users with profileVisibility ' +
       "'private' are excluded, since their profile 404s anyway. " +
-      'An empty query returns [].',
+      'Returns a page: `{ items, nextCursor, hasMore }`. Sorted by _id — ' +
+      'there is no relevance ranking. An empty query returns an empty page.',
   })
   @ApiQuery({ name: 'q', required: true, example: 'hein' })
   @ApiQuery({
     name: 'limit',
     required: false,
     example: 20,
-    description: 'Max results, 1-50. Defaults to 20.',
+    description: 'Page size, 1-50. Defaults to 20.',
   })
-  search(@Query('q') q?: string, @Query('limit') limit?: string) {
+  @ApiQuery({
+    name: 'cursor',
+    required: false,
+    description:
+      'Opaque pagination cursor. Pass `nextCursor` from the previous ' +
+      'response verbatim; omit for the first page. Invalid values give 400.',
+  })
+  search(
+    @Query('q') q?: string,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
     return this.usersService.search(
       q ?? '',
       limit === undefined ? undefined : Number(limit),
+      cursor,
     );
   }
 

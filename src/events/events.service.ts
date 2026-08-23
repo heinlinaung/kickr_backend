@@ -41,6 +41,11 @@ import { SubmitResultDto } from './dto/submit-result.dto';
 import { CreateEventTemplateDto } from './dto/create-event-template.dto';
 import { LocationsService } from '../locations/locations.service';
 import { ImageKitService } from '../common/upload/imagekit.service';
+import {
+  decodeCursor,
+  keysetFilter,
+  toPage,
+} from '../common/pagination/cursor';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
   EventStatus,
@@ -251,10 +256,11 @@ export class EventsService {
     q: string,
     includeExpired = false,
     limit = DEFAULT_SEARCH_LIMIT,
+    cursor?: string,
   ) {
     const term = (q ?? '').trim();
     // An empty regex matches everything; that is a listing, not a search.
-    if (!term) return [];
+    if (!term) return { items: [], nextCursor: null, hasMore: false };
 
     const rx = new RegExp(escapeRegex(term), 'i');
     const filter: Record<string, unknown> = {
@@ -267,13 +273,26 @@ export class EventsService {
       filter.status = { $ne: 'done' };
     }
 
+    // The keyset goes in $and: the query already uses a top-level $or for the
+    // title/description match, and a second $or key would overwrite it.
+    if (cursor) {
+      filter.$and = [keysetFilter(decodeCursor(cursor), 'date')];
+    }
+
+    const size = clampLimit(limit);
     const events = await this.eventModel
       .find(filter)
-      .sort({ date: 1 })
-      .limit(clampLimit(limit))
+      // _id makes the sort total, so the keyset cannot straddle a shared date.
+      .sort({ date: 1, _id: 1 })
+      // +1 is the lookahead that answers hasMore without a count query.
+      .limit(size + 1)
       .lean();
 
-    return events.map(withIsFull);
+    const page = toPage(events, size, (row: any) => ({
+      d: new Date(row.date).toISOString(),
+      i: String(row._id),
+    }));
+    return { ...page, items: page.items.map(withIsFull) };
   }
 
   /**

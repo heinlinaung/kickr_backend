@@ -48,8 +48,12 @@ there is no anonymous people-search.
 GET /users/search?q=hein
 GET /users/search?q=hein@example.com
 GET /users/search?q=hein&limit=50
+GET /users/search?q=hein&limit=20&cursor=eyJpIjoi…
 Authorization: Bearer <accessToken>
 ```
+
+Returns a **page object** — `{ items, nextCursor, hasMore }` — not a bare array.
+See §3.5 for paging.
 
 Case-insensitive **substring** match on `name`, `username` and `displayName`.
 Not a prefix or whole-word match: `?q=ein` finds `hein`.
@@ -79,20 +83,28 @@ A display card, and nothing more:
 
 ```json
 {
-  "data": [
-    {
-      "_id": "6a6cce80419acf83c69c01a7",
-      "name": "Hein Lin Aung",
-      "username": "heinla",
-      "displayName": "Hein",
-      "profileImage": "https://ik.imagekit.io/…/profiles/….jpg",
-      "country": "myanmar",
-      "city": "yangon",
-      "preferredSport": "football"
-    }
-  ]
+  "data": {
+    "items": [
+      {
+        "_id": "6a6cce80419acf83c69c01a7",
+        "name": "Hein Lin Aung",
+        "username": "heinla",
+        "displayName": "Hein",
+        "profileImage": "https://ik.imagekit.io/…/profiles/….jpg",
+        "country": "myanmar",
+        "city": "yangon",
+        "preferredSport": "football"
+      }
+    ],
+    "nextCursor": "eyJpIjoiNmE2Y2NlODA0MTlhY2Y4M2M2OWMwMWE3In0",
+    "hasMore": true
+  }
 }
 ```
+
+> ⚠️ **The payload is a page object, not an array.** `data.items` holds the rows;
+> `data.nextCursor` and `data.hasMore` drive paging. A build doing
+> `List.from(json['data'])` breaks — read `json['data']['items']`.
 
 Fields are selected at the database level, so `email`, `phoneNumber`,
 `cognitoSub`, `dateOfBirth` and the whole `privacy` block are **never loaded** —
@@ -120,23 +132,58 @@ public, so they are included.
 
 ### 3.4 Empty query, limits and edge cases
 
-- **An empty or whitespace-only `q` returns `[]`** without touching the
-  database. It is a search, not a user directory — there is no "list all users"
-  route, by design.
+- **An empty or whitespace-only `q` returns an empty page** (`items: []`,
+  `hasMore: false`) without touching the database. It is a search, not a user
+  directory — there is no "list all users" route, by design.
 - `limit` defaults to `20`, clamped to **1–50**. `?limit=5000` gives 50;
   `?limit=0` gives 1.
 - A non-numeric `?limit=abc` falls back to `20` rather than erroring.
 - A fractional `?limit=2.7` truncates to `2`.
 - Regex metacharacters are escaped: `?q=a.c` matches the literal `a.c`, not
   `abc`. A query of `.*` finds users with `.*` in their name, not everyone.
-- There is **no relevance ranking and no pagination** — no `skip`/`offset`, no
-  total count. You get up to `limit` matches in whatever order Mongo returns
-  them. Narrow the query rather than paging.
+- There is **no relevance ranking** — no text index, no score. Rows come back in
+  `_id` order, which is insertion order: arbitrary as a ranking, but *stable*,
+  which is what makes the cursor safe.
+- There is **no total count**. `hasMore` tells you whether another page exists;
+  nothing tells you how many rows match overall.
 
 | Code | When |
 |---|---|
-| `200` | Always on success, including zero matches (`[]`) |
+| `200` | Always on success, including zero matches (`items: []`) |
+| `400` | Malformed or forged `cursor` — start again without one |
 | `401` | Missing/invalid token, or an `idToken` sent instead of an `accessToken` |
+
+### 3.5 Paging with `cursor`
+
+Pagination is **cursor-based (keyset)**, not `page`/`offset`. Fetch the first
+page with no `cursor`, then feed `nextCursor` back verbatim:
+
+```http
+GET /users/search?q=hein&limit=20
+→ { "data": { "items": [...20], "nextCursor": "eyJpIjoi…", "hasMore": true } }
+
+GET /users/search?q=hein&limit=20&cursor=eyJpIjoi…
+→ { "data": { "items": [...7],  "nextCursor": null,      "hasMore": false } }
+```
+
+- **Stop when `hasMore` is `false`.** `nextCursor` is `null` at that point, so
+  looping on `nextCursor != null` works equally well. Do not keep requesting.
+- **`limit` is a page size, not a result cap.** Capped at 50 *per page*; page
+  with `cursor` to read past 50 in total.
+- **The cursor is opaque.** It is base64url JSON today, and that is an
+  implementation detail — do not parse, build, or edit it. Round-trip it
+  unchanged. A malformed or hand-crafted value is a `400`.
+- **`limit` may change between pages** without breaking the cursor; the cursor
+  encodes a position, not a page number.
+- Why keyset and not `skip`: `skip` re-scans every preceding row (so deep pages
+  get slower) and shifts when rows are inserted or deleted mid-scroll, which
+  silently repeats or skips users. A cursor says "everything after this exact
+  row", so it stays correct under concurrent writes.
+
+> **A cursor is not a snapshot.** Rows created after you started paging can still
+> appear on a later page, and a user who is renamed out of the query, deleted, or
+> switched to `private` mid-scroll simply won't show up. You will never see the
+> *same* user twice, which is the guarantee `skip` cannot make.
 
 ---
 
@@ -146,8 +193,8 @@ Do **not** design screens against these.
 
 | Feature | State |
 |---|---|
-| **Pagination on search** | No `skip`/`offset`/total. Capped at 50 results. |
-| **Relevance ranking** | None — no text index, no score. Results are unordered. |
+| **Offset pagination / total count** | Deliberately absent — pagination is cursor-based (§3.5) and there is no `skip`, `page` or total. |
+| **Relevance ranking** | None — no text index, no score. Ordered by `_id`. |
 | **Filtering search by city/sport** | Not implemented. `country`/`city`/`preferredSport` are returned but cannot be searched on. |
 | **`username` auto-generation** | Specified but not implemented — `username` may be `null`. Don't rely on it as a handle. |
 | **Blocking / hiding from search** | Only `profileVisibility: "private"` removes a user. There is no per-user block list. |
@@ -156,12 +203,13 @@ Do **not** design screens against these.
 
 ## 5. Gotchas checklist
 
-- [ ] **Empty `q` returns `[]`, not every user.** There is no browse-all-people call.
+- [ ] **Empty `q` returns an empty page, not every user.** There is no browse-all-people call.
 - [ ] **`?q=@gmail.com` finds nobody**, not every Gmail user — an `@` makes it an exact-address match.
 - [ ] **`email` is never in a result row.** Don't build a UI that expects to show it.
 - [ ] Rows omit unset fields entirely — decode `city`, `username` etc. as nullable.
 - [ ] `country`/`city` come back **lowercase**.
-- [ ] `limit` is capped at **50**, and there is no pagination to reach result 51.
+- [ ] `limit` is a **page size** capped at 50, not a result cap — page with `cursor` to go past it.
+- [ ] **The response is an object, not an array.** Read `items`; `data` wraps the whole page.
 - [ ] `private` profiles are absent; `members` profiles **are** present.
 - [ ] Search needs a token like everything else — there is no public people-search.
 - [ ] Unwrap `data` on success; errors are flat and `message` may be a **list**.
