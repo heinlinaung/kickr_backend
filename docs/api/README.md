@@ -6,10 +6,26 @@ Integration guides written against the **live** API — every request/response s
 |---|---|
 | [auth-api.md](./auth-api.md) | Signup (incl. the optional `name`), login, **refresh**, forgot/reset password. Token storage and the 401→refresh→retry loop. |
 | [groups-and-locations-api.md](./groups-and-locations-api.md) | Locations (venues) and Groups (fields, `country`/`city`, images, rules, members/roles, search, QR invites, joining). |
-| [events-api.md](./events-api.md) | Events — the 5-state lifecycle, derived `isFull`, listing a group's events, create/edit/delete, join/leave. ⚠️ **breaking status change**. |
+| [events-api.md](./events-api.md) | Events — the 5-state lifecycle, derived `isFull`, listing a group's events, **free-text search**, create/edit/delete, join/leave. ⚠️ **breaking status change**. |
+| [users-api.md](./users-api.md) | Users — **people search** (name/username, exact-email only), and the profile routes. ⚠️ written from source, not captured live. |
 | [admin-api.md](./admin-api.md) | **Back-office only**, behind the `x-admin-key` shared secret — force-add users to a group or event, and seed a throwaway test fixture (§9). Not for the mobile app. |
 
 **Live reference while the server is running:** Swagger UI at `/api-docs`, OpenAPI JSON at `/api-docs-json`.
+
+## New — search endpoints
+
+Two additive routes, no breaking change:
+
+- **`GET /events/search?q=`** — free text over event `title`/`description`, public events only, soonest first. See [events-api §5.3](./events-api.md).
+- **`GET /users/search?q=`** — people by name/username/displayName, or by an **exact** email. See [users-api §3](./users-api.md).
+
+Both share the same three rules, and all three surprise people:
+
+1. **An empty `q` returns `[]`**, not every row — neither route is a listing call.
+2. **`limit` is capped at 50** with no pagination behind it.
+3. **Neither ranks by relevance.** Events come back soonest-first; users come back unordered.
+
+The user route additionally matches an email **only in full** (`?q=@gmail.com` finds nobody) and **never returns the `email` field**, so results cannot be mined for addresses.
 
 ## ⚠️ Breaking changes — 2026-08-18
 
