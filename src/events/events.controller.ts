@@ -88,6 +88,45 @@ export class EventsController {
   }
 
   /**
+   * Declared BEFORE `@Get(':id')` — same reason as `joined` below: a bare
+   * `search` would otherwise be matched as an event id and 404.
+   */
+  @Get('search')
+  @ApiOperation({
+    summary: 'Free-text search over public events',
+    description:
+      'Case-insensitive substring match on title and description, soonest ' +
+      'first. Public events only — a private group event never surfaces ' +
+      'here, even to a member; use GET /events/group/:groupId for those. ' +
+      'Expired and `done` events are hidden unless includeExpired=true. ' +
+      'An empty query returns [].',
+  })
+  @ApiQuery({ name: 'q', required: true, example: 'friday night' })
+  @ApiQuery({
+    name: 'includeExpired',
+    required: false,
+    example: false,
+    description: 'Include past and `done` events. Defaults to false.',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    example: 20,
+    description: 'Max results, 1-50. Defaults to 20.',
+  })
+  searchEvents(
+    @Query('q') q?: string,
+    @Query('includeExpired') includeExpired?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.eventsService.search(
+      q ?? '',
+      includeExpired === 'true',
+      limit === undefined ? undefined : Number(limit),
+    );
+  }
+
+  /**
    * Declared BEFORE `@Get(':id')` on purpose — Nest matches routes in
    * declaration order, and `joined` would otherwise be swallowed as an `:id`
    * (yielding a 404 for a malformed ObjectId rather than this list).

@@ -233,6 +233,46 @@ export class EventsService {
   }
 
   /**
+   * Free-text search over public events, soonest first.
+   *
+   * Separate from `list()` rather than a `?q=` on it, so the two stay easy to
+   * reason about: this one is "find me an event by name", that one is "browse
+   * with filters". Both apply the same visibility rule — `isPublic: true` —
+   * because a private group's event must not surface to a non-member here.
+   *
+   * Matches `title` and `description` case-insensitively as a substring. No
+   * text index: at this scale a regex scan is fine, and a $text index would
+   * bring stemming and language config that the caller has not asked for.
+   *
+   * Expired and `done` events are hidden by default, matching
+   * `listByGroup` and `listJoined` — searching is a forward-looking act.
+   */
+  async search(q: string, includeExpired = false, limit = 20) {
+    const term = (q ?? '').trim();
+    // An empty regex matches everything; that is a listing, not a search.
+    if (!term) return [];
+
+    const rx = new RegExp(escapeRegex(term), 'i');
+    const filter: Record<string, unknown> = {
+      isPublic: true,
+      $or: [{ title: rx }, { description: rx }],
+    };
+
+    if (!includeExpired) {
+      filter.date = { $gte: startOfToday() };
+      filter.status = { $ne: 'done' };
+    }
+
+    const events = await this.eventModel
+      .find(filter)
+      .sort({ date: 1 })
+      .limit(Math.min(Math.max(limit, 1), 50))
+      .lean();
+
+    return events.map(withIsFull);
+  }
+
+  /**
    * Location ids within `radius` metres of `near`, nearest first.
    *
    * `near` is "lat,lng" as the client sends it; GeoJSON wants [lng, lat], so
@@ -1428,3 +1468,7 @@ function startOfToday(): Date {
   return d;
 }
 
+/** Escapes user input so it can be embedded in a RegExp literally. */
+function escapeRegex(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}

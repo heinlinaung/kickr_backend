@@ -5,12 +5,18 @@ import {
   Post,
   Body,
   Param,
+  Query,
   UseGuards,
   UseInterceptors,
   UploadedFile,
   BadRequestException,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -50,6 +56,35 @@ export class UsersController {
   @Get('me/qr')
   getQr(@CurrentUser() user: any) {
     return this.usersService.getQr(user._id.toString());
+  }
+
+  /**
+   * Declared BEFORE `@Get(':id/profile')` — Nest matches in declaration order,
+   * and a route added later under `:id` would shadow this one.
+   */
+  @Get('search')
+  @ApiOperation({
+    summary: 'Find users by name, username or exact email',
+    description:
+      'Case-insensitive substring match on name, username and displayName. ' +
+      'An email is matched only when the query IS a full address — partial ' +
+      'email matching would let anyone enumerate registered addresses. The ' +
+      'email itself is never returned. Users with profileVisibility ' +
+      "'private' are excluded, since their profile 404s anyway. " +
+      'An empty query returns [].',
+  })
+  @ApiQuery({ name: 'q', required: true, example: 'hein' })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    example: 20,
+    description: 'Max results, 1-50. Defaults to 20.',
+  })
+  search(@Query('q') q?: string, @Query('limit') limit?: string) {
+    return this.usersService.search(
+      q ?? '',
+      limit === undefined ? undefined : Number(limit),
+    );
   }
 
   @Get(':id/profile')
