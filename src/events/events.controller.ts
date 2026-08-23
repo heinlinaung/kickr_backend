@@ -99,7 +99,8 @@ export class EventsController {
       'first. Public events only — a private group event never surfaces ' +
       'here, even to a member; use GET /events/group/:groupId for those. ' +
       'Expired and `done` events are hidden unless includeExpired=true. ' +
-      'An empty query returns [].',
+      'Returns a page: `{ items, nextCursor, hasMore }`. Ordered by date ' +
+      'ascending, not by relevance. An empty query returns an empty page.',
   })
   @ApiQuery({ name: 'q', required: true, example: 'friday night' })
   @ApiQuery({
@@ -112,17 +113,26 @@ export class EventsController {
     name: 'limit',
     required: false,
     example: 20,
-    description: 'Max results, 1-50. Defaults to 20.',
+    description: 'Page size, 1-50. Defaults to 20.',
+  })
+  @ApiQuery({
+    name: 'cursor',
+    required: false,
+    description:
+      'Opaque pagination cursor. Pass `nextCursor` from the previous ' +
+      'response verbatim; omit for the first page. Invalid values give 400.',
   })
   searchEvents(
     @Query('q') q?: string,
     @Query('includeExpired') includeExpired?: string,
     @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
   ) {
     return this.eventsService.search(
       q ?? '',
       includeExpired === 'true',
       limit === undefined ? undefined : Number(limit),
+      cursor,
     );
   }
 

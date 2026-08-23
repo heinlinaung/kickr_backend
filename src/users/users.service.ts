@@ -20,6 +20,11 @@ import {
   EventPlayerDocument,
 } from '../events/schemas/event-player.schema';
 import { Event, EventDocument } from '../events/schemas/event.schema';
+import {
+  decodeCursor,
+  keysetFilter,
+  toPage,
+} from '../common/pagination/cursor';
 
 /**
  * Fields returned by user search — a display card, nothing more.
@@ -237,10 +242,10 @@ export class UsersService {
    * already 404s them, so listing them here would advertise accounts that
    * cannot be opened.
    */
-  async search(q: string, limit = DEFAULT_SEARCH_LIMIT) {
+  async search(q: string, limit = DEFAULT_SEARCH_LIMIT, cursor?: string) {
     const term = (q ?? '').trim();
     // An empty query would otherwise match every user via an empty regex.
-    if (!term) return [];
+    if (!term) return { items: [], nextCursor: null, hasMore: false };
 
     const rx = new RegExp(escapeRegex(term), 'i');
     const or: Record<string, unknown>[] = [
@@ -251,20 +256,33 @@ export class UsersService {
     // Email is matched only when the term IS an address, and only in full.
     if (term.includes('@')) or.push({ email: term.toLowerCase() });
 
+    const filter: Record<string, unknown> = {
+      $or: or,
+      // `private` is stored; a user who never set privacy has the field
+      // absent, so $ne also matches those — they default to public.
+      'privacy.profileVisibility': { $ne: 'private' },
+    };
+    // Goes in $and: the match above already owns the top-level $or key.
+    if (cursor) {
+      filter.$and = [keysetFilter(decodeCursor(cursor), '_id')];
+    }
+
+    const size = clampLimit(limit);
     const users = await this.userModel
-      .find({
-        $or: or,
-        // `private` is stored; a user who never set privacy has the field
-        // absent, so $ne also matches those — they default to public.
-        'privacy.profileVisibility': { $ne: 'private' },
-      })
+      .find(filter)
+      // There is no natural ranking here (no text score, no date), so _id is
+      // the sort key. It is the insertion order, which is arbitrary but
+      // TOTAL and STABLE — without it a cursor cannot mean "after this row",
+      // and pages would overlap and drop users between requests.
+      .sort({ _id: 1 })
       // Select only the card fields. email/phoneNumber/cognitoSub are never
       // loaded, so they cannot leak even if the shaping below changes.
       .select(SEARCH_RESULT_FIELDS.join(' '))
-      .limit(clampLimit(limit))
+      // +1 is the lookahead that answers hasMore without a count query.
+      .limit(size + 1)
       .lean();
 
-    return users;
+    return toPage(users, size, (row: any) => ({ i: String(row._id) }));
   }
 
   async getPublicProfile(targetUserId: string) {

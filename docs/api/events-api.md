@@ -205,7 +205,7 @@ or `after_match`.
 | `GET` | `/events` | any user | Public events only. Optional `?region=`, `?near=`/`?radius=`, `?from=`/`?to=`, `?status=`. |
 | `GET` | `/events/joined` | any user | **NEW** — events the caller has joined, **public and private alike**, soonest first. Expired/`done` hidden unless `?includeExpired=true`. |
 | `GET` | `/events/group/:groupId` | any user | **NEW** — one group's events. Members see private ones too. Expired/`done` hidden unless `?includeExpired=true`. |
-| `GET` | `/events/search?q=` | any user | **NEW** — free-text on title/description. Public events only, max 50. Empty `q` → `[]`. See §5.3. |
+| `GET` | `/events/search?q=` | any user | **NEW** — free-text on title/description. Public events only. **Cursor-paginated** — returns `{ items, nextCursor, hasMore }`. See §5.3. |
 | `POST` | `/events` | organizer | Create. Accepts `startTime`, `endTime`, `teamCount`, `templateId`. |
 | `GET` | `/events/:id` | any user | Detail + `groupRules`, `standings`, `likedByMe`, `joinedByMe`. |
 | `PATCH` | `/events/:id` | organizer | **NEW** — edit. Rejected when `done`. |
@@ -312,8 +312,24 @@ Note the empty-list-vs-404 distinction: an unknown group is `404`, but a real gr
 GET /events/search?q=friday%20night
 GET /events/search?q=friday&includeExpired=true
 GET /events/search?q=friday&limit=50
+GET /events/search?q=friday&limit=20&cursor=eyJkIjoi…
 Authorization: Bearer <accessToken>
 ```
+
+Returns a **page object**, not a bare array:
+
+```json
+{
+  "data": {
+    "items": [{ "_id": "…", "title": "Friday night five", "isFull": false }],
+    "nextCursor": "eyJkIjoiMjAyNi0wOS0wMVQxMDowMDowMC4wMDBaIiwiaSI6IjZhNmMifQ",
+    "hasMore": true
+  }
+}
+```
+
+> ⚠️ **`data` is an object here**, unlike §5.1/§5.2 which return arrays. Read
+> `data.items`. A build doing `List.from(json['data'])` breaks on this route.
 
 Case-insensitive **substring** match on `title` **or** `description`, soonest
 first. Not a whole-word or prefix match: `?q=rida` finds "Friday night five".
@@ -323,22 +339,32 @@ so a group's private event never surfaces here — *even for an approved member*
 For a group's own schedule use §5.2, which is the only route that reveals
 private events to members.
 
-- **An empty or whitespace-only `q` returns `[]`**, not every event. It is a
-  search, not a listing — use `GET /events` to browse.
+- **An empty or whitespace-only `q` returns an empty page** (`items: []`,
+  `hasMore: false`), not every event. It is a search, not a listing — use
+  `GET /events` to browse.
 - Expired events (date before today) and `done` events are hidden unless
   `includeExpired=true`, matching §5.1b and §5.2.
 - `includeExpired` is true **only** for the exact string `"true"`. `1`, `yes`
   and `TRUE` are all read as false, so a typo silently narrows rather than
   widens what you see.
-- `limit` defaults to `20` and is clamped to **1–50**. A non-numeric value
+- `limit` is a **page size**, defaulting to `20` and clamped to **1–50**. It is
+  not a total cap — page with `cursor` to read beyond it. A non-numeric value
   (`?limit=abc`) falls back to `20` rather than erroring.
 - Regex metacharacters are escaped, so `?q=a.c` matches the literal text
   `a.c` — not `abc`.
 - Rows carry the derived `isFull`, so a card renders the same as one from §5.1.
 
-> There is no relevance ranking. Results are ordered by `date` ascending, so
-> the soonest event wins, not the closest title match. A `limit` smaller than
-> the match count therefore returns the *earliest* matches, not the *best* ones.
+> There is no relevance ranking. Results are ordered by `date` ascending (with
+> `_id` as a tiebreaker), so the soonest event comes first, not the closest title
+> match. The first page is therefore the *earliest* matches, not the *best* ones —
+> page through with `cursor` to reach the rest.
+
+**Paging.** Cursor-based (keyset), identical in shape to
+[users-api §3.5](./users-api.md): omit `cursor` for the first page, then send
+`nextCursor` back verbatim until `hasMore` is `false`. The cursor is opaque —
+do not parse or construct it; a malformed value is a `400`. Keyset rather than
+`skip` means an event created or cancelled mid-scroll cannot make you skip or
+re-see a row.
 
 ---
 
@@ -473,7 +499,9 @@ Do **not** design screens against these — the fields exist but nothing fills t
 - [ ] **`joinedByMe` is the only field that says whether YOU joined.** `joinedCount` counts everyone; `userRole` is your group role and reads `owner` even for a creator who never joined.
 - [ ] Resubmitting teams during `preparation` **regenerates fixtures wholesale**, discarding entered scores.
 - [ ] **`GET /events/search` is public-only** — it will not find a group's private event even for a member. Search and "my group's schedule" are different screens.
-- [ ] Search with an empty `q` returns **`[]`, not everything**. Don't use it as the browse/listing call.
+- [ ] Search with an empty `q` returns an **empty page, not everything**. Don't use it as the browse/listing call.
+- [ ] **`GET /events/search` returns `data` as an OBJECT** (`{items, nextCursor, hasMore}`), unlike the other listing routes which return arrays. Read `data.items`.
+- [ ] Treat `nextCursor` as **opaque** — round-trip it, never parse or build one. A forged cursor is a `400`.
 - [ ] `includeExpired` only accepts the exact string `"true"` — `1`/`yes` are read as false and silently hide past events.
 
 ---

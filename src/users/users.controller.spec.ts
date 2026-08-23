@@ -39,23 +39,33 @@ describe('UsersController', () => {
   describe('search', () => {
     it('GET /users/search delegates the query', async () => {
       await controller.search('hein');
-      expect(svc.search).toHaveBeenCalledWith('hein', undefined);
+      expect(svc.search).toHaveBeenCalledWith('hein', undefined, undefined);
     });
 
     it('coerces a missing query to an empty string', async () => {
       // The service returns [] for an empty term rather than dumping rows.
       await controller.search(undefined);
-      expect(svc.search).toHaveBeenCalledWith('', undefined);
+      expect(svc.search).toHaveBeenCalledWith('', undefined, undefined);
     });
 
     it('passes a numeric limit through as a number', async () => {
       await controller.search('hein', '35');
-      expect(svc.search).toHaveBeenCalledWith('hein', 35);
+      expect(svc.search).toHaveBeenCalledWith('hein', 35, undefined);
     });
 
     it('leaves the limit undefined when absent, so the service default wins', async () => {
       await controller.search('hein', undefined);
-      expect(svc.search).toHaveBeenCalledWith('hein', undefined);
+      expect(svc.search).toHaveBeenCalledWith('hein', undefined, undefined);
+    });
+
+    it('forwards the cursor verbatim', async () => {
+      // Opaque to the controller — it must not parse or validate it.
+      await controller.search('hein', undefined, 'eyJpIjoiYWJjIn0');
+      expect(svc.search).toHaveBeenCalledWith(
+        'hein',
+        undefined,
+        'eyJpIjoiYWJjIn0',
+      );
     });
 
     it('forwards a non-numeric limit as NaN for the service to reject', async () => {

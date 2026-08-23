@@ -155,9 +155,10 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
       expect(or[0].title.test('FRIDAY night football')).toBe(true);
     });
 
-    it('returns [] for an empty query without querying', async () => {
-      await expect(service.search('')).resolves.toEqual([]);
-      await expect(service.search('  ')).resolves.toEqual([]);
+    it('returns an empty page for an empty query without querying', async () => {
+      const empty = { items: [], nextCursor: null, hasMore: false };
+      await expect(service.search('')).resolves.toEqual(empty);
+      await expect(service.search('  ')).resolves.toEqual(empty);
       expect(eventModel.find).not.toHaveBeenCalled();
     });
 
@@ -193,8 +194,11 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
 
       await service.search('friday');
 
-      expect(c.sort).toHaveBeenCalledWith({ date: 1 });
-      expect(c.limit).toHaveBeenCalledWith(20);
+      // _id breaks the tie: `date` alone is not unique, so a keyset cursor
+      // would skip or repeat rows that share a date.
+      expect(c.sort).toHaveBeenCalledWith({ date: 1, _id: 1 });
+      // limit+1 — the extra row is the lookahead that sets hasMore.
+      expect(c.limit).toHaveBeenCalledWith(21);
     });
 
     it('caps limit at 50 and floors it at 1', async () => {
@@ -205,11 +209,11 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
       };
       let c = mk();
       await service.search('x', false, 5000);
-      expect(c.limit).toHaveBeenCalledWith(50);
+      expect(c.limit).toHaveBeenCalledWith(51);
 
       c = mk();
       await service.search('x', false, 0);
-      expect(c.limit).toHaveBeenCalledWith(1);
+      expect(c.limit).toHaveBeenCalledWith(2);
     });
 
     it('falls back to the default for a non-numeric limit', async () => {
@@ -220,7 +224,92 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
       eventModel.find.mockReturnValue(c);
 
       await service.search('x', false, Number('abc'));
-      expect(c.limit).toHaveBeenCalledWith(20);
+      expect(c.limit).toHaveBeenCalledWith(21);
+    });
+
+    describe('cursor pagination', () => {
+      const DATE_A = new Date('2026-09-01T10:00:00.000Z');
+      const ID_A = '507f1f77bcf86cd799439011';
+
+      /**
+       * Builds `n` rows so the lookahead row exists.
+       *
+       * Real ObjectIds, not `e0`/`e1`: the cursor validates `_id` before it
+       * reaches Mongoose, so a fake id would be rejected as a bad cursor.
+       */
+      const rows = (n: number) =>
+        Array.from({ length: n }, (_, i) => ({
+          _id: new Types.ObjectId(),
+          date: DATE_A,
+          joinedCount: 0,
+          maxPlayers: 10,
+          seq: i,
+        }));
+
+      it('returns a paged envelope, not a bare array', async () => {
+        eventModel.find.mockReturnValue(findChain(rows(3)));
+
+        const res: any = await service.search('friday', false, 2);
+
+        expect(Array.isArray(res)).toBe(false);
+        expect(res.items).toHaveLength(2);
+        expect(res.hasMore).toBe(true);
+        expect(typeof res.nextCursor).toBe('string');
+      });
+
+      it('drops the lookahead row from items', async () => {
+        // 3 rows fetched for a limit of 2: the third only sets hasMore.
+        eventModel.find.mockReturnValue(findChain(rows(3)));
+
+        const res: any = await service.search('friday', false, 2);
+        expect(res.items).toHaveLength(2);
+      });
+
+      it('reports the end of the result set', async () => {
+        // Fewer rows than the lookahead asked for → nothing further.
+        eventModel.find.mockReturnValue(findChain(rows(2)));
+
+        const res: any = await service.search('friday', false, 5);
+        expect(res.hasMore).toBe(false);
+        expect(res.nextCursor).toBeNull();
+      });
+
+      it('adds no keyset predicate on the first page', async () => {
+        await service.search('friday');
+        expect(filter().$and).toBeUndefined();
+      });
+
+      it('resumes strictly after the cursor row', async () => {
+        const cursor = Buffer.from(
+          JSON.stringify({ d: DATE_A.toISOString(), i: ID_A }),
+        ).toString('base64url');
+
+        await service.search('friday', false, 20, cursor);
+
+        // Keyset, not skip: later date, OR same date with a greater _id.
+        const or = filter().$and[0].$or;
+        expect(or[0].date.$gt).toEqual(DATE_A);
+        expect(or[1].date).toEqual(DATE_A);
+        expect(or[1]._id.$gt.toString()).toBe(ID_A);
+      });
+
+      it('round-trips its own cursor', async () => {
+        eventModel.find.mockReturnValue(findChain(rows(3)));
+        const first: any = await service.search('friday', false, 2);
+
+        jest.clearAllMocks();
+        eventModel.find.mockReturnValue(findChain(rows(1)));
+        await service.search('friday', false, 2, first.nextCursor);
+
+        // The decoded cursor must produce a usable predicate.
+        expect(eventModel.find.mock.calls[0][0].$and).toBeDefined();
+      });
+
+      it('rejects a malformed cursor', async () => {
+        await expect(
+          service.search('friday', false, 20, 'not-a-cursor'),
+        ).rejects.toBeInstanceOf(BadRequestException);
+      });
     });
 
     it('attaches the derived isFull to each row', async () => {
@@ -229,7 +318,7 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
       eventModel.find.mockReturnValue(c);
 
       const res: any = await service.search('friday');
-      expect(res[0].isFull).toBe(true);
+      expect(res.items[0].isFull).toBe(true);
     });
   });
 
