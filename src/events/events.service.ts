@@ -247,7 +247,11 @@ export class EventsService {
    * Expired and `done` events are hidden by default, matching
    * `listByGroup` and `listJoined` — searching is a forward-looking act.
    */
-  async search(q: string, includeExpired = false, limit = 20) {
+  async search(
+    q: string,
+    includeExpired = false,
+    limit = DEFAULT_SEARCH_LIMIT,
+  ) {
     const term = (q ?? '').trim();
     // An empty regex matches everything; that is a listing, not a search.
     if (!term) return [];
@@ -266,7 +270,7 @@ export class EventsService {
     const events = await this.eventModel
       .find(filter)
       .sort({ date: 1 })
-      .limit(Math.min(Math.max(limit, 1), 50))
+      .limit(clampLimit(limit))
       .lean();
 
     return events.map(withIsFull);
@@ -1471,4 +1475,19 @@ function startOfToday(): Date {
 /** Escapes user input so it can be embedded in a RegExp literally. */
 function escapeRegex(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Default page size for `search`, when the caller supplies none. */
+const DEFAULT_SEARCH_LIMIT = 20;
+
+/**
+ * Clamps a caller-supplied page size into 1-50, falling back to `fallback`.
+ *
+ * `?limit=abc` reaches us as NaN, and a bare Math.min/Math.max clamp cannot
+ * reject it — every comparison against NaN is false, so the NaN flows straight
+ * through to Mongoose's .limit(). Hence the explicit isFinite check.
+ */
+function clampLimit(limit: number, fallback = DEFAULT_SEARCH_LIMIT): number {
+  if (!Number.isFinite(limit)) return fallback;
+  return Math.min(Math.max(Math.trunc(limit), 1), 50);
 }

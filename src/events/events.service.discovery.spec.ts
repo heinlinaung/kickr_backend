@@ -200,7 +200,6 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
     it('caps limit at 50 and floors it at 1', async () => {
       const mk = () => {
         const c = findChain([]);
-        c.limit = jest.fn().mockReturnThis();
         eventModel.find.mockReturnValue(c);
         return c;
       };
@@ -211,6 +210,17 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
       c = mk();
       await service.search('x', false, 0);
       expect(c.limit).toHaveBeenCalledWith(1);
+    });
+
+    it('falls back to the default for a non-numeric limit', async () => {
+      // `?limit=abc` arrives as NaN. The clamp cannot catch it — every NaN
+      // comparison is false — so it must be rejected explicitly, or Mongoose
+      // receives .limit(NaN).
+      const c = findChain([]);
+      eventModel.find.mockReturnValue(c);
+
+      await service.search('x', false, Number('abc'));
+      expect(c.limit).toHaveBeenCalledWith(20);
     });
 
     it('attaches the derived isFull to each row', async () => {

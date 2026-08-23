@@ -133,5 +133,24 @@ describe('UsersService.search', () => {
       await service.search('hein', 0);
       expect(limitArg()).toBe(1);
     });
+
+    it('falls back to the default for a non-numeric limit', async () => {
+      // `?limit=abc` reaches the service as NaN. The clamp cannot catch it —
+      // every NaN comparison is false — so it must be rejected explicitly,
+      // or Mongoose receives .limit(NaN).
+      await service.search('hein', Number('abc'));
+      expect(limitArg()).toBe(20);
+    });
+
+    it('falls back to the default for Infinity', async () => {
+      // Treated as unusable input rather than "as many as possible".
+      await service.search('hein', Infinity);
+      expect(limitArg()).toBe(20);
+    });
+
+    it('truncates a fractional limit', async () => {
+      await service.search('hein', 2.7);
+      expect(limitArg()).toBe(2);
+    });
   });
 });

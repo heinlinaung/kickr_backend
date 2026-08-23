@@ -44,6 +44,19 @@ function escapeRegex(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/**
+ * Clamps a caller-supplied page size into 1-50, falling back to `fallback`.
+ *
+ * `?limit=abc` reaches us as NaN, and a bare Math.min/Math.max clamp cannot
+ * reject it — every comparison against NaN is false, so the NaN flows straight
+ * through to Mongoose's .limit(). Hence the explicit isFinite check.
+ */
+const DEFAULT_SEARCH_LIMIT = 20;
+function clampLimit(limit: number, fallback = DEFAULT_SEARCH_LIMIT): number {
+  if (!Number.isFinite(limit)) return fallback;
+  return Math.min(Math.max(Math.trunc(limit), 1), 50);
+}
+
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
@@ -224,7 +237,7 @@ export class UsersService {
    * already 404s them, so listing them here would advertise accounts that
    * cannot be opened.
    */
-  async search(q: string, limit = 20) {
+  async search(q: string, limit = DEFAULT_SEARCH_LIMIT) {
     const term = (q ?? '').trim();
     // An empty query would otherwise match every user via an empty regex.
     if (!term) return [];
@@ -248,7 +261,7 @@ export class UsersService {
       // Select only the card fields. email/phoneNumber/cognitoSub are never
       // loaded, so they cannot leak even if the shaping below changes.
       .select(SEARCH_RESULT_FIELDS.join(' '))
-      .limit(Math.min(Math.max(limit, 1), 50))
+      .limit(clampLimit(limit))
       .lean();
 
     return users;
