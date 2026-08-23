@@ -205,6 +205,7 @@ or `after_match`.
 | `GET` | `/events` | any user | Public events only. Optional `?region=`, `?near=`/`?radius=`, `?from=`/`?to=`, `?status=`. |
 | `GET` | `/events/joined` | any user | **NEW** — events the caller has joined, **public and private alike**, soonest first. Expired/`done` hidden unless `?includeExpired=true`. |
 | `GET` | `/events/group/:groupId` | any user | **NEW** — one group's events. Members see private ones too. Expired/`done` hidden unless `?includeExpired=true`. |
+| `GET` | `/events/search?q=` | any user | **NEW** — free-text on title/description. Public events only, max 50. Empty `q` → `[]`. See §5.3. |
 | `POST` | `/events` | organizer | Create. Accepts `startTime`, `endTime`, `teamCount`, `templateId`. |
 | `GET` | `/events/:id` | any user | Detail + `groupRules`, `standings`, `likedByMe`, `joinedByMe`. |
 | `PATCH` | `/events/:id` | organizer | **NEW** — edit. Rejected when `done`. |
@@ -304,6 +305,40 @@ Sorted by `date` ascending. Each row carries the derived `isFull`.
 | `404` | Group does not exist |
 
 Note the empty-list-vs-404 distinction: an unknown group is `404`, but a real group you cannot see private events in returns `200` with `[]`.
+
+### 5.3 `GET /events/search` — free-text search
+
+```http
+GET /events/search?q=friday%20night
+GET /events/search?q=friday&includeExpired=true
+GET /events/search?q=friday&limit=50
+Authorization: Bearer <accessToken>
+```
+
+Case-insensitive **substring** match on `title` **or** `description`, soonest
+first. Not a whole-word or prefix match: `?q=rida` finds "Friday night five".
+
+**Public events only.** Like `GET /events`, this hard-filters `isPublic: true`,
+so a group's private event never surfaces here — *even for an approved member*.
+For a group's own schedule use §5.2, which is the only route that reveals
+private events to members.
+
+- **An empty or whitespace-only `q` returns `[]`**, not every event. It is a
+  search, not a listing — use `GET /events` to browse.
+- Expired events (date before today) and `done` events are hidden unless
+  `includeExpired=true`, matching §5.1b and §5.2.
+- `includeExpired` is true **only** for the exact string `"true"`. `1`, `yes`
+  and `TRUE` are all read as false, so a typo silently narrows rather than
+  widens what you see.
+- `limit` defaults to `20` and is clamped to **1–50**. A non-numeric value
+  (`?limit=abc`) falls back to `20` rather than erroring.
+- Regex metacharacters are escaped, so `?q=a.c` matches the literal text
+  `a.c` — not `abc`.
+- Rows carry the derived `isFull`, so a card renders the same as one from §5.1.
+
+> There is no relevance ranking. Results are ordered by `date` ascending, so
+> the soonest event wins, not the closest title match. A `limit` smaller than
+> the match count therefore returns the *earliest* matches, not the *best* ones.
 
 ---
 
@@ -437,6 +472,9 @@ Do **not** design screens against these — the fields exist but nothing fills t
 - [ ] `standings` is derived on every read. Never cache or write it back.
 - [ ] **`joinedByMe` is the only field that says whether YOU joined.** `joinedCount` counts everyone; `userRole` is your group role and reads `owner` even for a creator who never joined.
 - [ ] Resubmitting teams during `preparation` **regenerates fixtures wholesale**, discarding entered scores.
+- [ ] **`GET /events/search` is public-only** — it will not find a group's private event even for a member. Search and "my group's schedule" are different screens.
+- [ ] Search with an empty `q` returns **`[]`, not everything**. Don't use it as the browse/listing call.
+- [ ] `includeExpired` only accepts the exact string `"true"` — `1`/`yes` are read as false and silently hide past events.
 
 ---
 
