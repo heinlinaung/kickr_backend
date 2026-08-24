@@ -494,12 +494,18 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
-    it('is gated to preparation', async () => {
-      eventModel.findById.mockResolvedValue(eventDoc({ status: 'playing' }));
-      await expect(
-        service.shuffleTeams(EVENT_ID, CREATOR),
-      ).rejects.toBeInstanceOf(BadRequestException);
-    });
+    it.each(['join', 'ready_to_play', 'playing', 'after_match', 'done'])(
+      'is gated to preparation — refused while %s',
+      async (status) => {
+        // ready_to_play matters most here: freezing the roster is that state's
+        // entire purpose, so a re-shuffle must not slip through after the
+        // teams have been reviewed.
+        eventModel.findById.mockResolvedValue(eventDoc({ status }));
+        await expect(
+          service.shuffleTeams(EVENT_ID, CREATOR),
+        ).rejects.toBeInstanceOf(BadRequestException);
+      },
+    );
   });
 
   describe('addMatch — manual fixture', () => {
@@ -574,7 +580,14 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       expect(matchModel.create).not.toHaveBeenCalled();
     });
 
-    it.each(['join', 'preparation', 'playing', 'after_match', 'done'])(
+    it.each([
+      'join',
+      'preparation',
+      'ready_to_play',
+      'playing',
+      'after_match',
+      'done',
+    ])(
       'is allowed in %s — no lifecycle gate by decision',
       async (status) => {
         // Deliberately ungated: this is an escape hatch for a schedule the
@@ -634,7 +647,7 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       ).resolves.toBeDefined();
     });
 
-    it.each(['join', 'before_match', 'preparation', 'done'])(
+    it.each(['join', 'preparation', 'ready_to_play', 'done'])(
       'rejects score entry while %s',
       async (status) => {
         eventModel.findById.mockResolvedValue(atStatus(status));

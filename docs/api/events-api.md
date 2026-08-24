@@ -5,6 +5,32 @@
 **Swagger UI:** `http://localhost:3000/api-docs` · **OpenAPI JSON:** `/api-docs-json`
 **Status:** build steps 1–4 implemented — lifecycle core, teams/fixtures/standings, after-match (MVP, cover, photos), and discovery (geo, templates, likes). Verified against MongoDB on **2026-08-13**. Remaining gaps are listed in §9; the teams flow is documented in §11.
 
+> ## ⚠️ Changed 2026-08-20 — new `ready_to_play` stage
+>
+> A sixth state sits between `preparation` and `playing`:
+> `join → preparation → **ready_to_play** → playing → after_match → done`.
+>
+> **`preparation → playing` is no longer legal and now returns `409`.** Any
+> client that starts a match straight from team assignment breaks — kick-off
+> must go through `ready_to_play`. This is the one change that needs a client
+> release.
+>
+> What the state is for: the teams are **final and reviewable**, but the match
+> has not kicked off. The roster is **frozen** — `POST /events/:id/shuffle` and
+> the team-write routes are refused here (`400`), unlike in `preparation`. Score
+> entry is still refused too, since there is nothing to score yet.
+>
+> A reverse edge `ready_to_play → preparation` exists for when the reviewed
+> teams turn out wrong: go back, re-shuffle, come forward again. Nothing is lost
+> doing so, because no score can have been entered yet.
+>
+> **No data migration is needed.** No existing event can be in the new state,
+> and no stored value becomes invalid — unlike the `before_match` removal below,
+> which stranded documents. Existing events keep working; only the transition
+> your client requests has to change.
+>
+> Handle the new value in any `switch` on `status`, and in the `?status=` filter.
+
 > **Changed 2026-08-18:** **`before_match` is gone from the lifecycle** — `join`
 > now advances straight to `preparation`, and `preparation → join` reopens
 > registration. Sending `"before_match"` to `PATCH /events/:id/status` is a
@@ -17,8 +43,10 @@
 
 > ## ⚠️ Breaking change — event `status` values have changed
 >
-> The old `open | full | done` enum is **gone**. Events now use a 5-state lifecycle:
-> `join → preparation → playing → after_match → done`.
+> The old `open | full | done` enum is **gone**. Events now use the lifecycle
+> `join → preparation → ready_to_play → playing → after_match → done`
+> (`ready_to_play` was added 2026-08-20; the original release of this change had
+> five states).
 >
 > - `open` → **`join`**
 > - `full` → **removed entirely.** A full event stays in `join`; use the new derived **`isFull`** boolean instead.
@@ -145,13 +173,14 @@ if (event.isFull) showFullBadge();
 ## 3. The lifecycle
 
 ```
-join → preparation → playing → after_match → done
+join → preparation → ready_to_play → playing → after_match → done
 ```
 
 | Status | Meaning |
 |---|---|
 | `join` | Registration open. Players can join/leave. |
 | `preparation` | Teams being assigned; fixtures submitted here. |
+| `ready_to_play` | **NEW** — teams are final and reviewable; kick-off has not happened. The roster is **frozen**: shuffling is refused here. |
 | `playing` | Match in progress; scores can be entered. |
 | `after_match` | Match over; MVP/photos/ratings belong here. |
 | `done` | Archived. Terminal — nothing can change. |
@@ -161,7 +190,8 @@ join → preparation → playing → after_match → done
 | From | To |
 |---|---|
 | `join` | `preparation` |
-| `preparation` | `playing`, **`join`** (reopen registration) |
+| `preparation` | **`ready_to_play`**, **`join`** (reopen registration) |
+| `ready_to_play` | `playing`, **`preparation`** (re-shuffle a wrong team set) |
 | `playing` | `after_match` |
 | `after_match` | `done` |
 | `done` | — terminal |
@@ -174,7 +204,8 @@ Anything else → **`409`**. You cannot skip states (`join → playing` is rejec
 |---|---|
 | join | `status == 'join'` **and** not full |
 | leave | `status == 'join'` |
-| submit teams / shuffle | `status == 'preparation'` |
+| submit teams / shuffle | `status == 'preparation'` — **not** `ready_to_play` |
+| view final teams | `ready_to_play` onwards |
 | enter a fixture score | `status` in `playing`, `after_match` |
 | MVP / result / photos | `status == 'after_match'` |
 | edit / delete event | organizer, any state except `done` |
@@ -480,6 +511,9 @@ Do **not** design screens against these — the fields exist but nothing fills t
 ## 10. Gotchas checklist
 
 - [ ] **`status: "open"` and `"full"` are gone.** Match `"join"`, and use `isFull` for capacity.
+- [ ] **`preparation → playing` now 409s.** Go `preparation → ready_to_play → playing`. This breaks any existing "start match" button.
+- [ ] Handle **`ready_to_play`** in every `switch` on `status` and in the `?status=` filter — an unhandled sixth value is the likely crash.
+- [ ] **Shuffling is refused in `ready_to_play`** (`400`). Build the "teams are final" screen read-only, and use `ready_to_play → preparation` if the user needs to change them.
 - [ ] `isFull` is **derived**, absent from the stored document — never write it back.
 - [ ] `GET /events` hides private events. A group's schedule needs `GET /events/group/:groupId`.
 - [ ] A **pending** group member sees only public events — approval is what unlocks private ones.
