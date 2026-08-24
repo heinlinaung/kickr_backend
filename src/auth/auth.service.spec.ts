@@ -1,4 +1,8 @@
 import { Test } from '@nestjs/testing';
+import {
+  BadRequestException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { getModelToken } from '@nestjs/mongoose';
 import { AuthService, defaultNameFromEmail } from './auth.service';
 import { CognitoService } from './cognito/cognito.service';
@@ -14,6 +18,7 @@ describe('AuthService (Cognito proxy)', () => {
     refresh: jest.fn(),
     forgotPassword: jest.fn(),
     confirmForgotPassword: jest.fn(),
+    changePassword: jest.fn(),
   };
   const userModel = {
     create: jest.fn(),
@@ -173,6 +178,61 @@ describe('AuthService (Cognito proxy)', () => {
     await service.refreshTokens({ sub: 'sub-uuid-1', refreshToken: 'rt' });
     expect(cognito.refresh).toHaveBeenCalledWith('sub-uuid-1', 'rt');
   });
+  describe('changePassword', () => {
+    it('passes the access token and both passwords to Cognito', async () => {
+      cognito.changePassword.mockResolvedValue(undefined);
+
+      await service.changePassword('access-tok', {
+        currentPassword: 'OldPass123!',
+        newPassword: 'NewPass456!',
+      });
+
+      expect(cognito.changePassword).toHaveBeenCalledWith(
+        'access-tok',
+        'OldPass123!',
+        'NewPass456!',
+      );
+    });
+
+    it('confirms the change without echoing either password', async () => {
+      cognito.changePassword.mockResolvedValue(undefined);
+
+      const res = await service.changePassword('access-tok', {
+        currentPassword: 'OldPass123!',
+        newPassword: 'NewPass456!',
+      });
+
+      expect(JSON.stringify(res)).not.toContain('OldPass123!');
+      expect(JSON.stringify(res)).not.toContain('NewPass456!');
+      expect(res).toHaveProperty('message');
+    });
+
+    it('rejects reusing the current password without calling Cognito', async () => {
+      // Cognito accepts a no-op change, which reads as success to the user
+      // while nothing rotated. Cheaper and clearer to refuse it here.
+      await expect(
+        service.changePassword('access-tok', {
+          currentPassword: 'SamePass123!',
+          newPassword: 'SamePass123!',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(cognito.changePassword).not.toHaveBeenCalled();
+    });
+
+    it('lets a Cognito failure propagate unchanged', async () => {
+      // mapCognitoError already produced the right status; re-wrapping it here
+      // would flatten a 401 into a 500.
+      const mapped = new UnauthorizedException('Invalid credentials');
+      cognito.changePassword.mockRejectedValue(mapped);
+
+      await expect(
+        service.changePassword('access-tok', {
+          currentPassword: 'wrong',
+          newPassword: 'NewPass456!',
+        }),
+      ).rejects.toBe(mapped);
+    });
+
 });
 
 describe('defaultNameFromEmail', () => {
@@ -188,5 +248,6 @@ describe('defaultNameFromEmail', () => {
 
   it('falls back to the full address when the local part is too short', () => {
     expect(defaultNameFromEmail('a@example.com')).toBe('a@example.com');
+  });
   });
 });

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { User, UserDocument } from '../users/schemas/user.schema';
@@ -10,6 +10,7 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { ConfirmSignupDto } from './dto/confirm-signup.dto';
 import { ResendConfirmationDto } from './dto/resend-confirmation.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 
 /**
  * Seed a display name from an email's local part ('john.doe@x.com' -> 'john.doe').
@@ -86,5 +87,37 @@ export class AuthService {
       dto.newPassword,
     );
     return { message: 'Password reset successful. You can now log in.' };
+  }
+
+  /**
+   * Changes the password of the caller identified by `accessToken`.
+   *
+   * Distinct from `resetPassword`, which is the forgotten-password path and
+   * proves identity with an emailed code. This one proves it with the current
+   * password, so it needs no email round trip — but it does need the current
+   * password: without that check, a stolen access token could rotate the
+   * password and lock the real owner out permanently.
+   *
+   * The identity comes from the token, never from the body. There is no `email`
+   * field to spoof, so one user cannot aim this at another's account.
+   */
+  async changePassword(accessToken: string, dto: ChangePasswordDto) {
+    // Cognito treats "new == old" as a successful no-op, which would report
+    // success while nothing actually rotated.
+    if (dto.currentPassword === dto.newPassword) {
+      throw new BadRequestException(
+        'New password must differ from the current password',
+      );
+    }
+
+    await this.cognito.changePassword(
+      accessToken,
+      dto.currentPassword,
+      dto.newPassword,
+    );
+
+    // Deliberately does not return tokens: the existing access token stays
+    // valid, so the client needs no re-login to keep working.
+    return { message: 'Password changed successfully.' };
   }
 }
