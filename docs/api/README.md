@@ -4,13 +4,24 @@ Integration guides written against the **live** API — every request/response s
 
 | Doc | Covers |
 |---|---|
-| [auth-api.md](./auth-api.md) | Signup (incl. the optional `name`), login, **refresh**, forgot/reset password. Token storage and the 401→refresh→retry loop. |
+| [auth-api.md](./auth-api.md) | Signup (incl. the optional `name`), login, **refresh**, forgot/reset password, **change password** (authenticated). Token storage and the 401→refresh→retry loop. |
 | [groups-and-locations-api.md](./groups-and-locations-api.md) | Locations (venues) and Groups (fields, `country`/`city`, images, rules, members/roles, search, QR invites, joining). |
 | [events-api.md](./events-api.md) | Events — the 5-state lifecycle, derived `isFull`, listing a group's events, **free-text search**, create/edit/delete, join/leave. ⚠️ **breaking status change**. |
 | [users-api.md](./users-api.md) | Users — **people search** (name/username, exact-email only), and the profile routes. ⚠️ written from source, not captured live. |
 | [admin-api.md](./admin-api.md) | **Back-office only**, behind the `x-admin-key` shared secret — force-add users to a group or event, and seed a throwaway test fixture (§9). Not for the mobile app. |
 
 **Live reference while the server is running:** Swagger UI at `/api-docs`, OpenAPI JSON at `/api-docs-json`.
+
+## New — `POST /auth/change-password`
+
+Lets a **logged-in** user change their own password: `{ currentPassword, newPassword }` with a bearer token, no email involved. It is the first authenticated route on the auth controller — the others all serve users who cannot log in.
+
+Two things to get right in the client:
+
+1. **A `401` from this route means "wrong current password", not "expired session".** Exempt it from the refresh-and-retry interceptor, or a typo logs the user out.
+2. **Send no `email` field.** The account comes from the token; an unknown body field is a `400`.
+
+Other devices are **not** signed out — see [auth-api §6.2](./auth-api.md).
 
 ## New — search endpoints
 

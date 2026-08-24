@@ -11,6 +11,7 @@ import {
   AdminDeleteUserCommand,
   ForgotPasswordCommand,
   ConfirmForgotPasswordCommand,
+  ChangePasswordCommand,
   AuthFlowType,
 } from '@aws-sdk/client-cognito-identity-provider';
 import { mapCognitoError } from './cognito.errors';
@@ -214,6 +215,40 @@ export class CognitoService {
           Username: email,
           ConfirmationCode: code,
           Password: newPassword,
+        }),
+      );
+    } catch (err) {
+      throw mapCognitoError(err);
+    }
+  }
+
+  /**
+   * Changes the password of the user the access token belongs to.
+   *
+   * Unlike every other call here, this one carries **no ClientId and no
+   * SecretHash**: the access token *is* the credential, and Cognito rejects the
+   * request outright if a client secret is supplied alongside it.
+   *
+   * Cognito verifies `PreviousPassword` itself and answers
+   * `NotAuthorizedException` when it is wrong — which `mapCognitoError` turns
+   * into a `401`. That check is the whole security value of this endpoint, so it
+   * is deliberately left with Cognito rather than reimplemented by re-login.
+   *
+   * Note this does NOT revoke the user's other sessions: existing refresh
+   * tokens keep working until they expire. Revoking them needs a separate
+   * GlobalSignOut, which also ends the caller's own session.
+   */
+  async changePassword(
+    accessToken: string,
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<void> {
+    try {
+      await this.client.send(
+        new ChangePasswordCommand({
+          AccessToken: accessToken,
+          PreviousPassword: currentPassword,
+          ProposedPassword: newPassword,
         }),
       );
     } catch (err) {

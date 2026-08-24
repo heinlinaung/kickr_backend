@@ -72,10 +72,13 @@ dynamic unwrap(http.Response res) {
 | `POST` | `/auth/refresh` | **`sub`**, `refreshToken` | New access token |
 | `POST` | `/auth/forgot-password` | `email` | Send reset code |
 | `POST` | `/auth/reset-password` | `email`, `code`, `newPassword` | Complete reset |
+| `POST` | `/auth/change-password` 🔒 | `currentPassword`, `newPassword` | **NEW** — change your own password while logged in (§6.2) |
 | `POST` | `/auth/confirm-signup` | `email`, `code` | Confirm account (see §3.2) |
 | `POST` | `/auth/resend-confirmation` | `email` | Resend confirmation code |
 
-None require an `Authorization` header. All are `POST`.
+All are `POST`. Only **`/auth/change-password`** (🔒) needs an `Authorization`
+header — every other route here exists to serve someone who *cannot* log in, so
+requiring a token would be a contradiction.
 
 ---
 
@@ -263,7 +266,20 @@ Proactive refresh is also fine: refresh when the token is within ~5 minutes of `
 
 ---
 
-## 6. Password reset
+## 6. Passwords
+
+Two separate flows, and picking the wrong one is the usual mistake:
+
+| The user… | Use | Proves identity with |
+|---|---|---|
+| **cannot** log in (forgot it) | §6.1 reset — `forgot-password` + `reset-password` | an emailed code |
+| **can** log in (wants to change it) | §6.2 change — `change-password` | their current password |
+
+Do not drive a settings-screen "change password" through the reset flow: it
+sends the user an email for a password they already know, and it works for
+anyone who can read that inbox.
+
+### 6.1 Reset — for a user who cannot log in
 
 Two steps.
 
@@ -290,6 +306,52 @@ So **never** tell the user "no account found" here; say *"If that email is regis
 | `503 Too many attempts, retry later` | Cognito rate limit → back off, disable the button briefly |
 
 > ⚠️ **Email delivery caveat:** the pool currently uses Cognito's built-in email sender, which is rate-limited (~50/day) and often lands in spam. Codes may not arrive reliably until the pool is moved to Amazon SES. Worth knowing while testing — it is an infrastructure setting, not an app bug.
+
+### 6.2 Change — for a user who is logged in
+
+**`POST /auth/change-password`** · **requires** `Authorization: Bearer <accessToken>`
+
+```http
+POST /auth/change-password
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+
+{ "currentPassword": "OldPassword123!", "newPassword": "NewPassword456!" }
+```
+
+→ `200`:
+```json
+{ "data": { "message": "Password changed successfully." } }
+```
+
+**There is no `email` field, and that is deliberate.** The account is taken from
+the access token, so this endpoint cannot be aimed at anyone else's account.
+Sending an `email` key is a `400` — the API rejects unknown body fields
+outright.
+
+`currentPassword` is **required**. It is what stops a leaked access token from
+being escalated into a permanent account takeover: without it, whoever held the
+token could rotate the password and lock the real owner out.
+
+| Error | Meaning | Handling |
+|---|---|---|
+| `401 Invalid credentials` | `currentPassword` is wrong | Show the error against the *current password* field — the session is still valid, do **not** log the user out |
+| `401 Missing bearer token` | No/!Bearer `Authorization` header | A wiring bug, not a user error |
+| `400` + policy text | `newPassword` fails the Cognito policy | Show the returned `message` — it names the rule that failed |
+| `400 New password must differ from the current password` | Both fields were identical | Cognito would treat this as a successful no-op, so it is refused here |
+| `400` (validation list) | `newPassword` shorter than 8 chars, or a field missing | `message` is a **list** here |
+| `503 Too many attempts, retry later` | Cognito rate limit | Back off |
+
+> ⚠️ **A 401 here means "wrong current password", not "session expired".** It is
+> the one place a `401` must **not** trigger your refresh-and-retry interceptor
+> (§5) or a forced logout — retrying cannot help, and logging the user out on a
+> mistyped password is a nasty bug. Special-case this route.
+
+**Other devices stay logged in.** Changing the password does *not* revoke
+existing sessions — refresh tokens issued before the change keep working until
+they expire. The caller's own tokens also keep working, so no re-login is
+needed. If you want "sign out everywhere", that needs a separate endpoint which
+does not exist yet (see §8).
 
 ---
 
@@ -327,6 +389,7 @@ There is **no logout endpoint**. Logging out is a client-side action: clear the 
 | Verified email change | Design doc only — not implemented. |
 | Social login (Google/Facebook) | Removed; not available. |
 | Logout / token revocation | No endpoint (see §7). |
+| **"Sign out everywhere" after a password change** | Not implemented. `POST /auth/change-password` leaves other sessions valid; a Cognito GlobalSignOut endpoint would be needed, and it would end the caller's own session too. |
 | Refresh-token rotation | Not done — the same refresh token is reused. |
 
 ---
@@ -337,7 +400,7 @@ There is **no logout endpoint**. Logging out is a client-side action: clear the 
 |---|---|---|
 | `200`/`201` | success | — |
 | `400` | validation, bad/expired reset code, weak password | show `message` (may be a list) |
-| `401` | login failure; refresh failure; id token used as bearer | login → generic message; refresh → clear session |
+| `401` | login failure; refresh failure; id token used as bearer; **wrong `currentPassword` on change-password** | login → generic message; refresh → clear session; change-password → field error, **keep the session** (§6.2) |
 | `403` | account not confirmed (only if auto-confirm is off) | prompt to confirm |
 | `409` | signup with an existing email | "account already exists" |
 | `503` | Cognito rate limit | back off and retry later |
@@ -381,3 +444,6 @@ Forgot password: `POST /auth/forgot-password { email }` → user gets a code →
 - [ ] Never reveal account existence on forgot-password.
 - [ ] Handle `message` being a **string or a list**.
 - [ ] Implement logout client-side (no endpoint).
+- [ ] Use **change-password** (§6.2) for the settings screen, **reset** (§6.1) only for forgot-password.
+- [ ] Send `currentPassword` with the change — and send **no `email`**; an unknown field is a `400`.
+- [ ] **Exempt `/auth/change-password` from the 401 refresh-and-retry interceptor** — a `401` there means wrong current password, not an expired session.
