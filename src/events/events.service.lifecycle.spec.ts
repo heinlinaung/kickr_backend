@@ -195,7 +195,10 @@ describe('EventsService — lifecycle', () => {
     it('walks the whole happy path end to end', async () => {
       const path = [
         ['join', 'preparation'],
-        ['preparation', 'playing'],
+        // Kick-off routes through ready_to_play; preparation -> playing is
+        // no longer a legal move.
+        ['preparation', 'ready_to_play'],
+        ['ready_to_play', 'playing'],
         ['playing', 'after_match'],
         ['after_match', 'done'],
       ] as const;

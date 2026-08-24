@@ -687,6 +687,18 @@ export class TestDataService {
       'reject',
     );
 
+    // --- stage: ready_to_play, roster frozen ---------------------------
+    // Kick-off routes through ready_to_play now; preparation -> playing is a
+    // 409. Teams are final here, so shuffling must be refused.
+    await this.eventsService.setStatus(eventId, owner.id, 'ready_to_play');
+
+    await this.expect(
+      record,
+      "shuffle is refused once status is 'ready_to_play'",
+      () => this.eventsService.shuffleTeams(eventId, owner.id),
+      'reject',
+    );
+
     // --- stage: playing, scores ----------------------------------------
     await this.eventsService.setStatus(eventId, owner.id, 'playing');
 

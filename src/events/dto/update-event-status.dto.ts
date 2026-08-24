@@ -6,7 +6,7 @@ import type { EventStatus } from '../events.lifecycle';
 /**
  * Target state for PATCH /events/:id/status.
  *
- * `@IsEnum` rejects values outside the five states with a 400 before the
+ * `@IsEnum` rejects values outside the six states with a 400 before the
  * service runs; whether the move is *legal from the current state* is the
  * transition table's job and answers 409.
  */

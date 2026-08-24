@@ -19,10 +19,14 @@ import {
  */
 const LEGAL: ReadonlyArray<[EventStatus, EventStatus]> = [
   ['join', 'preparation'],
-  ['preparation', 'playing'],
-  // The one reverse edge: reopens registration after backing out of team
-  // assignment. Absorbs what preparation -> before_match -> join used to do.
+  ['preparation', 'ready_to_play'],
+  // Reverse edge: reopens registration after backing out of team assignment.
+  // Absorbs what preparation -> before_match -> join used to do.
   ['preparation', 'join'],
+  ['ready_to_play', 'playing'],
+  // Reverse edge: the teams were reviewed and are wrong, so go back and
+  // re-shuffle. Safe because scoring cannot have started yet.
+  ['ready_to_play', 'preparation'],
   ['playing', 'after_match'],
   ['after_match', 'done'],
 ];
@@ -31,12 +35,15 @@ const isLegal = (from: EventStatus, to: EventStatus) =>
   LEGAL.some(([f, t]) => f === from && t === to);
 
 describe('event lifecycle — transition table', () => {
-  it('declares exactly the five spec states, in lifecycle order', () => {
-    // `before_match` was removed: it gated nothing the neighbouring states did
-    // not, so closing registration and starting team assignment are one step.
+  it('declares exactly the six spec states, in lifecycle order', () => {
+    // `ready_to_play` sits between team assignment and kick-off: teams are
+    // final and reviewable, but the match has not started. Unlike the removed
+    // `before_match`, it gates something real — canShuffle is false here, so
+    // the roster is frozen.
     expect([...EVENT_STATUSES]).toEqual([
       'join',
       'preparation',
+      'ready_to_play',
       'playing',
       'after_match',
       'done',
@@ -52,7 +59,7 @@ describe('event lifecycle — transition table', () => {
     );
   });
 
-  // 5 x 5 = 25 ordered pairs. Every one is asserted, so adding an edge to the
+  // 6 x 6 = 36 ordered pairs. Every one is asserted, so adding an edge to the
   // implementation without updating the spec transcription above fails here.
   describe.each(EVENT_STATUSES)('from %s', (from) => {
     it.each(EVENT_STATUSES)(`-> %s`, (to) => {
@@ -60,7 +67,7 @@ describe('event lifecycle — transition table', () => {
     });
   });
 
-  it('allows exactly five transitions in total', () => {
+  it('allows exactly the transitions transcribed above, and no others', () => {
     const count = EVENT_STATUSES.flatMap((from) =>
       EVENT_STATUSES.filter((to) => canTransition(from, to)),
     ).length;
@@ -92,14 +99,42 @@ describe('event lifecycle — transition table', () => {
   });
 
   it('never allows skipping a state forward', () => {
-    // join -> preparation IS legal now (before_match is gone), so the skips
-    // start one step further along.
+    // join -> preparation IS legal (before_match is gone), so the skips start
+    // one step further along.
+    expect(canTransition('join', 'ready_to_play')).toBe(false);
     expect(canTransition('join', 'playing')).toBe(false);
     expect(canTransition('join', 'after_match')).toBe(false);
     expect(canTransition('join', 'done')).toBe(false);
     expect(canTransition('preparation', 'after_match')).toBe(false);
     expect(canTransition('preparation', 'done')).toBe(false);
+    expect(canTransition('ready_to_play', 'after_match')).toBe(false);
+    expect(canTransition('ready_to_play', 'done')).toBe(false);
     expect(canTransition('playing', 'done')).toBe(false);
+  });
+
+  // BREAKING: this edge used to be legal. Kick-off now goes through
+  // ready_to_play, so a client doing preparation -> playing gets a 409.
+  it('no longer allows preparation straight to playing', () => {
+    expect(canTransition('preparation', 'playing')).toBe(false);
+    expect(allowedTransitions('preparation')).toEqual(
+      expect.arrayContaining(['ready_to_play', 'join']),
+    );
+    expect(allowedTransitions('preparation')).not.toContain('playing');
+  });
+
+  it('routes kick-off through ready_to_play', () => {
+    // The full forward path, one step at a time.
+    expect(canTransition('join', 'preparation')).toBe(true);
+    expect(canTransition('preparation', 'ready_to_play')).toBe(true);
+    expect(canTransition('ready_to_play', 'playing')).toBe(true);
+    expect(canTransition('playing', 'after_match')).toBe(true);
+    expect(canTransition('after_match', 'done')).toBe(true);
+  });
+
+  it('lets a reviewed-but-wrong team set go back to preparation', () => {
+    expect(canTransition('ready_to_play', 'preparation')).toBe(true);
+    // But not all the way back to registration in one move.
+    expect(canTransition('ready_to_play', 'join')).toBe(false);
   });
 
   it('allows reopening registration but not un-playing a match', () => {
@@ -126,12 +161,19 @@ describe('event lifecycle — action gates', () => {
   const gates = {
     canJoin: { fn: canJoin, allowed: ['join'] },
     canLeave: { fn: canLeave, allowed: ['join'] },
+    // NOT ready_to_play: that state exists to freeze the roster.
     canShuffle: { fn: canShuffle, allowed: ['preparation'] },
     canEnterScore: { fn: canEnterScore, allowed: ['playing', 'after_match'] },
     canSubmitResult: { fn: canSubmitResult, allowed: ['after_match'] },
     canModify: {
       fn: canModify,
-      allowed: ['join', 'preparation', 'playing', 'after_match'],
+      allowed: [
+        'join',
+        'preparation',
+        'ready_to_play',
+        'playing',
+        'after_match',
+      ],
     },
   };
 
@@ -150,7 +192,19 @@ describe('event lifecycle — action gates', () => {
   it('scoring is impossible before kick-off', () => {
     expect(canEnterScore('join')).toBe(false);
     expect(canEnterScore('preparation')).toBe(false);
-    expect(canEnterScore('preparation')).toBe(false);
+    // ready_to_play is still before the whistle: teams are set, no score yet.
+    expect(canEnterScore('ready_to_play')).toBe(false);
+  });
+
+  // This is what makes ready_to_play a real state rather than a label: the
+  // roster is frozen. Teams are built in preparation and only viewed here.
+  it('freezes the roster in ready_to_play', () => {
+    expect(canShuffle('preparation')).toBe(true);
+    expect(canShuffle('ready_to_play')).toBe(false);
+    // Joining and leaving closed even earlier, so the roster cannot change
+    // underneath a team set that has already been reviewed.
+    expect(canJoin('ready_to_play')).toBe(false);
+    expect(canLeave('ready_to_play')).toBe(false);
   });
 
   // Guards the §4.3 claim that re-shuffling cannot discard entered scores:

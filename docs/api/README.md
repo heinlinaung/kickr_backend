@@ -6,11 +6,22 @@ Integration guides written against the **live** API — every request/response s
 |---|---|
 | [auth-api.md](./auth-api.md) | Signup (incl. the optional `name`), login, **refresh**, forgot/reset password, **change password** (authenticated). Token storage and the 401→refresh→retry loop. |
 | [groups-and-locations-api.md](./groups-and-locations-api.md) | Locations (venues) and Groups (fields, `country`/`city`, images, rules, members/roles, search, QR invites, joining). |
-| [events-api.md](./events-api.md) | Events — the 5-state lifecycle, derived `isFull`, listing a group's events, **free-text search**, create/edit/delete, join/leave. ⚠️ **breaking status change**. |
+| [events-api.md](./events-api.md) | Events — the 6-state lifecycle (incl. **`ready_to_play`**), derived `isFull`, listing a group's events, **free-text search**, create/edit/delete, join/leave. ⚠️ **breaking status change**. |
 | [users-api.md](./users-api.md) | Users — **people search** (name/username, exact-email only), and the profile routes. ⚠️ written from source, not captured live. |
 | [admin-api.md](./admin-api.md) | **Back-office only**, behind the `x-admin-key` shared secret — force-add users to a group or event, and seed a throwaway test fixture (§9). Not for the mobile app. |
 
 **Live reference while the server is running:** Swagger UI at `/api-docs`, OpenAPI JSON at `/api-docs-json`.
+
+## ⚠️ Breaking change — 2026-08-20
+
+**New `ready_to_play` lifecycle stage**, between `preparation` and `playing`:
+`join → preparation → ready_to_play → playing → after_match → done`.
+
+**`PATCH /events/:id/status` from `preparation` straight to `playing` now returns `409`.** Any client with a "start match" button on the team-assignment screen breaks until it routes through `ready_to_play`.
+
+The new state is where teams are **final and reviewable but the match has not kicked off** — the roster is frozen, so shuffling and team writes are refused there (`400`), unlike in `preparation`. A reverse edge `ready_to_play → preparation` exists for fixing a wrong team set; nothing is lost, since no score can exist yet.
+
+**No data migration** — no existing event can hold the new value and nothing stored becomes invalid. Handle the sixth value in any `switch` on `status`. Detail in [events-api §3](./events-api.md).
 
 ## New — `POST /auth/change-password`
 
