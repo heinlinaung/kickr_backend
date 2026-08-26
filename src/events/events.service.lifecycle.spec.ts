@@ -330,6 +330,51 @@ describe('EventsService — lifecycle', () => {
       expect(memberModel.findOne.mock.calls[0][0].status).toBe('approved');
     });
 
+    describe('when the GROUP itself is private', () => {
+      const privateGroup = () => {
+        groupModel.findById = jest.fn().mockReturnValue({
+          select: () => ({
+            lean: () =>
+              Promise.resolve({ _id: GROUP_ID, isPrivate: true }),
+          }),
+        });
+      };
+
+      it('403s a non-member instead of showing public events', async () => {
+        // A private group hides its whole schedule. It is discoverable by
+        // search, so seeing it exists must not also reveal when it plays.
+        privateGroup();
+        memberModel.findOne.mockResolvedValue(null);
+
+        await expect(
+          service.listByGroup(GROUP_ID, STRANGER),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+        // The gate must refuse before querying events at all.
+        expect(eventModel.find).not.toHaveBeenCalled();
+      });
+
+      it('shows an approved member every event', async () => {
+        privateGroup();
+        memberModel.findOne.mockResolvedValue({ role: 'member' });
+
+        await service.listByGroup(GROUP_ID, STRANGER);
+
+        expect(eventModel.find.mock.calls[0][0]).not.toHaveProperty(
+          'isPublic',
+        );
+      });
+
+      it('still 404s an unknown group rather than 403', async () => {
+        // Existence is not the secret here — a missing group is missing.
+        groupModel.findById = jest.fn().mockReturnValue({
+          select: () => ({ lean: () => Promise.resolve(null) }),
+        });
+        await expect(
+          service.listByGroup(GROUP_ID, STRANGER),
+        ).rejects.toBeInstanceOf(NotFoundException);
+      });
+    });
+
     it('optionally narrows to one lifecycle status', async () => {
       memberModel.findOne.mockResolvedValue({ role: 'member' });
       await service.listByGroup(GROUP_ID, STRANGER, 'join');

@@ -357,7 +357,10 @@ export class EventsService {
       throw new BadRequestException('Invalid group id');
     }
 
-    const group = await this.groupModel.findById(groupId).select('_id').lean();
+    const group = await this.groupModel
+      .findById(groupId)
+      .select('_id isPrivate')
+      .lean();
     if (!group) throw new NotFoundException('Group not found');
 
     const member = await this.memberModel.findOne({
@@ -366,9 +369,24 @@ export class EventsService {
       status: 'approved',
     });
 
+    // A private group hides its whole schedule, not just its private events:
+    // being able to see that the group exists (it is searchable) must not also
+    // reveal when and where it plays. Approval is the gate — a pending request
+    // is not membership.
+    //
+    // 403 rather than an empty list on purpose. The caller CAN see this group
+    // in search, so the honest answer is "join to see this", which also lets
+    // the client render a join prompt instead of a misleading "no events yet".
+    if (group.isPrivate && !member) {
+      throw new ForbiddenException(
+        'This group is private — join it to see its events',
+      );
+    }
+
     const filter: Record<string, unknown> = {
       groupId: new Types.ObjectId(groupId),
     };
+    // A public group still hides its individually-private events.
     if (!member) filter.isPublic = true;
 
     if (status !== undefined) {

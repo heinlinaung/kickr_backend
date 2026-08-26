@@ -93,13 +93,21 @@ const LEGAL: ReadonlyArray<[EventStatus, EventStatus]> = [
 ];
 ```
 
-## 🟠 Needs a decision — this doc contradicts the code on purpose?
+## ✅ Decided and implemented — 2026-08-26
 
-- [ ] **"A private group is still searchable."** The code deliberately
-      does the opposite: `GroupsService.search` filters
-      `{ isPrivate: false }`, commented *"Public discovery: private groups
-      are never searchable."* Either this doc is specifying a behaviour
-      change, or it is an error. Confirm before anyone implements it.
+- [x] **"A private group is still searchable."** **Decided: yes** — this
+      document is correct and the old behaviour was inverted. Group privacy
+      now protects **contents**, not existence. Implemented:
+      - `GET /groups/search` includes private groups, and returns
+        `isPrivate` so the client can show a lock and a "request to join"
+        action instead of navigating into a `403`.
+      - Search now returns a **reduced card** and no longer leaks
+        `inviteCode` — it previously returned the whole group document for
+        every hit, which with private groups included would let anyone
+        mass-request to join.
+      - Empty `q` returns `[]`. An empty regex matched every group; that
+        was survivable for public-only results and is an enumeration tool
+        once private groups are in scope.
 
 ## ✅ Fix in the code — DONE 2026-08-26
 
@@ -109,23 +117,24 @@ const LEGAL: ReadonlyArray<[EventStatus, EventStatus]> = [
       regression tests pin it. `InvitationsService.listPending` still
       populates email and was left alone deliberately: it is
       `assertOwnerOrAdmin`-gated, and an owner vetting a join request has
-      a reason to identify the requester. **The missing access gate is
-      still open** — see the private-group decision below, since "hide the
-      member list from non-members" is the rule that would add it.
-      Original finding: Any authenticated user can list any group's
+      a reason to identify the requester. **The missing access gate is now
+      closed too** — a private group's member list requires approved
+      membership (see the private-group decision below). Original finding: Any authenticated user can list any group's
       members, private or not, and the query populates
       `'name email profileImage'`. This is a live privacy leak and a small
       fix. Notable because `/users/search` goes out of its way never to
       return an email.
 
-## 🟡 Specified here but not built — safe to build, nothing exists yet
+## Remaining — not built
 
-- [ ] **Private group hides its event listing from non-members.** Gating
-      today is per-**event** (`isPublic`), never per-**group**
-      (`isPrivate`) — `listByGroup` reads only `_id` off the group. A
-      non-member of a private group still sees that group's public events.
-- [ ] **Private group hides its member listing from non-members.** No gate
-      at all today (see the leak above).
+- [x] **Private group hides its event listing from non-members.**
+      **Done.** `EventsService.listByGroup` now reads `isPrivate` and
+      throws `403` for a non-approved caller, instead of quietly showing
+      the group's public events. `403` rather than `[]` so the client can
+      render a join prompt rather than a misleading empty state.
+- [x] **Private group hides its member listing from non-members.**
+      **Done.** `listMembers` is gated by the same approved-membership
+      check, which also closes the access-gate half of the email leak.
 - [ ] **Event-level "Make organizer"** — does not exist.
 - [ ] **Admin "Remove from event"** — does not exist. `DELETE
       /events/:id/join` is *self*-leave only, so an organizer cannot
@@ -1069,17 +1078,21 @@ request rather than creating the relationship immediately.
 Groups can be marked private. Privacy affects *visibility*, not
 *discoverability*:
 
-| Rule | Current code | Action |
-|---|---|---|
-| A private group **is still searchable** | ❌ **the opposite** — search excludes them | 🟠 **needs a decision** |
-| A private group **hides its event listing** from non-members | ❌ not built — gating is per-event, not per-group | 🟡 build |
-| A private group **hides its member listing** from non-members | ❌ no gate at all | 🔴 fix (see leak below) |
+| Rule | Status |
+|---|---|
+| A private group **is still searchable** | ✅ **implemented 2026-08-26** |
+| A private group **hides its event listing** from non-members | ✅ **implemented 2026-08-26** — `403` |
+| A private group **hides its member listing** from non-members | ✅ **implemented 2026-08-26** — `403` |
+
+All three rules now hold. Approval is the gate throughout: a *pending*
+join request is not enough, matching how a public group's individually
+private events already behaved.
 
 In practice: a non-member can find a private group by search and see
 that it exists, but cannot see its events or members until they join
 (or their join/follow request is accepted, per the group's settings).
 
-## 🟠 "Still searchable" reverses a deliberate decision
+## ✅ "Still searchable" — implemented (it did reverse a deliberate decision)
 
 `GroupsService.search` filters `{ isPrivate: false }` and is commented
 *"Public discovery: private groups are never searchable."* So a private
@@ -1093,29 +1106,36 @@ list a large share of all private groups. If that is acceptable because
 the *contents* stay hidden, the change is a one-line filter removal. If it
 is not, this rule should be dropped from the document instead.
 
-**Not implemented either way pending that decision.**
+**Decision: implemented as written here.** The enumeration cost was accepted
+because the group's *contents* are now genuinely protected — which they were
+not before, when `isPrivate` guarded discovery and nothing else. Two
+mitigations went in alongside: search returns a reduced card with no
+`inviteCode`, and an empty query returns `[]` rather than an arbitrary 20
+groups.
 
-## 🟡 Event listing is gated per-event, not per-group
+## ✅ Event listing — now gated per-group as well as per-event
 
 `EventsService.listByGroup` decides visibility from the **event's**
 `isPublic` flag and never reads the **group's** `isPrivate` flag — it
 selects only `_id` off the group. So a non-member of a private group still
 sees that group's *public* events.
 
-Making this rule true means adding a group-privacy check to that method.
-Note the two flags then interact: decide whether a public event inside a
-private group is visible to non-members. The rule above says no.
+**Implemented.** `listByGroup` now reads `isPrivate` and throws `403` for a
+non-approved caller. The two flags interact as this document specifies: a
+public event inside a private group is **not** visible to a non-member —
+the group's privacy wins, so a private group hides its whole schedule.
 
-## 🔴 Member listing has no gate, and leaks email
+## ✅ Member listing — gate added, email leak closed
 
 `GET /groups/:id/members` has **no membership check** — any authenticated
 user can list any group's members, private or not. Worse, the query
 populates `'name email profileImage'`, so it returns **member email
 addresses**.
 
-This is a live privacy leak independent of the private-group work, and
-notable because `/users/search` deliberately never returns an email. Fixed
-separately — see the change log entry for this doc's checklist.
+Both halves are now fixed. `email` is no longer populated (only
+`name`/`username`/`displayName`/`profileImage`), and a private group's
+member list requires approved membership. A public group's member list
+stays open to any authenticated caller, which is unchanged.
 
 ------------------------------------------------------------------------
 

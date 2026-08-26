@@ -207,7 +207,10 @@ describe('GroupsService', () => {
   });
 
   describe('search', () => {
-    it('only returns public groups and matches name OR handle', async () => {
+    it('includes PRIVATE groups and matches name OR handle', async () => {
+      // Privacy is enforced on contents, not on discovery: a non-member may
+      // find a private group and see that it exists, then has to join to see
+      // its members or events.
       groupModel.find.mockReturnValue(
         q([{ _id: GROUP_ID, name: 'Bangkok FC' }]),
       );
@@ -215,7 +218,7 @@ describe('GroupsService', () => {
       await service.search('bangkok');
 
       const filter = groupModel.find.mock.calls[0][0];
-      expect(filter.isPrivate).toBe(false);
+      expect(filter.isPrivate).toBeUndefined();
       expect(filter.$or).toHaveLength(2);
       const fields = filter.$or.map((c: any) => Object.keys(c)[0]);
       expect(fields).toEqual(expect.arrayContaining(['name', 'handle']));
@@ -244,6 +247,103 @@ describe('GroupsService', () => {
       groupModel.find.mockReturnValue(query);
       await service.search('x');
       expect(query.limit).toHaveBeenCalledWith(20);
+    });
+
+    it('never returns the invite code', async () => {
+      // Search is the widest-reach read, and now includes private groups.
+      // Handing out inviteCode in bulk would let anyone mass-request to join
+      // every private group they can find.
+      const query = q([]);
+      groupModel.find.mockReturnValue(query);
+
+      await service.search('bangkok');
+
+      const selected = query.select.mock.calls[0][0] as string;
+      const fields = selected.split(' ');
+      for (const secret of ['inviteCode', 'inviteCodeExpiry']) {
+        expect(fields).not.toContain(secret);
+      }
+      expect(fields).toContain('name');
+      expect(fields).toContain('handle');
+    });
+
+    it('returns isPrivate so the client can gate the UI', async () => {
+      // The client needs to render a lock badge and a "Request to join" CTA
+      // instead of navigating into a group whose contents will 403.
+      const query = q([]);
+      groupModel.find.mockReturnValue(query);
+
+      await service.search('bangkok');
+
+      const fields = (query.select.mock.calls[0][0] as string).split(' ');
+      expect(fields).toContain('isPrivate');
+    });
+
+    it('returns [] for an empty query without touching the database', async () => {
+      // An empty regex matches every group. Harmless when only public groups
+      // were returned; with private ones included it is an enumeration tool.
+      await expect(service.search('')).resolves.toEqual([]);
+      await expect(service.search('   ')).resolves.toEqual([]);
+      expect(groupModel.find).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('private group contents are gated', () => {
+    const privateGroup = () =>
+      groupModel.findById.mockReturnValue(q({ _id: GROUP_ID, isPrivate: true }));
+    const publicGroup = () =>
+      groupModel.findById.mockReturnValue(
+        q({ _id: GROUP_ID, isPrivate: false }),
+      );
+
+    describe('listMembers', () => {
+      it('403s a non-member of a private group', async () => {
+        privateGroup();
+        memberModel.findOne.mockResolvedValue(null);
+
+        await expect(
+          service.listMembers(GROUP_ID, USER_ID),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+        expect(memberModel.find).not.toHaveBeenCalled();
+      });
+
+      it('403s a PENDING member of a private group', async () => {
+        // Approval is what grants visibility, matching how a group's private
+        // events already behave. A pending request is not membership.
+        privateGroup();
+        memberModel.findOne.mockResolvedValue(null); // getMemberRole filters to approved
+        await expect(
+          service.listMembers(GROUP_ID, USER_ID),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+      });
+
+      it('allows an approved member of a private group', async () => {
+        privateGroup();
+        memberModel.findOne.mockResolvedValue({ role: 'member' });
+        memberModel.find.mockReturnValue(q([]));
+
+        await expect(
+          service.listMembers(GROUP_ID, USER_ID),
+        ).resolves.toEqual([]);
+      });
+
+      it('leaves a PUBLIC group open to non-members', async () => {
+        // Only private groups hide their members; this is unchanged behaviour.
+        publicGroup();
+        memberModel.findOne.mockResolvedValue(null);
+        memberModel.find.mockReturnValue(q([]));
+
+        await expect(
+          service.listMembers(GROUP_ID, USER_ID),
+        ).resolves.toEqual([]);
+      });
+
+      it('404s an unknown group rather than 403', async () => {
+        groupModel.findById.mockReturnValue(q(null));
+        await expect(
+          service.listMembers(GROUP_ID, USER_ID),
+        ).rejects.toBeInstanceOf(NotFoundException);
+      });
     });
   });
 
@@ -945,10 +1045,11 @@ describe('GroupsService', () => {
       // This route is reachable by any authenticated user, so a populated
       // email would hand every member's address to an outsider. User search
       // deliberately never returns one; this must not either.
+      groupModel.findById.mockReturnValue(q({ _id: GROUP_ID, isPrivate: false }));
       const chain = q([]);
       memberModel.find.mockReturnValue(chain);
 
-      await service.listMembers(GROUP_ID);
+      await service.listMembers(GROUP_ID, USER_ID);
 
       const fields = chain.populate.mock.calls[0][1] as string;
       expect(fields.split(' ')).not.toContain('email');
@@ -958,10 +1059,11 @@ describe('GroupsService', () => {
     });
 
     it('returns only approved members', async () => {
+      groupModel.findById.mockReturnValue(q({ _id: GROUP_ID, isPrivate: false }));
       const chain = q([]);
       memberModel.find.mockReturnValue(chain);
 
-      await service.listMembers(GROUP_ID);
+      await service.listMembers(GROUP_ID, USER_ID);
 
       expect(memberModel.find.mock.calls[0][0].status).toBe('approved');
     });

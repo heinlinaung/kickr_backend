@@ -337,6 +337,17 @@ Sorted by `date` ascending. Each row carries the derived `isFull`.
 
 Note the empty-list-vs-404 distinction: an unknown group is `404`, but a real group you cannot see private events in returns `200` with `[]`.
 
+> **Changed 2026-08-26 — a PRIVATE group now `403`s here.** The table above
+> describes a **public** group, where a non-member sees its public events. If
+> the *group itself* is `isPrivate: true`, a non-approved caller gets
+> **`403`** and no events at all — a private group hides its whole schedule,
+> not just its individually-private events. Being able to find the group in
+> search must not also reveal when and where it plays.
+>
+> `403` rather than `[]` on purpose: it lets you render a join prompt instead
+> of a misleading "no events yet". Approval is the gate — a pending request
+> still `403`s. See [groups §3.4b](./groups-and-locations-api.md).
+
 ### 5.3 `GET /events/search` — free-text search
 
 ```http

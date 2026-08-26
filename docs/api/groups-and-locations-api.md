@@ -253,7 +253,7 @@ The same adoption happens on `POST /groups/:id/locations` when you attach one of
 |---|---|---|---|
 | `GET` | `/groups` | member | Caller's groups; each item includes **`userRole`**. Only approved memberships, so no `memberStatus`. |
 | `POST` | `/groups` | any | Creator becomes `owner`. Accepts `rules`, `country`, `city`. |
-| `GET` | `/groups/search?q=` | any | Public groups only (`isPrivate: false`), matches name **or** handle, max 20. |
+| `GET` | `/groups/search?q=` | any | **CHANGED** — now includes **private** groups. Matches name **or** handle, max 20, returns a reduced card (no `inviteCode`). Empty `q` → `[]`. See §3.4b. |
 | `GET` | `/groups/:id` | any | Group detail **+ `userRole` / `memberStatus`** for the caller. |
 | `PATCH` | `/groups/:id` | owner/admin | Update name, description, maxPlayers, sportType, handle, rules, isPrivate, **country, city**. |
 | `POST` | `/groups/:id/logo` | owner/admin | multipart → ImageKit. |
@@ -368,6 +368,53 @@ Group detail includes the caller's membership, so you don't need a second call t
 | `null` | `null` | Not a member at all — show Join / Request. |
 
 > ⚠️ **You must check `memberStatus`, not just `userRole`.** A pending requester already has `userRole: "member"`, so treating a non-null role as "is a member" will show group content to someone who was never approved, and every member-only call will `403`.
+
+### 3.4b Private groups — discoverable, not readable
+
+> **Changed 2026-08-26.** Group privacy used to affect exactly one thing:
+> `isPrivate` hid a group from search and nothing else. It is now the reverse —
+> a private group **is** searchable, and its **contents** are gated instead.
+
+| | Public group | Private group |
+|---|---|---|
+| Appears in `GET /groups/search` | ✅ | ✅ **(new)** |
+| `GET /groups/:id` (detail) | ✅ anyone | ✅ anyone |
+| `GET /groups/:id/members` | ✅ anyone | 🔒 **403** unless approved member |
+| `GET /events/group/:groupId` | public events to non-members | 🔒 **403** unless approved member |
+
+The intent: a non-member can **find** a private group and see that it exists,
+then has to join before seeing who is in it or when it plays.
+
+**Three breaking changes for clients:**
+
+1. **`GET /groups/search` now returns private groups.** Read the `isPrivate`
+   flag on each result and render a lock badge plus a "Request to join" action
+   — navigating straight in will `403` on the members and events calls.
+2. **Search returns a reduced card, not the whole group.** Fields:
+   `_id`, `name`, `handle`, `description`, `logo`, `sportType`, `country`,
+   `city`, `isPrivate`, `maxPlayers`. Notably **`inviteCode` is gone** — it was
+   previously returned for every search hit, which with private groups included
+   would let anyone mass-request to join. Use `GET /groups/:id/qr` for a code.
+3. **`GET /groups/:id/members` and `GET /events/group/:groupId` can now
+   `403`.** They previously never did for a readable group id.
+
+**`403`, not an empty list.** A private group's existence is not secret — you
+just found it in search — so the honest answer is "join to see this". It also
+lets you render a join prompt instead of a misleading "no events yet".
+
+**Approval is the gate.** A *pending* join request is not enough, matching how
+a public group's individually-private events already behave. `403` until
+`memberStatus` is `"approved"`.
+
+**Empty `q` now returns `[]`.** An empty regex matched every group; harmless
+while only public ones came back, an enumeration tool now. Consistent with
+`/users/search` and `/events/search`.
+
+**Not changed:** `GET /groups/:id` still returns full detail for a private
+group to anyone with the id, and so do `/locations` and `/qr`. Only the member
+list and the event list are gated. If a private group's venues or invite code
+should also be hidden, that is a further decision — say so and it is a small
+addition.
 
 ### 3.5 Group QR / invite link
 
