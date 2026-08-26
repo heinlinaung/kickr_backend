@@ -245,6 +245,7 @@ or `after_match`.
 | `POST` | `/events/:id/join` | any user | Gated to `join` + capacity. |
 | `DELETE` | `/events/:id/join` | any user | Gated to `join`. |
 | `GET` | `/events/:id/players` | any user | Joined players. |
+| `DELETE` | `/events/:id/players/:userId` | organizer | **NEW** — remove a player from the event. `join` only. See §8.3. |
 | `POST` | `/events/:id/teams/generate` | organizer | **NEW** — create empty teams + the fixture list from `duration`. `preparation` only. See §11. |
 | `GET` | `/events/:id/teams` | any user | **NEW** — the event's teams, players populated. |
 | `PATCH` | `/events/:id/teams/:teamId` | organizer | **NEW** — assign/rename one team. `preparation` only. |
@@ -505,6 +506,37 @@ Only while `status == 'join'`. Once the organizer moves the event to `preparatio
 
 ---
 
+### 8.3 `DELETE /events/:id/players/:userId` — organizer removes someone
+
+```http
+DELETE /events/6a7055f42e55b9cdbe427eb4/players/6a697843f720782b1d747e1e
+Authorization: Bearer <accessToken>
+```
+
+Organizer-only. The mirror of §8.2, with the caller and the subject
+separated: **`:userId` is the player being removed, and the organizer comes
+from the token.** There is no way to act as another organizer.
+
+- **`join` only.** Past that, teams and fixtures reference the roster, so
+  pulling a player out would leave a team short and the fixture list wrong
+  with no repair step. `400` otherwise — reopen registration first
+  (`preparation → join`, see §3.1), remove, then advance again.
+- The roster row is **cancelled, not deleted**, exactly like self-leave, so
+  it reactivates if that player rejoins.
+- `joinedCount` is decremented, guarded so a double-removal cannot drive it
+  negative.
+
+| Code | When |
+|---|---|
+| `400` | Event is past `join` |
+| `403` | Caller is not the organizer |
+| `404` | Unknown event, **or** that user has not joined |
+
+> Use §8.2 (`DELETE /events/:id/join`) for a player leaving of their own
+> accord — that one needs no organizer rights and takes no `:userId`.
+
+---
+
 ## 9. Not built yet
 
 Do **not** design screens against these — the fields exist but nothing fills them.
@@ -516,12 +548,15 @@ Do **not** design screens against these — the fields exist but nothing fills t
 | **Team chat messaging** | The rooms exist and archive on `done`, but there is no send/read endpoint yet — `EventTeamChat` is a room record only. |
 | **Ownership transfer / group delete** | Still missing, so a group owner cannot leave their own group. |
 | **Tournaments, challenges** | Not built (parent spec §6, §10). |
+| **Event-level "make organizer"** | Not built. "Organizer" is *derived* per request — the event's `createdBy`, or an approved `owner`/`admin` of the owning group. There are no per-event roles to grant, so promoting someone for a single event needs a schema change first. |
 
 ---
 
 ## 10. Gotchas checklist
 
 - [ ] **`status: "open"` and `"full"` are gone.** Match `"join"`, and use `isFull` for capacity.
+- [ ] **Removing a player is `join`-only.** `DELETE /events/:id/players/:userId` `400`s past that — reopen registration first (§8.3). Don't show the action on a later stage.
+- [ ] **Two different delete routes.** `/join` = the caller leaves; `/players/:userId` = the organizer removes someone. Wiring the organizer button to `/join` removes the organizer.
 - [ ] **`preparation → playing` now 409s.** Go `preparation → ready_to_play → playing`. This breaks any existing "start match" button.
 - [ ] Handle **`ready_to_play`** in every `switch` on `status` and in the `?status=` filter — an unhandled sixth value is the likely crash.
 - [ ] **Shuffling is refused in `ready_to_play`** (`400`). Build the "teams are final" screen read-only, and use `ready_to_play → preparation` if the user needs to change them.

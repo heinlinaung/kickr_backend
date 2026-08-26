@@ -136,9 +136,12 @@ const LEGAL: ReadonlyArray<[EventStatus, EventStatus]> = [
       **Done.** `listMembers` is gated by the same approved-membership
       check, which also closes the access-gate half of the email leak.
 - [ ] **Event-level "Make organizer"** — does not exist.
-- [ ] **Admin "Remove from event"** — does not exist. `DELETE
-      /events/:id/join` is *self*-leave only, so an organizer cannot
-      remove a player.
+- [x] **Admin "Remove from event"** — **DONE 2026-08-26.**
+      `DELETE /events/:id/players/:userId`, organizer-gated and `join`-only.
+      Cancels the roster row rather than deleting it (so it reactivates on
+      rejoin) and decrements `joinedCount`. Past `join` it `400`s: teams and
+      fixtures reference the roster, so the organizer reopens registration
+      (`preparation → join`) first. Self-leave stays a separate route.
 
 ## 🔵 Know this, but no action needed
 
@@ -905,7 +908,7 @@ player counts.
 | Rate event | ✓ | ✓ | ✓ | ⏭️ **SKIPPED** |
 | View event summary | Limited | Limited | ✓ | ❌ no "limited" variant |
 | Make organizer | — | — | ✓ | ❌ not built |
-| Remove from event | — | — | ✓ | ❌ not built |
+| Remove from event | — | — | ✓ | ✅ `join` only |
 
 `* Member and Referee can only *view* the Ready to Play state (own team +
 waiting message); only Admin/Owner can trigger the transition.`
@@ -917,9 +920,11 @@ waiting message); only Admin/Owner can trigger the transition.`
 - **`Built?` column added**, so a row cannot be read as available when
   nothing backs it.
 - **`Make organizer` and `Remove from event` added** — described in §1
-  (Join) as per-member menu actions but absent from this table, and absent
-  from the code. `DELETE /events/:id/join` is *self*-leave only, so an
-  organizer currently cannot remove a player from an event.
+  (Join) as per-member menu actions but absent from this table.
+  `Remove from event` is now **built**
+  (`DELETE /events/:id/players/:userId`, organizer-gated, `join` only).
+  `Make organizer` is still absent from the code and needs a per-event role
+  model before it can exist.
 - **`View event summary`**: there is no reduced-payload variant.
   `GET /events/:id` returns the same body to everyone, so "Limited" is a
   client-side choice, not a server guarantee.

@@ -291,6 +291,39 @@ export class EventsController {
     return this.eventsService.listPlayers(id);
   }
 
+  /**
+   * Note the two ids: `:id` is the event, `:userId` is the player being
+   * removed. The organizer is taken from the token, never from the path.
+   */
+  @Delete(':id/players/:userId')
+  @ApiOperation({
+    summary: 'Remove a player from the event (organizer)',
+    description:
+      'Organizer-only, and only while the event is in `join` — past that ' +
+      'teams and fixtures reference the roster, so reopen registration ' +
+      '(preparation -> join) before removing anyone. The roster row is ' +
+      'cancelled rather than deleted, so it reactivates if they rejoin, and ' +
+      '`joinedCount` is decremented. Use DELETE /events/:id/join for the ' +
+      'caller leaving of their own accord.',
+  })
+  @ApiResponse({ status: 400, description: 'Event is past `join`' })
+  @ApiResponse({ status: 403, description: 'Caller is not the organizer' })
+  @ApiResponse({
+    status: 404,
+    description: 'Unknown event, or that user has not joined',
+  })
+  removePlayer(
+    @Param('id') id: string,
+    @Param('userId') targetUserId: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.eventsService.removePlayer(
+      id,
+      user._id.toString(),
+      targetUserId,
+    );
+  }
+
   // --- Teams & fixtures (spec §4.3) ---------------------------------------
 
   @Post(':id/teams/generate')

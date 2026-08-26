@@ -745,6 +745,58 @@ export class EventsService {
   }
 
   /**
+   * Organizer removes another player from the event.
+   *
+   * The mirror of `leave`, with the caller and the subject separated: the
+   * organizer is authorised from `requesterId`, and the roster row is found by
+   * `targetUserId`. Conflating the two would remove the organizer instead of
+   * the player they picked, so there is a test pinning which id is queried.
+   *
+   * Gated to `join`, exactly like self-leave. Past that point teams and
+   * fixtures reference the roster, and pulling a player out from under them
+   * would leave a team short and the fixture list wrong with no repair step.
+   * An organizer who needs to remove someone later can reopen registration
+   * first (`preparation -> join`), which the transition table already allows.
+   *
+   * Cancels rather than deletes, matching `leave`, so the row can be
+   * reactivated if the player rejoins.
+   */
+  async removePlayer(
+    eventId: string,
+    requesterId: string,
+    targetUserId: string,
+  ) {
+    const event = await this.assertOrganizer(eventId, requesterId);
+
+    if (!canLeave(event.status)) {
+      throw new BadRequestException(
+        'Registration has closed for this event; reopen it before removing players',
+      );
+    }
+
+    const player = await this.playerModel.findOne({
+      eventId: new Types.ObjectId(eventId),
+      userId: new Types.ObjectId(targetUserId),
+      status: 'joined',
+    });
+    if (!player) {
+      throw new NotFoundException('That user has not joined this event');
+    }
+
+    player.status = 'cancelled';
+    await player.save();
+
+    // Same guarded decrement as `leave`: the $gt keeps a double-removal from
+    // driving the count negative.
+    await this.eventModel.findOneAndUpdate(
+      { _id: eventId, status: 'join', joinedCount: { $gt: 0 } },
+      { $inc: { joinedCount: -1 } },
+    );
+
+    return { message: 'Player removed from event' };
+  }
+
+  /**
    * Advance the lifecycle. Organizer-gated and validated against the pure
    * transition table — every rejection path is exercised in the unit tests.
    */
