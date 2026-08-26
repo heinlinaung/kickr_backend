@@ -135,7 +135,6 @@ const LEGAL: ReadonlyArray<[EventStatus, EventStatus]> = [
 - [x] **Private group hides its member listing from non-members.**
       **Done.** `listMembers` is gated by the same approved-membership
       check, which also closes the access-gate half of the email leak.
-- [ ] **Event-level "Make organizer"** — does not exist.
 - [x] **Admin "Remove from event"** — **DONE 2026-08-26.**
       `DELETE /events/:id/players/:userId`, organizer-gated and `join`-only.
       Cancels the roster row rather than deleting it (so it reactivates on
