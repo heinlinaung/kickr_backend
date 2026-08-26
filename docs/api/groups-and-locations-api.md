@@ -309,13 +309,26 @@ Validation rules to enforce **client-side** so users get instant feedback:
 {
   "_id": "6a6b21217d15afe5f7856044",
   "groupId": "6a6b21217d15afe5f7856043",
-  "userId": { "_id": "...", "name": "heinlinaung.dev", "email": "..." },
+  "userId": {
+    "_id": "...",
+    "name": "heinlinaung.dev",
+    "username": "heinla",
+    "displayName": "Hein",
+    "profileImage": "https://ik.imagekit.io/.../profiles/....jpg"
+  },
   "role": "owner",
   "level": 1,
   "status": "approved",
   "joinedAt": "2026-07-30T10:02:09.384Z"
 }
 ```
+
+> **Changed 2026-08-26: `userId.email` is no longer returned.** This route is
+> open to any authenticated caller, so returning the address let anyone
+> enumerate the email of every member of every group. `username`,
+> `displayName` and `profileImage` are populated instead, which is enough to
+> render a member row. A build reading `userId.email` here gets `undefined` —
+> there is no replacement, by design.
 
 - `role`: `owner` | `admin` | `captain` | `vice-captain` | `referee` | `member`
 - `level`: `1` | `2` | `3` — seniority within the group (default `1`; `3` is highest)

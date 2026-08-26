@@ -939,4 +939,31 @@ describe('GroupsService', () => {
       );
     });
   });
+
+  describe('listMembers', () => {
+    it('never populates email into the member list', async () => {
+      // This route is reachable by any authenticated user, so a populated
+      // email would hand every member's address to an outsider. User search
+      // deliberately never returns one; this must not either.
+      const chain = q([]);
+      memberModel.find.mockReturnValue(chain);
+
+      await service.listMembers(GROUP_ID);
+
+      const fields = chain.populate.mock.calls[0][1] as string;
+      expect(fields.split(' ')).not.toContain('email');
+      // Still enough to render a member row.
+      expect(fields.split(' ')).toContain('name');
+      expect(fields.split(' ')).toContain('profileImage');
+    });
+
+    it('returns only approved members', async () => {
+      const chain = q([]);
+      memberModel.find.mockReturnValue(chain);
+
+      await service.listMembers(GROUP_ID);
+
+      expect(memberModel.find.mock.calls[0][0].status).toBe('approved');
+    });
+  });
 });

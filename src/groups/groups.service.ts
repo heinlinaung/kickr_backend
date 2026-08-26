@@ -303,10 +303,23 @@ export class GroupsService {
   // methods. Rule text is stored verbatim (no count or length cap), so
   // newlines inside a rule round-trip unchanged.
 
+  /**
+   * The group's approved members, as display cards.
+   *
+   * `email` is deliberately NOT populated. This route is open to any
+   * authenticated caller — there is no membership check — so populating the
+   * address would let anyone enumerate the email of every member of every
+   * group. `UsersService.search` refuses to return an email for the same
+   * reason; this is the same exposure by a different door.
+   *
+   * `InvitationsService.listPending` still populates it, and is left as-is:
+   * that one is `assertOwnerOrAdmin`-gated, and an owner vetting a join
+   * request has a reason to identify the requester.
+   */
   async listMembers(groupId: string) {
     return this.memberModel
       .find({ groupId: new Types.ObjectId(groupId), status: 'approved' })
-      .populate('userId', 'name email profileImage')
+      .populate('userId', 'name username displayName profileImage')
       .lean();
   }
 

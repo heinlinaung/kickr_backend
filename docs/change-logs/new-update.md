@@ -43,26 +43,34 @@ have **zero** supporting code today — no schema, no endpoint, no service.
 
 Do not design screens against the three above.
 
-## 🔴 Fix in this document — currently wrong or misleading
+## ✅ Fix in this document — DONE 2026-08-26
 
-- [ ] **The `LEGAL` transitions block lists `['preparation', 'playing']`,
+All six items below have been corrected in place. The Event Lifecycle,
+Roles, Role-Based Feature Matrix and Profile API sections now match the
+code.
+
+- [x] **The `LEGAL` transitions block lists `['preparation', 'playing']`,
       which now returns `409`.** It was removed on 2026-08-24 so kick-off
       has to pass through `ready_to_play`. A client following this block
       gets a hard error.
-- [ ] **The `LEGAL` block omits `ready_to_play` entirely**, contradicting
+- [x] **The `LEGAL` block omits `ready_to_play` entirely**, contradicting
       this document's own opening line, which lists six statuses.
-- [ ] **The `LEGAL` block is missing the reverse edge
+- [x] **The `LEGAL` block is missing the reverse edge
       `['ready_to_play', 'preparation']`** — used to send a
       reviewed-but-wrong team set back to be re-shuffled.
-- [ ] **Remove the resolved note** beginning *"If it is persisted as its
+- [x] **Remove the resolved note** beginning *"If it is persisted as its
       own `EventStatus` value…"*. It is persisted as its own value; the
       note shipped.
-- [ ] **Add the Referee role.** Referee is implemented — a group referee
+- [x] **Add the Referee role.** Added as its own section, plus a Referee
+      column in the feature matrix. Referee is implemented — a group referee
       may enter match scores (`SCORER_ROLES = ['owner','admin','referee']`).
       This document has only Member and Admin/Owner, so the feature-matrix
       rows "Add result" and "Edit result" are wrong. The 2026-08-20 doc had
       a Referee flow; this one dropped it.
-- [ ] **Profile API field names match nothing in the code.** This doc asks
+- [x] **Profile API field names match nothing in the code.** Documented
+      side by side with what the endpoint actually returns, plus the two
+      decisions needed before implementing (naming convention, and
+      rename-vs-add for `matchesPlayed`). This doc asks
       for `group_count`, `joined_event_count`, `points`,
       `followers_count`; the code returns `matchesPlayed`, `wins`,
       `mvpCount`, `avgRating` — the last three hardcoded `0`. Only
@@ -93,10 +101,18 @@ const LEGAL: ReadonlyArray<[EventStatus, EventStatus]> = [
       are never searchable."* Either this doc is specifying a behaviour
       change, or it is an error. Confirm before anyone implements it.
 
-## 🔴 Fix in the code — independent of everything else here
+## ✅ Fix in the code — DONE 2026-08-26
 
-- [ ] **`GET /groups/:id/members` has no access gate and returns member
-      email addresses.** Any authenticated user can list any group's
+- [x] **`GET /groups/:id/members` returned member email addresses.**
+      **Fixed:** the populate is now
+      `'name username displayName profileImage'` — no email. Two
+      regression tests pin it. `InvitationsService.listPending` still
+      populates email and was left alone deliberately: it is
+      `assertOwnerOrAdmin`-gated, and an owner vetting a join request has
+      a reason to identify the requester. **The missing access gate is
+      still open** — see the private-group decision below, since "hide the
+      member list from non-members" is the rule that would add it.
+      Original finding: Any authenticated user can list any group's
       members, private or not, and the query populates
       `'name email profileImage'`. This is a live privacy leak and a small
       fix. Notable because `/users/search` goes out of its way never to
@@ -181,8 +197,35 @@ Admins/Owners can:
 - Create, shuffle, and manually edit teams.
 - Start the event.
 - Add/edit match results.
-- Manage payment status for each players.
-- View the final event summary and ratings.
+- Manage payment status for each players. *(⏭️ payments SKIPPED)*
+- View the final event summary and ratings. *(⏭️ ratings SKIPPED)*
+
+### Referee
+
+A group member holding the `referee` role. **Implemented** — this role
+already exists in the backend and was missing from earlier drafts of this
+document.
+
+A referee is not an organizer. Officiating is the *only* thing the role
+grants, and it grants it in exactly one place:
+
+Referees can:
+- Enter and edit match results (`PATCH /events/:id/matches/:matchNumber`).
+- Everything a Member can do.
+
+Referees cannot:
+- Create, shuffle or edit teams.
+- Start the event or change its status.
+- Manage members.
+- Anything else an Admin/Owner can do.
+
+In the code this is `SCORER_ROLES = ['owner', 'admin', 'referee']`, used by
+the score-entry guard and nowhere else — deliberately narrower than the
+organizer check, which covers a dozen other operations a referee has no
+business performing.
+
+The UI should therefore show a referee the **Member** view of every stage
+except Playing, where they get the Admin/Owner result-editing controls.
 
 ------------------------------------------------------------------------
 
@@ -207,23 +250,42 @@ Legal transitions:
 ``` ts
 const LEGAL: ReadonlyArray<[EventStatus, EventStatus]> = [
   ['join', 'preparation'],
-  ['preparation', 'playing'],
-  ['preparation', 'join'],
+  ['preparation', 'ready_to_play'],
+  ['preparation', 'join'],          // reopen registration
+  ['ready_to_play', 'playing'],
+  ['ready_to_play', 'preparation'], // re-shuffle a wrong team set
   ['playing', 'after_match'],
   ['after_match', 'done'],
 ];
 ```
 
-`['preparation', 'join']` is now a legal transition — an Admin/Owner
-can reopen registration directly from Preparation if the roster needs
-to change before teams are finalized.
+Seven edges over six states. Verified against
+`src/events/events.lifecycle.ts` on 2026-08-26: all 36 ordered pairs are
+asserted in `events.lifecycle.spec.ts`, so this table cannot drift from the
+implementation without failing the suite.
 
-> **Note:** `ready_to_play` is documented below as its own stage
-> because the UI, content, and available actions on it are distinct
-> from `preparation`. If it is persisted as its own `EventStatus`
-> value (rather than a UI sub-state reached once teams are confirmed),
-> extend `LEGAL` with `['preparation', 'ready_to_play']` and
-> `['ready_to_play', 'playing']`.
+**Two reverse edges, and no others:**
+
+`['preparation', 'join']` reopens registration — an Admin/Owner can go back
+from Preparation if the roster needs to change before teams are finalized.
+
+`['ready_to_play', 'preparation']` sends a reviewed-but-wrong team set back
+to be re-shuffled. This is safe in a way no later reverse edge would be: no
+score can have been entered yet, so going back cannot discard one. There is
+deliberately **no** `['ready_to_play', 'join']` — reopening registration
+from Ready to Play is two deliberate steps, not one.
+
+> ⚠️ **`['preparation', 'playing']` is NOT legal and returns `409`.**
+> It was removed on 2026-08-24. Kick-off must pass through
+> `ready_to_play`, so any client with a "start match" button on the
+> team-assignment screen needs a release. A stage that can be bypassed is
+> decoration — the roster freeze in Ready to Play only means something if
+> kick-off has to pass through the state that enforces it.
+
+`ready_to_play` **is** persisted as its own `EventStatus` value, not a UI
+sub-state. It gates something the neighbouring states do not: teams are
+built and shuffled in `preparation`, and in `ready_to_play` they are final
+and view-only (`canShuffle` is false there), while scoring is still closed.
 
 ------------------------------------------------------------------------
 
@@ -813,31 +875,45 @@ player counts.
 
 # Role-Based Feature Matrix
 
-  Feature                Member    Admin / Owner
-  --------------------- --------- ---------------
-  View members              ✓            ✓
-  Join / leave              ✓            ✓
-  Add +1 guest              ✓            ✓
-  Add +2 guest              ✓            ✓
-  Approve guest            ---           ✓
-  Reject guest             ---           ✓
-  View guest status         ✓            ✓
-  Create teams             ---           ✓
-  Shuffle teams            ---           ✓
-  Edit teams               ---           ✓
-  Ready to Play             ✓*           ✓
-  View matches              ✓            ✓
-  Create match             ---           ✓
-  Add result               ---           ✓
-  Edit result               ---           ✓
-  View standings            ✓            ✓
-  Manage payments          ---           ✓
-  View payment status       ✓            ✓
-  Rate event                 ✓            ✓
-  View event summary     Limited         ✓
+| Feature | Member | Referee | Admin / Owner | Built? |
+|---|---|---|---|---|
+| View members | ✓ | ✓ | ✓ | ✓ |
+| Join / leave | ✓ | ✓ | ✓ | ✓ |
+| Add +1 / +2 guest | ✓ | ✓ | ✓ | *not verified* |
+| Approve / reject guest | — | — | ✓ | *not verified* |
+| View guest status | ✓ | ✓ | ✓ | *not verified* |
+| Create teams | — | — | ✓ | ✓ |
+| Shuffle teams | — | — | ✓ | ✓ |
+| Edit teams | — | — | ✓ | ✓ |
+| Ready to Play | ✓\* | ✓\* | ✓ | ✓ |
+| View matches | ✓ | ✓ | ✓ | ✓ |
+| Create match | — | — | ✓ | ✓ |
+| **Add result** | — | **✓** | ✓ | ✓ |
+| **Edit result** | — | **✓** | ✓ | ✓ |
+| View standings | ✓ | ✓ | ✓ | ✓ |
+| Manage payments | — | — | ✓ | ⏭️ **SKIPPED** |
+| View payment status | ✓ | ✓ | ✓ | ⏭️ **SKIPPED** |
+| Rate event | ✓ | ✓ | ✓ | ⏭️ **SKIPPED** |
+| View event summary | Limited | Limited | ✓ | ❌ no "limited" variant |
+| Make organizer | — | — | ✓ | ❌ not built |
+| Remove from event | — | — | ✓ | ❌ not built |
 
-`* Member can only *view* the Ready to Play state (own team +
+`* Member and Referee can only *view* the Ready to Play state (own team +
 waiting message); only Admin/Owner can trigger the transition.`
+
+**Changes from the earlier draft of this table:**
+
+- **Referee column added.** It is implemented, and "Add result" / "Edit
+  result" previously read as Admin/Owner-only, which was wrong.
+- **`Built?` column added**, so a row cannot be read as available when
+  nothing backs it.
+- **`Make organizer` and `Remove from event` added** — described in §1
+  (Join) as per-member menu actions but absent from this table, and absent
+  from the code. `DELETE /events/:id/join` is *self*-leave only, so an
+  organizer currently cannot remove a player from an event.
+- **`View event summary`**: there is no reduced-payload variant.
+  `GET /events/:id` returns the same body to everyone, so "Limited" is a
+  client-side choice, not a server guarantee.
 
 ------------------------------------------------------------------------
 
@@ -910,16 +986,53 @@ DONE
 
 # Profile API
 
-The profile API should provide the following statistics:
+> ⚠️ **None of the field names below exist.** The profile endpoint is
+> built, but returns a different set of statistics under different names.
+> Read this section as a target, not as the contract.
 
-  Field                Description
-  --------------------- ----------------------------------------
-  `group_count`          Number of groups associated with the user
-  `joined_event_count`   Number of events joined by the user
-  `points`                User's accumulated points
-  `followers_count`      Number of users following the user
+**Target** (this document):
 
-Example response:
+| Field | Description | Status |
+|---|---|---|
+| `group_count` | Number of groups associated with the user | ❌ not built |
+| `joined_event_count` | Number of events joined by the user | ⚠️ exists as `matchesPlayed` |
+| `points` | User's accumulated points | ❌ not built — no points system anywhere |
+| `followers_count` | Number of users following the user | ⏭️ **SKIPPED** (followers) |
+
+**What `GET /users/:id/profile` actually returns today** under
+`statistics`, from `UsersService.buildStatistics`:
+
+``` json
+{
+  "matchesPlayed": 0,
+  "wins": 0,
+  "mvpCount": 0,
+  "avgRating": 0
+}
+```
+
+Only `matchesPlayed` is real — it counts `EventPlayer` rows with
+`status: 'joined'`, which is the same quantity this document calls
+`joined_event_count`. `wins` and `mvpCount` are hardcoded `0` pending
+after-match results; `avgRating` is hardcoded `0` pending ratings
+(⏭️ skipped).
+
+**Two decisions needed before implementing the target shape:**
+
+1. **Naming convention.** This document uses `snake_case`; every other
+   field in the API is `camelCase` (`joinedCount`, `maxPlayers`,
+   `profileImage`, `matchesPlayed`). Adopting `snake_case` here would make
+   the profile endpoint the only inconsistent one. Recommend
+   `groupCount` / `joinedEventCount` / `points` / `followersCount`.
+2. **Renaming vs adding.** `matchesPlayed` is live and may already be
+   consumed by the app. Renaming it to `joined_event_count` is a breaking
+   change; adding the new field alongside is not. Recommend adding, then
+   removing `matchesPlayed` in a later release.
+
+`points` needs a scoring rule defined before it can be built — nothing in
+this document or the codebase says what earns a point.
+
+**Example response** (target shape, once implemented):
 
 ``` json
 {
@@ -956,14 +1069,53 @@ request rather than creating the relationship immediately.
 Groups can be marked private. Privacy affects *visibility*, not
 *discoverability*:
 
--   A private group **is still searchable** — it can appear in group
-    search results.
--   A private group **hides its event listing** from non-members.
--   A private group **hides its member listing** from non-members.
+| Rule | Current code | Action |
+|---|---|---|
+| A private group **is still searchable** | ❌ **the opposite** — search excludes them | 🟠 **needs a decision** |
+| A private group **hides its event listing** from non-members | ❌ not built — gating is per-event, not per-group | 🟡 build |
+| A private group **hides its member listing** from non-members | ❌ no gate at all | 🔴 fix (see leak below) |
 
 In practice: a non-member can find a private group by search and see
 that it exists, but cannot see its events or members until they join
 (or their join/follow request is accepted, per the group's settings).
+
+## 🟠 "Still searchable" reverses a deliberate decision
+
+`GroupsService.search` filters `{ isPrivate: false }` and is commented
+*"Public discovery: private groups are never searchable."* So a private
+group is currently **invisible** to search, which is the opposite of the
+rule above.
+
+This is not an oversight to patch — it was a choice, and reversing it is a
+product decision with a real consequence: **a private group's name and
+handle become enumerable by anyone.** Substring search means `?q=a` would
+list a large share of all private groups. If that is acceptable because
+the *contents* stay hidden, the change is a one-line filter removal. If it
+is not, this rule should be dropped from the document instead.
+
+**Not implemented either way pending that decision.**
+
+## 🟡 Event listing is gated per-event, not per-group
+
+`EventsService.listByGroup` decides visibility from the **event's**
+`isPublic` flag and never reads the **group's** `isPrivate` flag — it
+selects only `_id` off the group. So a non-member of a private group still
+sees that group's *public* events.
+
+Making this rule true means adding a group-privacy check to that method.
+Note the two flags then interact: decide whether a public event inside a
+private group is visible to non-members. The rule above says no.
+
+## 🔴 Member listing has no gate, and leaks email
+
+`GET /groups/:id/members` has **no membership check** — any authenticated
+user can list any group's members, private or not. Worse, the query
+populates `'name email profileImage'`, so it returns **member email
+addresses**.
+
+This is a live privacy leak independent of the private-group work, and
+notable because `/users/search` deliberately never returns an email. Fixed
+separately — see the change log entry for this doc's checklist.
 
 ------------------------------------------------------------------------
 
