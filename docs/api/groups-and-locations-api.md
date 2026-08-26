@@ -777,7 +777,7 @@ class GroupInvite {
 | `200` / `201` | Success | — |
 | `400` | Validation failure; `message` is a **list** | Show field errors inline |
 | `401` | Missing/expired/wrong-type token (id token instead of access) | Refresh once, else re-login |
-| `403` | Not owner/admin; not the location owner; tried to change the group owner | Hide/disable the action instead |
+| `403` | Not owner/admin; not the location owner; tried to change the group owner; **members/events of a private group you have not joined** (§3.4b) | Hide/disable the action — for the private-group case, show a "request to join" prompt |
 | `404` | Bad or unknown id | "Not found" state |
 | `409` | Duplicate — e.g. `handle` already taken | Ask for a different handle |
 
@@ -788,10 +788,10 @@ class GroupInvite {
 | Screen | Calls |
 |---|---|
 | My groups | `GET /groups` (use `userRole` to gate admin UI) |
-| Group discovery / search | `GET /groups/search?q=` |
+| Group discovery / search | `GET /groups/search?q=` — **includes private groups**; branch on `isPrivate` to show a lock + "Request to join" (§3.4b) |
 | Create group | `POST /locations` (no `groupId` — group doesn't exist yet) → `POST /groups` with `locationIds`; the server adopts them (§2.3) |
 | Group detail — header | `GET /groups/:id` (`logo`, `wallpaper`, `handle`, `country`/`city`; gate admin UI on `userRole` **+ `memberStatus == 'approved'`**) |
-| Group detail — Members tab | `GET /groups/:id/members` |
+| Group detail — Members tab | `GET /groups/:id/members` — **`403` on a private group you have not joined**; render the join prompt instead (§3.4b) |
 | Group detail — rules | `GET /groups/:id` → `rules` (render `\n` — §3.9) |
 | Group detail — map/venues | `GET /groups/:id/locations` (populated) |
 | Group settings — images | `POST /groups/:id/logo`, `POST /groups/:id/wallpaper` |
@@ -827,6 +827,11 @@ class GroupInvite {
 - [ ] Owner's role/level can never be changed (`403`); `owner` isn't an assignable role.
 - [ ] `POST /groups/:id/leave` is self-service for every role **except owner** — hide the action for owners (§3.10). It also cancels a pending join request.
 - [ ] Uploads: field name `file`, images only (JPEG/PNG/WebP), ≤ 10 MB.
+- [ ] **`GET /groups/search` now returns PRIVATE groups.** Read `isPrivate` on each result and show a lock + "Request to join" — do not navigate straight in, the members and events calls will `403`.
+- [ ] **Search returns a reduced card, and `inviteCode` is no longer in it.** Use `GET /groups/:id/qr` for a code.
+- [ ] **Search with an empty `q` returns `[]`**, not an arbitrary 20 groups.
+- [ ] **`GET /groups/:id/members` no longer returns `userId.email`.** Reading it gets `undefined`; there is no replacement, by design.
+- [ ] A **pending** join request does not unlock a private group's members or events — wait for `memberStatus: "approved"`.
 
 ---
 
