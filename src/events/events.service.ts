@@ -357,7 +357,10 @@ export class EventsService {
       throw new BadRequestException('Invalid group id');
     }
 
-    const group = await this.groupModel.findById(groupId).select('_id').lean();
+    const group = await this.groupModel
+      .findById(groupId)
+      .select('_id isPrivate')
+      .lean();
     if (!group) throw new NotFoundException('Group not found');
 
     const member = await this.memberModel.findOne({
@@ -366,9 +369,24 @@ export class EventsService {
       status: 'approved',
     });
 
+    // A private group hides its whole schedule, not just its private events:
+    // being able to see that the group exists (it is searchable) must not also
+    // reveal when and where it plays. Approval is the gate — a pending request
+    // is not membership.
+    //
+    // 403 rather than an empty list on purpose. The caller CAN see this group
+    // in search, so the honest answer is "join to see this", which also lets
+    // the client render a join prompt instead of a misleading "no events yet".
+    if (group.isPrivate && !member) {
+      throw new ForbiddenException(
+        'This group is private — join it to see its events',
+      );
+    }
+
     const filter: Record<string, unknown> = {
       groupId: new Types.ObjectId(groupId),
     };
+    // A public group still hides its individually-private events.
     if (!member) filter.isPublic = true;
 
     if (status !== undefined) {
@@ -724,6 +742,58 @@ export class EventsService {
     );
 
     return { message: 'Left event successfully' };
+  }
+
+  /**
+   * Organizer removes another player from the event.
+   *
+   * The mirror of `leave`, with the caller and the subject separated: the
+   * organizer is authorised from `requesterId`, and the roster row is found by
+   * `targetUserId`. Conflating the two would remove the organizer instead of
+   * the player they picked, so there is a test pinning which id is queried.
+   *
+   * Gated to `join`, exactly like self-leave. Past that point teams and
+   * fixtures reference the roster, and pulling a player out from under them
+   * would leave a team short and the fixture list wrong with no repair step.
+   * An organizer who needs to remove someone later can reopen registration
+   * first (`preparation -> join`), which the transition table already allows.
+   *
+   * Cancels rather than deletes, matching `leave`, so the row can be
+   * reactivated if the player rejoins.
+   */
+  async removePlayer(
+    eventId: string,
+    requesterId: string,
+    targetUserId: string,
+  ) {
+    const event = await this.assertOrganizer(eventId, requesterId);
+
+    if (!canLeave(event.status)) {
+      throw new BadRequestException(
+        'Registration has closed for this event; reopen it before removing players',
+      );
+    }
+
+    const player = await this.playerModel.findOne({
+      eventId: new Types.ObjectId(eventId),
+      userId: new Types.ObjectId(targetUserId),
+      status: 'joined',
+    });
+    if (!player) {
+      throw new NotFoundException('That user has not joined this event');
+    }
+
+    player.status = 'cancelled';
+    await player.save();
+
+    // Same guarded decrement as `leave`: the $gt keeps a double-removal from
+    // driving the count negative.
+    await this.eventModel.findOneAndUpdate(
+      { _id: eventId, status: 'join', joinedCount: { $gt: 0 } },
+      { $inc: { joinedCount: -1 } },
+    );
+
+    return { message: 'Player removed from event' };
   }
 
   /**

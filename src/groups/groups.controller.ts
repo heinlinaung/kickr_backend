@@ -12,7 +12,7 @@ import {
   UploadedFile,
   BadRequestException,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -127,8 +127,15 @@ export class GroupsController {
   }
 
   @Get(':id/members')
-  listMembers(@Param('id') id: string) {
-    return this.groupsService.listMembers(id);
+  @ApiOperation({
+    summary: "The group's approved members",
+    description:
+      'A private group returns 403 unless the caller is an approved member — ' +
+      'a pending join request is not enough. Public groups are open to any ' +
+      'authenticated caller. Member email addresses are never returned.',
+  })
+  listMembers(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.groupsService.listMembers(id, user._id.toString());
   }
 
   @Delete(':id/members/:userId')

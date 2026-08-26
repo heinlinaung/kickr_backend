@@ -22,6 +22,27 @@ import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import { ImageKitService } from '../common/upload/imagekit.service';
 import { LocationsService } from '../locations/locations.service';
 
+/**
+ * Fields returned by group search — a discovery card, nothing more.
+ *
+ * Deliberately excludes `inviteCode`/`inviteCodeExpiry`: search now includes
+ * private groups, and a bulk-readable invite code would let anyone mass-request
+ * to join every private group they can find. `GET /groups/:id/qr` remains the
+ * one place a code is handed out, and that needs the group id already.
+ */
+const GROUP_CARD_FIELDS = [
+  '_id',
+  'name',
+  'handle',
+  'description',
+  'logo',
+  'sportType',
+  'country',
+  'city',
+  'isPrivate',
+  'maxPlayers',
+] as const;
+
 /** Escapes user input so it can be embedded in a RegExp literally. */
 function escapeRegex(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -242,13 +263,65 @@ export class GroupsService {
     return group;
   }
 
-  /** Public discovery: private groups are never searchable. */
+  /**
+   * Discovery over ALL groups, private ones included.
+   *
+   * Privacy is enforced on a group's **contents**, not on its existence: a
+   * non-member may find a private group and see that it exists, then has to
+   * join before they can see its members (`listMembers`) or its events
+   * (`EventsService.listByGroup`). Both of those 403 for a non-member.
+   *
+   * Two consequences of admitting private groups here, both handled:
+   *  - **Projection, not the whole document.** The old query had none, so it
+   *    returned `inviteCode` for every match. Handing those out in bulk would
+   *    let anyone mass-request to join every private group they can find.
+   *  - **An empty query returns `[]`.** An empty regex matches everything,
+   *    which was survivable while only public groups came back; with private
+   *    ones included it is an enumeration tool. Matches the behaviour of
+   *    `/users/search` and `/events/search`.
+   *
+   * `isPrivate` IS returned, so the client can render a lock badge and a
+   * "request to join" action rather than navigating into a group whose
+   * contents will refuse it.
+   */
   async search(q: string) {
-    const rx = new RegExp(escapeRegex(q ?? ''), 'i');
+    const term = (q ?? '').trim();
+    if (!term) return [];
+
+    const rx = new RegExp(escapeRegex(term), 'i');
     return this.groupModel
-      .find({ isPrivate: false, $or: [{ name: rx }, { handle: rx }] })
+      .find({ $or: [{ name: rx }, { handle: rx }] })
+      .select(GROUP_CARD_FIELDS.join(' '))
       .limit(20)
       .lean();
+  }
+
+  /**
+   * Throws unless the caller may see a private group's contents.
+   *
+   * Public groups are open, as before — only private ones are gated. The gate
+   * is **approved** membership: a pending join request is not enough, matching
+   * how a group's private events already behave.
+   *
+   * An unknown group is a `404` and a forbidden one a `403`, deliberately
+   * distinct. A private group's *existence* is not a secret — it is
+   * discoverable through search — so there is nothing to protect by
+   * pretending it is missing.
+   */
+  private async assertCanSeeGroupContents(groupId: string, userId: string) {
+    const group = await this.groupModel
+      .findById(groupId)
+      .select('isPrivate')
+      .lean();
+    if (!group) throw new NotFoundException('Group not found');
+    if (!group.isPrivate) return;
+
+    const role = await this.getMemberRole(groupId, userId);
+    if (!role) {
+      throw new ForbiddenException(
+        'This group is private — join it to see its members and events',
+      );
+    }
   }
 
   /**
@@ -303,10 +376,25 @@ export class GroupsService {
   // methods. Rule text is stored verbatim (no count or length cap), so
   // newlines inside a rule round-trip unchanged.
 
-  async listMembers(groupId: string) {
+  /**
+   * The group's approved members, as display cards.
+   *
+   * `email` is deliberately NOT populated. This route is open to any
+   * authenticated caller — there is no membership check — so populating the
+   * address would let anyone enumerate the email of every member of every
+   * group. `UsersService.search` refuses to return an email for the same
+   * reason; this is the same exposure by a different door.
+   *
+   * `InvitationsService.listPending` still populates it, and is left as-is:
+   * that one is `assertOwnerOrAdmin`-gated, and an owner vetting a join
+   * request has a reason to identify the requester.
+   */
+  async listMembers(groupId: string, requesterId: string) {
+    await this.assertCanSeeGroupContents(groupId, requesterId);
+
     return this.memberModel
       .find({ groupId: new Types.ObjectId(groupId), status: 'approved' })
-      .populate('userId', 'name email profileImage')
+      .populate('userId', 'name username displayName profileImage')
       .lean();
   }
 

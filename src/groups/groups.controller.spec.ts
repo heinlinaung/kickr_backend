@@ -148,9 +148,11 @@ describe('GroupsController', () => {
       expect(svc.leave).toHaveBeenCalledWith('g1', 'requester-1');
     });
 
-    it('GET /groups/:id/members', async () => {
-      await controller.listMembers('g1');
-      expect(svc.listMembers).toHaveBeenCalledWith('g1');
+    it('GET /groups/:id/members passes the caller for the privacy gate', async () => {
+      // The service needs the caller to decide whether a private group's
+      // member list is visible; forgetting it would throw on user._id.
+      await controller.listMembers('g1', user);
+      expect(svc.listMembers).toHaveBeenCalledWith('g1', 'requester-1');
     });
 
     it('DELETE /groups/:id/members/:userId passes requester then target', async () => {

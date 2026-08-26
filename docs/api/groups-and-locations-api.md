@@ -253,7 +253,7 @@ The same adoption happens on `POST /groups/:id/locations` when you attach one of
 |---|---|---|---|
 | `GET` | `/groups` | member | Caller's groups; each item includes **`userRole`**. Only approved memberships, so no `memberStatus`. |
 | `POST` | `/groups` | any | Creator becomes `owner`. Accepts `rules`, `country`, `city`. |
-| `GET` | `/groups/search?q=` | any | Public groups only (`isPrivate: false`), matches name **or** handle, max 20. |
+| `GET` | `/groups/search?q=` | any | **CHANGED** — now includes **private** groups. Matches name **or** handle, max 20, returns a reduced card (no `inviteCode`). Empty `q` → `[]`. See §3.4b. |
 | `GET` | `/groups/:id` | any | Group detail **+ `userRole` / `memberStatus`** for the caller. |
 | `PATCH` | `/groups/:id` | owner/admin | Update name, description, maxPlayers, sportType, handle, rules, isPrivate, **country, city**. |
 | `POST` | `/groups/:id/logo` | owner/admin | multipart → ImageKit. |
@@ -309,13 +309,26 @@ Validation rules to enforce **client-side** so users get instant feedback:
 {
   "_id": "6a6b21217d15afe5f7856044",
   "groupId": "6a6b21217d15afe5f7856043",
-  "userId": { "_id": "...", "name": "heinlinaung.dev", "email": "..." },
+  "userId": {
+    "_id": "...",
+    "name": "heinlinaung.dev",
+    "username": "heinla",
+    "displayName": "Hein",
+    "profileImage": "https://ik.imagekit.io/.../profiles/....jpg"
+  },
   "role": "owner",
   "level": 1,
   "status": "approved",
   "joinedAt": "2026-07-30T10:02:09.384Z"
 }
 ```
+
+> **Changed 2026-08-26: `userId.email` is no longer returned.** This route is
+> open to any authenticated caller, so returning the address let anyone
+> enumerate the email of every member of every group. `username`,
+> `displayName` and `profileImage` are populated instead, which is enough to
+> render a member row. A build reading `userId.email` here gets `undefined` —
+> there is no replacement, by design.
 
 - `role`: `owner` | `admin` | `captain` | `vice-captain` | `referee` | `member`
 - `level`: `1` | `2` | `3` — seniority within the group (default `1`; `3` is highest)
@@ -355,6 +368,53 @@ Group detail includes the caller's membership, so you don't need a second call t
 | `null` | `null` | Not a member at all — show Join / Request. |
 
 > ⚠️ **You must check `memberStatus`, not just `userRole`.** A pending requester already has `userRole: "member"`, so treating a non-null role as "is a member" will show group content to someone who was never approved, and every member-only call will `403`.
+
+### 3.4b Private groups — discoverable, not readable
+
+> **Changed 2026-08-26.** Group privacy used to affect exactly one thing:
+> `isPrivate` hid a group from search and nothing else. It is now the reverse —
+> a private group **is** searchable, and its **contents** are gated instead.
+
+| | Public group | Private group |
+|---|---|---|
+| Appears in `GET /groups/search` | ✅ | ✅ **(new)** |
+| `GET /groups/:id` (detail) | ✅ anyone | ✅ anyone |
+| `GET /groups/:id/members` | ✅ anyone | 🔒 **403** unless approved member |
+| `GET /events/group/:groupId` | public events to non-members | 🔒 **403** unless approved member |
+
+The intent: a non-member can **find** a private group and see that it exists,
+then has to join before seeing who is in it or when it plays.
+
+**Three breaking changes for clients:**
+
+1. **`GET /groups/search` now returns private groups.** Read the `isPrivate`
+   flag on each result and render a lock badge plus a "Request to join" action
+   — navigating straight in will `403` on the members and events calls.
+2. **Search returns a reduced card, not the whole group.** Fields:
+   `_id`, `name`, `handle`, `description`, `logo`, `sportType`, `country`,
+   `city`, `isPrivate`, `maxPlayers`. Notably **`inviteCode` is gone** — it was
+   previously returned for every search hit, which with private groups included
+   would let anyone mass-request to join. Use `GET /groups/:id/qr` for a code.
+3. **`GET /groups/:id/members` and `GET /events/group/:groupId` can now
+   `403`.** They previously never did for a readable group id.
+
+**`403`, not an empty list.** A private group's existence is not secret — you
+just found it in search — so the honest answer is "join to see this". It also
+lets you render a join prompt instead of a misleading "no events yet".
+
+**Approval is the gate.** A *pending* join request is not enough, matching how
+a public group's individually-private events already behave. `403` until
+`memberStatus` is `"approved"`.
+
+**Empty `q` now returns `[]`.** An empty regex matched every group; harmless
+while only public ones came back, an enumeration tool now. Consistent with
+`/users/search` and `/events/search`.
+
+**Not changed:** `GET /groups/:id` still returns full detail for a private
+group to anyone with the id, and so do `/locations` and `/qr`. Only the member
+list and the event list are gated. If a private group's venues or invite code
+should also be hidden, that is a further decision — say so and it is a small
+addition.
 
 ### 3.5 Group QR / invite link
 
@@ -717,7 +777,7 @@ class GroupInvite {
 | `200` / `201` | Success | — |
 | `400` | Validation failure; `message` is a **list** | Show field errors inline |
 | `401` | Missing/expired/wrong-type token (id token instead of access) | Refresh once, else re-login |
-| `403` | Not owner/admin; not the location owner; tried to change the group owner | Hide/disable the action instead |
+| `403` | Not owner/admin; not the location owner; tried to change the group owner; **members/events of a private group you have not joined** (§3.4b) | Hide/disable the action — for the private-group case, show a "request to join" prompt |
 | `404` | Bad or unknown id | "Not found" state |
 | `409` | Duplicate — e.g. `handle` already taken | Ask for a different handle |
 
@@ -728,10 +788,10 @@ class GroupInvite {
 | Screen | Calls |
 |---|---|
 | My groups | `GET /groups` (use `userRole` to gate admin UI) |
-| Group discovery / search | `GET /groups/search?q=` |
+| Group discovery / search | `GET /groups/search?q=` — **includes private groups**; branch on `isPrivate` to show a lock + "Request to join" (§3.4b) |
 | Create group | `POST /locations` (no `groupId` — group doesn't exist yet) → `POST /groups` with `locationIds`; the server adopts them (§2.3) |
 | Group detail — header | `GET /groups/:id` (`logo`, `wallpaper`, `handle`, `country`/`city`; gate admin UI on `userRole` **+ `memberStatus == 'approved'`**) |
-| Group detail — Members tab | `GET /groups/:id/members` |
+| Group detail — Members tab | `GET /groups/:id/members` — **`403` on a private group you have not joined**; render the join prompt instead (§3.4b) |
 | Group detail — rules | `GET /groups/:id` → `rules` (render `\n` — §3.9) |
 | Group detail — map/venues | `GET /groups/:id/locations` (populated) |
 | Group settings — images | `POST /groups/:id/logo`, `POST /groups/:id/wallpaper` |
@@ -767,6 +827,11 @@ class GroupInvite {
 - [ ] Owner's role/level can never be changed (`403`); `owner` isn't an assignable role.
 - [ ] `POST /groups/:id/leave` is self-service for every role **except owner** — hide the action for owners (§3.10). It also cancels a pending join request.
 - [ ] Uploads: field name `file`, images only (JPEG/PNG/WebP), ≤ 10 MB.
+- [ ] **`GET /groups/search` now returns PRIVATE groups.** Read `isPrivate` on each result and show a lock + "Request to join" — do not navigate straight in, the members and events calls will `403`.
+- [ ] **Search returns a reduced card, and `inviteCode` is no longer in it.** Use `GET /groups/:id/qr` for a code.
+- [ ] **Search with an empty `q` returns `[]`**, not an arbitrary 20 groups.
+- [ ] **`GET /groups/:id/members` no longer returns `userId.email`.** Reading it gets `undefined`; there is no replacement, by design.
+- [ ] A **pending** join request does not unlock a private group's members or events — wait for `memberStatus: "approved"`.
 
 ---
 

@@ -12,6 +12,19 @@ Integration guides written against the **live** API — every request/response s
 
 **Live reference while the server is running:** Swagger UI at `/api-docs`, OpenAPI JSON at `/api-docs-json`.
 
+## ⚠️ Breaking changes — 2026-08-26
+
+**Group privacy is now enforced on contents instead of on discovery.** `isPrivate` previously did exactly one thing — hide a group from search. That is inverted:
+
+- **`GET /groups/search` now returns private groups.** Read `isPrivate` per result and show a lock + "Request to join"; navigating in will `403`.
+- **Search returns a reduced card, and `inviteCode` is no longer in it.** It used to be returned for every hit.
+- **`GET /groups/:id/members` and `GET /events/group/:groupId` now `403`** for a private group unless the caller is an **approved** member (pending is not enough). Neither ever `403`'d before.
+- **`GET /groups/search` with an empty `q` returns `[]`** instead of an arbitrary 20 groups.
+
+Also: **`GET /groups/:id/members` no longer returns member email addresses.** It was ungated, so anyone could harvest the email of every member of every group. `username`/`displayName`/`profileImage` are returned instead; a build reading `userId.email` gets `undefined` by design.
+
+Detail in [groups §3.4b](./groups-and-locations-api.md).
+
 ## ⚠️ Breaking change — 2026-08-20
 
 **New `ready_to_play` lifecycle stage**, between `preparation` and `playing`:

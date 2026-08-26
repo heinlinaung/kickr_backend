@@ -293,6 +293,91 @@ describe('EventsService — lifecycle', () => {
     });
   });
 
+  describe('removePlayer — organizer removes someone else', () => {
+    const TARGET = '507f191e810c19729de860ff';
+
+    /** An organizer-owned event sitting in `join`. */
+    const joinableEvent = () =>
+      eventModel.findById.mockResolvedValue(eventDoc({ status: 'join' }));
+
+    const rosterRow = () => {
+      const row = { status: 'joined', save: jest.fn().mockResolvedValue({}) };
+      playerModel.findOne.mockResolvedValue(row);
+      return row;
+    };
+
+    it('cancels the target row and decrements the count', async () => {
+      joinableEvent();
+      const row = rosterRow();
+
+      await service.removePlayer(EVENT_ID, CREATOR, TARGET);
+
+      // Cancelled, not deleted — same as self-leave, so the row can be
+      // reactivated if they rejoin.
+      expect(row.status).toBe('cancelled');
+      expect(row.save).toHaveBeenCalled();
+
+      const [filter, update] = eventModel.findOneAndUpdate.mock.calls[0];
+      expect(filter.joinedCount).toEqual({ $gt: 0 });
+      expect(update).toEqual({ $inc: { joinedCount: -1 } });
+    });
+
+    it('looks the target up by the TARGET id, not the caller', async () => {
+      // The bug this guards: passing requesterId through and removing the
+      // organizer instead of the player they clicked.
+      joinableEvent();
+      rosterRow();
+
+      await service.removePlayer(EVENT_ID, CREATOR, TARGET);
+
+      const q = playerModel.findOne.mock.calls[0][0];
+      expect(q.userId.toString()).toBe(TARGET);
+      expect(q.userId.toString()).not.toBe(CREATOR);
+      expect(q.status).toBe('joined');
+    });
+
+    it('403s a non-organizer before touching the roster', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc({ status: 'join' }));
+
+      await expect(
+        service.removePlayer(EVENT_ID, STRANGER, TARGET),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(playerModel.findOne).not.toHaveBeenCalled();
+    });
+
+    it('404s when the target never joined', async () => {
+      joinableEvent();
+      playerModel.findOne.mockResolvedValue(null);
+
+      await expect(
+        service.removePlayer(EVENT_ID, CREATOR, TARGET),
+      ).rejects.toBeInstanceOf(NotFoundException);
+      expect(eventModel.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it.each(['preparation', 'ready_to_play', 'playing', 'after_match', 'done'])(
+      'refuses removal once the event is %s',
+      async (status) => {
+        // Same gate as self-leave: past `join`, teams and fixtures reference
+        // the roster, so a removal here would leave them inconsistent. The
+        // organizer can reopen registration (preparation -> join) first.
+        eventModel.findById.mockResolvedValue(eventDoc({ status }));
+
+        await expect(
+          service.removePlayer(EVENT_ID, CREATOR, TARGET),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expect(playerModel.findOne).not.toHaveBeenCalled();
+      },
+    );
+
+    it('404s an unknown event', async () => {
+      eventModel.findById.mockResolvedValue(null);
+      await expect(
+        service.removePlayer(EVENT_ID, CREATOR, TARGET),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
   describe('listByGroup', () => {
     const lean = (rows: any[]) => ({
       sort: () => ({ lean: () => Promise.resolve(rows) }),
@@ -328,6 +413,51 @@ describe('EventsService — lifecycle', () => {
       memberModel.findOne.mockResolvedValue(null);
       await service.listByGroup(GROUP_ID, STRANGER);
       expect(memberModel.findOne.mock.calls[0][0].status).toBe('approved');
+    });
+
+    describe('when the GROUP itself is private', () => {
+      const privateGroup = () => {
+        groupModel.findById = jest.fn().mockReturnValue({
+          select: () => ({
+            lean: () =>
+              Promise.resolve({ _id: GROUP_ID, isPrivate: true }),
+          }),
+        });
+      };
+
+      it('403s a non-member instead of showing public events', async () => {
+        // A private group hides its whole schedule. It is discoverable by
+        // search, so seeing it exists must not also reveal when it plays.
+        privateGroup();
+        memberModel.findOne.mockResolvedValue(null);
+
+        await expect(
+          service.listByGroup(GROUP_ID, STRANGER),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+        // The gate must refuse before querying events at all.
+        expect(eventModel.find).not.toHaveBeenCalled();
+      });
+
+      it('shows an approved member every event', async () => {
+        privateGroup();
+        memberModel.findOne.mockResolvedValue({ role: 'member' });
+
+        await service.listByGroup(GROUP_ID, STRANGER);
+
+        expect(eventModel.find.mock.calls[0][0]).not.toHaveProperty(
+          'isPublic',
+        );
+      });
+
+      it('still 404s an unknown group rather than 403', async () => {
+        // Existence is not the secret here — a missing group is missing.
+        groupModel.findById = jest.fn().mockReturnValue({
+          select: () => ({ lean: () => Promise.resolve(null) }),
+        });
+        await expect(
+          service.listByGroup(GROUP_ID, STRANGER),
+        ).rejects.toBeInstanceOf(NotFoundException);
+      });
     });
 
     it('optionally narrows to one lifecycle status', async () => {
