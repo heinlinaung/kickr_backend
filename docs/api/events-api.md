@@ -150,7 +150,9 @@ The JSON above is a freshly created event, so most optional fields are empty. Th
 
 Model them as nullable/empty and render accordingly — an event in `join` legitimately has all of them empty.
 
-`teamCount` (default `4`) is advisory: it tells your shuffle UI how many teams to aim for, but the server accepts whatever roster you submit.
+`teamCount` (default `4`, range 2–6) is **the input `POST /events/:id/shuffle` uses** — that route takes no body, so this field is the only thing telling it how many teams to build. It is *not* used by `POST /teams/generate`, which takes `teamsCount` in the body instead — but since 2026-08-27 generate **writes its value back here**, so the field always reflects the split that actually exists (§11.1).
+
+It does not constrain player assignment: `PATCH /teams/:teamId` accepts whatever roster you submit.
 
 ### 2.2 `isFull` is derived — there is no `full` status
 
@@ -577,6 +579,7 @@ Do **not** design screens against these — the fields exist but nothing fills t
 - [ ] **`teamsCount` decides how many matches exist** — the full double round-robin, `n*(n-1)`: 2→2, 3→6, 4→12. **Changed 2026-08-27**: it used to be `floor((event.duration - 10) / matchDuration)`, which silently truncated the schedule.
 - [ ] **The schedule can now overrun the booked slot** — 3 teams × 6 matches × 30 min is 180 min in a 90-min event. The server no longer polices it; show the total.
 - [ ] **`POST /teams/generate` returns only `{ message }`.** Read teams from `GET /events/:id/teams` (you need the ids for §11.2) and fixtures from `GET /events/:id/matches`. `data.teams`/`matches`/`matchCount`/`schedule` are gone.
+- [ ] **`POST /teams/generate` now updates `event.teamCount`** to the split it created, so a later `POST /shuffle` (which reads only that field) reproduces it instead of silently rebuilding with the old count.
 - [ ] **Send `colors` to name the teams** — one per team, count must equal `teamsCount`, must be distinct (case-insensitively). Spelling is not validated.
 - [ ] **`GET /events/joined` never shows a `done` event**, not even with `includeExpired=true`. Use `?status=done` for history.
 - [ ] `group.rules` is now a **string, not an array**. Render with `white-space: pre-line`.
@@ -615,7 +618,7 @@ POST /events/6a7055f42e55b9cdbe427eb4/teams/generate
 
 | Field | Rule |
 |---|---|
-| `teamsCount` | 2–6 |
+| `teamsCount` | 2–6. **Also written to `event.teamCount`** — see below |
 | `duration` | Minutes **per match**, ≥ 1. Stored on each team; it no longer bounds the fixture count |
 | `numberOfPlayers` | Intended squad size per team, 1–50. Stored on each team as a **target**, not a constraint — see below |
 | `colors` | **NEW, optional.** Team names, one per team. Length **must equal `teamsCount`**, and they must be **distinct**. Spelling is **not** validated — any label is accepted. Omit to use the built-in colour vocabulary in order |
@@ -667,6 +670,31 @@ with `400`, as a sanity check on the input.
 
 Distinctness is required because a team's name keys both its fixtures and its
 chat room, so two teams sharing a name makes both ambiguous.
+
+**`teamsCount` updates `event.teamCount`.** *(Changed 2026-08-27.)* The event
+document now records the split that was actually generated, so
+`GET /events/:id` and the teams that exist cannot disagree.
+
+This matters because **`POST /events/:id/shuffle` reads `event.teamCount` and
+nothing else** — it takes no body. Before this change, generating 3 teams left
+`teamCount` at its old value, so a later shuffle silently rebuilt with a
+different count:
+
+```
+event created with teamCount 4
+POST /teams/generate { teamsCount: 3 }   → 3 teams, teamCount was still 4
+POST /shuffle                            → 4 teams   ← surprising
+```
+
+Now the second call sets `teamCount` to 3 and the shuffle reproduces the same
+split. Nothing is written if the request is rejected — a `400` leaves the event
+exactly as it was.
+
+> **The shuffle does NOT write back.** Its team count is capped by the joined
+> roster (§11.2b), which is a limit rather than an intent: persisting it would
+> pin `teamCount` to 2 forever if only two players had joined at the time.
+> `teamCount` therefore only ever changes through `POST /teams/generate`,
+> `POST /events` or `PATCH /events/:id`.
 
 **`numberOfPlayers` is a hard upper limit.** Assigning more players than this
 to a team is rejected with `400` (§11.2). **Under**-filling stays legal — a
