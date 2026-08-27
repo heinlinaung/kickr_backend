@@ -1,7 +1,16 @@
 // src/events/dto/generate-teams.dto.ts
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsInt, Max, Min } from 'class-validator';
+import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+} from 'class-validator';
 import { MAX_TEAMS, MIN_TEAMS } from '../events.fixtures';
 
 /**
@@ -52,4 +61,34 @@ export class GenerateTeamsDto {
   @Min(1)
   @Max(50)
   numberOfPlayers: number;
+
+  /**
+   * Team names, supplied by the client.
+   *
+   * Spelling is NOT validated — any label is accepted, so a client is free to
+   * send names that are not colours at all. Two things ARE checked, in the
+   * service where `teamsCount` is also in scope:
+   *  - the count must equal `teamsCount`, otherwise it is ambiguous how many
+   *    teams to create and what to call them;
+   *  - they must be distinct (case-insensitively), because a team name keys
+   *    both the fixture list and the team chat room, so two teams sharing one
+   *    makes both ambiguous.
+   *
+   * Optional. Omitted, the built-in colour vocabulary is used in order, which
+   * is what every existing caller relies on.
+   */
+  @ApiPropertyOptional({
+    example: ['red', 'blue', 'white'],
+    type: [String],
+    description:
+      'Team names, one per team — length must equal teamsCount, and they ' +
+      'must be distinct. Spelling is not validated. Omit to use the ' +
+      'built-in colour vocabulary.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMinSize(MIN_TEAMS)
+  @ArrayMaxSize(MAX_TEAMS)
+  @IsString({ each: true })
+  colors?: string[];
 }

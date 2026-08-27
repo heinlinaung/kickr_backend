@@ -604,23 +604,44 @@ export class TestDataService {
           teamsCount: 2,
           duration: 30,
           numberOfPlayers: 6,
+          colors: ['red', 'blue'],
         })) as any;
       },
       'resolve',
     );
 
-    // The event is seeded with duration 90, so (90 - 10) / 30 floors to 2.
+    // generate now answers with a plain success message and nothing else — the
+    // teams and fixtures are read back through their own endpoints.
     record(
-      'match count derives from event duration',
-      generated?.matchCount === 2,
-      `got ${generated?.matchCount}`,
+      'generate returns only a success message',
+      typeof generated?.message === 'string' &&
+        Object.keys(generated ?? {}).length === 1,
+      `got ${JSON.stringify(generated)}`,
+    );
+
+    const generatedTeams: any[] = await this.eventsService.listTeams(eventId);
+    const generatedMatches: any[] =
+      await this.eventsService.listMatches(eventId);
+
+    record(
+      'teams are named from the colours the client sent',
+      generatedTeams.map((t: any) => t.name).join(',') === 'red,blue',
+      `got ${generatedTeams.map((t: any) => t.name).join(',')}`,
+    );
+
+    // The FULL double round-robin, no longer trimmed to the time budget: two
+    // teams meet twice regardless of the event's duration.
+    record(
+      'every fixture of the round-robin is generated',
+      generatedMatches.length === 2,
+      `got ${generatedMatches.length}`,
     );
     record(
       'generated teams start empty',
-      (generated?.teams ?? []).every((t: any) => (t.players ?? []).length === 0),
+      generatedTeams.every((t: any) => (t.players ?? []).length === 0),
     );
 
-    const teamIds = (generated?.teams ?? []).map((t: any) => String(t._id));
+    const teamIds = generatedTeams.map((t: any) => String(t._id));
 
     await this.expect(
       record,

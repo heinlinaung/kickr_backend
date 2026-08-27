@@ -330,16 +330,24 @@ export class EventsController {
   @ApiOperation({
     summary: 'Create the teams and the fixture list (organizer, preparation)',
     description:
-      'Creates `teamsCount` EMPTY teams named from the colour vocabulary, and ' +
-      'derives the match list from the event duration: ' +
-      'floor((event.duration - 10) / duration) matches, so the schedule can ' +
-      'never overrun the booked slot. Ten minutes are reserved as buffer. ' +
-      'Assign players afterwards with PATCH /events/:id/teams/:teamId. ' +
+      'Creates `teamsCount` EMPTY teams and the FULL double round-robin ' +
+      'fixture list — every pair meets twice, so n teams produce n*(n-1) ' +
+      'matches (2 teams = 2, 3 = 6, 4 = 12). The list is no longer trimmed ' +
+      'to what fits the booked slot, which is why GET /events/:id/matches ' +
+      'used to show only two or three fixtures. ' +
+      'Name the teams by sending `colors` — one per team, length must equal ' +
+      'teamsCount, and they must be distinct. Spelling is NOT validated, so ' +
+      'any label is accepted. Omit `colors` to use the built-in vocabulary. ' +
+      'Returns ONLY a success message: read the teams back from ' +
+      'GET /events/:id/teams and the fixtures from GET /events/:id/matches. ' +
+      'Assign players with PATCH /events/:id/teams/:teamId. ' +
       'Re-running replaces the previous teams and fixtures.',
   })
   @ApiResponse({
     status: 400,
-    description: 'Match duration does not fit the event, or wrong state',
+    description:
+      'colors length does not equal teamsCount, colours are not distinct, ' +
+      'match duration does not fit the event, or wrong state',
   })
   @ApiResponse({ status: 403, description: 'Caller is not the organizer' })
   generateTeams(

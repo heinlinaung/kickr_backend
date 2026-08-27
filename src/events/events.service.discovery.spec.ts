@@ -378,15 +378,36 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
       expect(filter.status).toEqual({ $ne: 'done' });
     });
 
-    it('includeExpired returns everything', async () => {
+    it('includeExpired drops the DATE filter but still hides done', async () => {
+      // This is the ongoing list. `includeExpired` is about dates — a
+      // finished event must not reappear just because history was asked for.
       await service.listJoined(USER, undefined, true);
 
       const filter = eventModel.find.mock.calls[0][0];
       expect(filter.date).toBeUndefined();
-      expect(filter.status).toBeUndefined();
+      expect(filter.status).toEqual({ $ne: 'done' });
     });
 
-    it('an explicit status overrides the done exclusion', async () => {
+    it('never shows a done event unless it is asked for by name', async () => {
+      // The reported bug: a `done` event appeared in the ongoing list.
+      for (const includeExpired of [false, true]) {
+        jest.clearAllMocks();
+        eventModel.find.mockReturnValue(findChain([]));
+        playerModel.find = jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnThis(),
+          lean: jest.fn().mockResolvedValue([{ eventId: EVENT_ID }]),
+        });
+
+        await service.listJoined(USER, undefined, includeExpired);
+
+        expect(eventModel.find.mock.calls[0][0].status).toEqual({
+          $ne: 'done',
+        });
+      }
+    });
+
+    it('an explicit ?status=done is the one way to see finished events', async () => {
+      // Deliberate escape hatch for a history screen.
       await service.listJoined(USER, 'done');
 
       const filter = eventModel.find.mock.calls[0][0];

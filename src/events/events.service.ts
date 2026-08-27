@@ -65,7 +65,7 @@ import {
   TEAM_COLOURS,
   computeStandings,
   dealIntoTeams,
-  generateFixturesLimited,
+  generateFixtures,
   matchCountFor,
   shuffled,
 } from './events.fixtures';
@@ -451,13 +451,20 @@ export class EventsService {
       if (!isEventStatus(status)) {
         throw new BadRequestException(`Unknown status '${status}'`);
       }
+      // An explicit ask wins, `done` included — that is the history screen.
       filter.status = status;
+    } else {
+      // This is the ONGOING list, so a finished event is never in it. Unlike
+      // the date rule below, `includeExpired` does not lift this: asking for
+      // past dates is asking for older fixtures, not for completed events.
+      // Reaching a done event at all takes an explicit `?status=done`.
+      filter.status = { $ne: 'done' };
     }
 
-    // Same rule as listByGroup, so the two lists agree on what "expired" means.
+    // `includeExpired` is purely about DATES. Same rule as listByGroup, so the
+    // two lists agree on what "expired" means.
     if (!includeExpired) {
       filter.date = { $gte: startOfToday() };
-      if (status === undefined) filter.status = { $ne: 'done' };
     }
 
     const events = await this.eventModel.find(filter).sort({ date: 1 }).lean();
@@ -915,7 +922,30 @@ export class EventsService {
    * POST because the call replaces the whole assignment: the same body twice
    * leaves the same state.
    */
+  /**
+   * `POST /events/:id/teams/generate` — create the teams and the fixture list.
+   *
+   * Returns a plain success message. The teams and fixtures it writes are read
+   * back through `GET /events/:id/teams` and `GET /events/:id/matches`, so
+   * echoing them here would be a second, divergent source for the same data.
+   */
   async generateTeams(
+    eventId: string,
+    userId: string,
+    dto: GenerateTeamsDto,
+  ): Promise<{ message: string }> {
+    await this.createTeamsAndFixtures(eventId, userId, dto);
+    return { message: 'Teams created successfully' };
+  }
+
+  /**
+   * The work behind `generateTeams`, returning what it created.
+   *
+   * Split out because `shuffleTeams` needs the new teams' ids to deal players
+   * into them. Re-reading them afterwards would work but is a needless round
+   * trip and would depend on insertion order surviving the query.
+   */
+  private async createTeamsAndFixtures(
     eventId: string,
     userId: string,
     dto: GenerateTeamsDto,
@@ -940,7 +970,7 @@ export class EventsService {
     }
 
     const eventObjectId = event._id as Types.ObjectId;
-    const names = TEAM_COLOURS.slice(0, dto.teamsCount).map(String);
+    const names = this.resolveTeamNames(dto);
 
     // Replace wholesale: regenerating during `preparation` is legal, and
     // leaving the previous teams behind would strand players on teams that no
@@ -965,7 +995,14 @@ export class EventsService {
 
     // Fixtures are derived now, from the team NAMES — assignment comes later and
     // does not change who plays whom.
-    const fixtures = generateFixturesLimited(names, matchCount);
+    //
+    // The FULL double round-robin, deliberately not trimmed to what fits the
+    // booked slot. Trimming is why GET /events/:id/matches used to show two or
+    // three fixtures for three teams: the tail of the schedule was silently
+    // dropped at generation time and there was no way to get it back. The
+    // match count is a property of the teams, so it is generated in full and
+    // the organizer decides what actually gets played.
+    const fixtures = generateFixtures(names);
     await this.matchModel.deleteMany({ eventId: eventObjectId });
     const matches = await this.matchModel.insertMany(
       fixtures.map((fixture) => ({ ...fixture, eventId: eventObjectId })),
@@ -981,19 +1018,37 @@ export class EventsService {
       ),
     );
 
-    return {
-      teams: teams.map((team) => team.toJSON()),
-      matches: matches.map((match) => match.toJSON()),
-      matchCount,
-      // Stated explicitly so the client can show how the number was reached
-      // rather than reverse-engineering it.
-      schedule: {
-        eventDuration: event.duration,
-        bufferMinutes: MATCH_BUFFER_MINUTES,
-        matchDuration: dto.duration,
-        scheduledMinutes: matchCount * dto.duration,
-      },
-    };
+    return { teams, matches };
+  }
+
+  /**
+   * The team names to use, from `dto.colors` when supplied.
+   *
+   * Spelling is not checked — the caller may name teams anything. Count and
+   * distinctness ARE checked: a name keys both the fixture list and the team
+   * chat room, so a duplicate makes both ambiguous, and a count that disagrees
+   * with `teamsCount` leaves it unclear how many teams to create.
+   */
+  private resolveTeamNames(dto: GenerateTeamsDto): string[] {
+    if (!dto.colors) {
+      return TEAM_COLOURS.slice(0, dto.teamsCount).map(String);
+    }
+
+    const colors = dto.colors.map((c) => c.trim()).filter((c) => c.length > 0);
+    if (colors.length !== dto.teamsCount) {
+      throw new BadRequestException(
+        `Expected ${dto.teamsCount} team colours to match teamsCount, got ${colors.length}`,
+      );
+    }
+
+    const seen = new Set(colors.map((c) => c.toLowerCase()));
+    if (seen.size !== colors.length) {
+      throw new BadRequestException(
+        'Team colours must be distinct — two teams cannot share a name',
+      );
+    }
+
+    return colors;
   }
 
   /**
@@ -1155,7 +1210,7 @@ export class EventsService {
       Math.floor(playable / DEFAULT_SHUFFLE_MATCHES),
     );
 
-    const generated = await this.generateTeams(eventId, userId, {
+    const generated = await this.createTeamsAndFixtures(eventId, userId, {
       teamsCount,
       duration,
       // The shuffle deals every joined player, so the squad size each team is
@@ -1178,7 +1233,7 @@ export class EventsService {
       );
     }
 
-    return { ...generated, teams };
+    return { message: 'Teams shuffled successfully', teams };
   }
 
   /**
