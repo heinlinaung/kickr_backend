@@ -116,16 +116,20 @@ describe('TestDataService', () => {
     events.join = jest.fn().mockResolvedValue({});
     events.leave = jest.fn().mockResolvedValue({});
     events.setStatus = jest.fn().mockResolvedValue({});
-    events.generateTeams = jest.fn().mockResolvedValue({
-      teams: [
-        { _id: 't1', name: 'Red', players: [] },
-        { _id: 't2', name: 'Blue', players: [] },
-      ],
-      matches: [{}, {}],
-      matchCount: 2,
-    });
+    // generate answers with a message only now; the seeder reads the teams and
+    // fixtures back through their own endpoints.
+    events.generateTeams = jest
+      .fn()
+      .mockResolvedValue({ message: 'Teams created successfully' });
+    events.listTeams = jest.fn().mockResolvedValue([
+      { _id: 't1', name: 'red', players: [] },
+      { _id: 't2', name: 'blue', players: [] },
+    ]);
     events.assignTeamPlayers = jest.fn().mockResolvedValue({});
-    events.listMatches = jest.fn().mockResolvedValue([{ matchNumber: 1 }]);
+    // Two teams meet twice — the full round-robin, not a time-trimmed slice.
+    events.listMatches = jest
+      .fn()
+      .mockResolvedValue([{ matchNumber: 1 }, { matchNumber: 2 }]);
     events.setMatchScore = jest.fn().mockResolvedValue({});
     events.standings = jest
       .fn()

@@ -246,7 +246,7 @@ or `after_match`.
 | `DELETE` | `/events/:id/join` | any user | Gated to `join`. |
 | `GET` | `/events/:id/players` | any user | Joined players. |
 | `DELETE` | `/events/:id/players/:userId` | organizer | **NEW** — remove a player from the event. `join` only. See §8.3. |
-| `POST` | `/events/:id/teams/generate` | organizer | **NEW** — create empty teams + the fixture list from `duration`. `preparation` only. See §11. |
+| `POST` | `/events/:id/teams/generate` | organizer | Create empty teams + the **full** round-robin fixture list. Accepts `colors`. Returns a message only. `preparation` only. See §11.1. |
 | `GET` | `/events/:id/teams` | any user | **NEW** — the event's teams, players populated. |
 | `PATCH` | `/events/:id/teams/:teamId` | organizer | **NEW** — assign/rename one team. `preparation` only. |
 | `POST` | `/events/:id/shuffle` | organizer | Server-side colour shuffle (fallback). Gated to `preparation`. See §11. |
@@ -295,9 +295,13 @@ events only to approved members.
 
 - An event you **left** is excluded (the roster row survives as `cancelled` for
   reactivation, but does not count).
-- Expired events (date before today) and `done` events are hidden unless
-  `includeExpired=true`, matching `GET /events/group/:groupId`.
-- An explicit `?status=` overrides the `done` exclusion.
+- **A `done` event is NEVER in this list.** This is the ongoing list, so a
+  finished event is excluded even with `includeExpired=true` — that flag is
+  about **dates**, not about completion. Reaching a finished event takes an
+  explicit `?status=done`, which is the history view.
+- Expired events (date before today) are hidden unless `includeExpired=true`,
+  matching `GET /events/group/:groupId`.
+- An explicit `?status=` replaces the default filter, `done` included.
 - Rows carry `isFull` and `joinedByMe: true`, so a card renders identically
   whether it came from here or from `GET /events/:id`.
 
@@ -570,7 +574,11 @@ Do **not** design screens against these — the fields exist but nothing fills t
 - [ ] Join failures — "not open" and "full" — are **both** `400`; read the message.
 - [ ] Deleting an event is a **hard delete** with no notification to joined players.
 - [ ] Teams are a **two-step** flow: `POST /teams/generate` creates them empty, then `PATCH /teams/:teamId` assigns players. Never author `matches[]` client-side.
-- [ ] **`event.duration` decides how many matches exist** — `floor((duration - 10) / matchDuration)`. Ten minutes are reserved as buffer.
+- [ ] **`teamsCount` decides how many matches exist** — the full double round-robin, `n*(n-1)`: 2→2, 3→6, 4→12. **Changed 2026-08-27**: it used to be `floor((event.duration - 10) / matchDuration)`, which silently truncated the schedule.
+- [ ] **The schedule can now overrun the booked slot** — 3 teams × 6 matches × 30 min is 180 min in a 90-min event. The server no longer polices it; show the total.
+- [ ] **`POST /teams/generate` returns only `{ message }`.** Read teams from `GET /events/:id/teams` (you need the ids for §11.2) and fixtures from `GET /events/:id/matches`. `data.teams`/`matches`/`matchCount`/`schedule` are gone.
+- [ ] **Send `colors` to name the teams** — one per team, count must equal `teamsCount`, must be distinct (case-insensitively). Spelling is not validated.
+- [ ] **`GET /events/joined` never shows a `done` event**, not even with `includeExpired=true`. Use `?status=done` for history.
 - [ ] `group.rules` is now a **string, not an array**. Render with `white-space: pre-line`.
 - [ ] `GET /events/group/:groupId` **hides expired and `done` events** by default. Pass `includeExpired=true` for history.
 - [ ] A **partial roster is legal**. Check `unassignedPlayerIds` in the response and warn the user, or players silently start with no team.
@@ -592,57 +600,73 @@ The `preparation`-phase flow, end to end. **The client decides who plays where; 
 
 ### 11.1 Create the teams — `POST /events/:id/teams/generate`
 
-Teams are created **empty**, and the fixture list is derived from the event's
-duration. Organizer only, `preparation` only.
+Teams are created **empty**, together with the full fixture list. Organizer
+only, `preparation` only.
+
+> **Changed 2026-08-27 — two breaking changes.** The response is now just a
+> success message, and the fixture list is no longer trimmed to the booked
+> slot. Details below.
 
 ```
 POST /events/6a7055f42e55b9cdbe427eb4/teams/generate
-{ "teamsCount": 3, "duration": 30, "numberOfPlayers": 5 }
+{ "teamsCount": 3, "duration": 10, "numberOfPlayers": 8,
+  "colors": ["red", "blue", "white"] }
 ```
 
 | Field | Rule |
 |---|---|
-| `teamsCount` | 2–6. Teams are named from the colour vocabulary in order |
-| `duration` | Minutes **per match**, ≥ 1 |
+| `teamsCount` | 2–6 |
+| `duration` | Minutes **per match**, ≥ 1. Stored on each team; it no longer bounds the fixture count |
 | `numberOfPlayers` | Intended squad size per team, 1–50. Stored on each team as a **target**, not a constraint — see below |
+| `colors` | **NEW, optional.** Team names, one per team. Length **must equal `teamsCount`**, and they must be **distinct**. Spelling is **not** validated — any label is accepted. Omit to use the built-in colour vocabulary in order |
 
-Response:
+**Response — a plain success message:**
 
 ```json
-{
-  "teams": [
-    { "_id": "…", "name": "Red", "players": [], "duration": 30,
-      "numberOfPlayers": 5, "status": "pending" }
-  ],
-  "matches": [
-    { "_id": "…", "matchNumber": 1, "teamA": "Red", "teamB": "Yellow",
-      "scoreA": null, "scoreB": null, "playedAt": null }
-  ],
-  "matchCount": 2,
-  "schedule": {
-    "eventDuration": 90, "bufferMinutes": 10,
-    "matchDuration": 30, "scheduledMinutes": 60
-  }
-}
+{ "data": { "message": "Teams created successfully" } }
 ```
 
-**How the match count is derived:**
+> ⚠️ **The teams and fixtures are no longer echoed back.** Read them from
+> `GET /events/:id/teams` (for the team ids you need in §11.2) and
+> `GET /events/:id/matches`. A build reading `data.teams`, `data.matches`,
+> `data.matchCount` or `data.schedule` from this call breaks — those fields
+> are gone.
 
-```
-matchCount = floor((event.duration - 10) / duration)
-```
+**How many matches you get:** the **full double round-robin**. Every pair meets
+twice, home and away, so the count depends only on the number of teams:
 
-Ten minutes come off the top as buffer (warm-up, changeovers, overrun), and the
-result is **floored** — so the schedule can never exceed the booked slot.
+| `teamsCount` | Matches |
+|---|---|
+| 2 | **2** |
+| 3 | **6** |
+| 4 | **12** |
+| 5 | **20** |
+| 6 | **30** |
 
-| `event.duration` | `duration` | Matches | Why |
-|---|---|---|---|
-| 90 | 30 | **2** | (90−10)/30 = 2.66 → 2 |
-| 100 | 30 | **3** | (100−10)/30 = 3 |
-| 60 | 90 | — | `400`: not even one match fits |
+> ⚠️ **Changed:** the list used to be truncated to
+> `floor((event.duration - 10) / duration)`, which is why
+> `GET /events/:id/matches` returned only two or three fixtures for three
+> teams — the tail of the schedule was dropped at generation time and there was
+> no way to recover it. Nothing is trimmed now.
+>
+> **The consequence to plan for:** the schedule can exceed the booked slot.
+> 3 teams × 6 matches × 30 minutes is 180 minutes in a 90-minute event. The
+> server no longer polices this, so show the organizer the total and let them
+> decide — or use a shorter `duration`.
 
-A duration too long for the event is rejected with `400` rather than silently
-producing an empty fixture list.
+A `duration` so long that not even one match fits the event is still rejected
+with `400`, as a sanity check on the input.
+
+**Colour validation, precisely.** `colors` is checked for **count** and
+**distinctness** only:
+
+- `teamsCount: 3` with `["red", "blue"]` → `400` (count mismatch)
+- `["red", "blue", "red"]` → `400` (duplicate; comparison is case-insensitive,
+  so `Red` and `red` collide)
+- `["puce", "not-a-colour", "zzz"]` → **accepted**, spelling is not checked
+
+Distinctness is required because a team's name keys both its fixtures and its
+chat room, so two teams sharing a name makes both ambiguous.
 
 **`numberOfPlayers` is a hard upper limit.** Assigning more players than this
 to a team is rejected with `400` (§11.2). **Under**-filling stays legal — a
@@ -695,9 +719,16 @@ match duration from the event rather than accepting one.
 
 ### 11.3 Fixtures
 
-Generated server-side as a **double round-robin**, then **truncated to the number of matches the event's duration allows** (§11.1). A full round-robin over 4 teams is 12 fixtures; a 90-minute event with 30-minute matches keeps only the first 2.
+Generated server-side as a **full double round-robin** — every pair twice, home
+and away. 4 teams is 12 fixtures, and all 12 are created.
 
-Truncation takes a prefix of the round-robin, and leg 1 is emitted in full before leg 2 — so in a partial schedule every team meets a different opponent before anyone plays a rematch.
+> **Changed 2026-08-27:** the list used to be truncated to
+> `floor((event.duration - 10) / duration)` matches, so a 90-minute event with
+> 30-minute matches kept only the first 2 of 12. That truncation is gone —
+> `GET /events/:id/matches` now returns the whole schedule (§11.1).
+
+Leg 1 is emitted in full before leg 2, so every team meets a different opponent
+before anyone plays a rematch. `matchNumber` runs contiguously from 1.
 
 Fixtures are **never client-authored**. You cannot send `matches[]`; a stale app therefore cannot persist a divergent fixture format.
 
@@ -707,9 +738,10 @@ Resubmitting during `preparation` regenerates teams and fixtures wholesale. Once
 
 ### 11.3b Add a fixture by hand — `POST /events/:id/matches`
 
-An escape hatch for schedules the generator cannot express. A 60-minute event
-with 30-minute matches fits `floor((60-10)/30)` = **1** match, so 3 teams leave
-one team with no fixture at all. This adds one.
+An escape hatch for schedules the generator cannot express — an extra decider,
+a re-run of a washed-out fixture, or any pairing outside the round-robin. Since
+2026-08-27 the generated schedule is complete, so this is no longer needed to
+patch a truncated list.
 
 ```
 POST /events/6a7055f42e55b9cdbe427eb4/matches

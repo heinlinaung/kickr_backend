@@ -12,6 +12,16 @@ Integration guides written against the **live** API — every request/response s
 
 **Live reference while the server is running:** Swagger UI at `/api-docs`, OpenAPI JSON at `/api-docs-json`.
 
+## ⚠️ Breaking changes — 2026-08-27
+
+Three fixes to the events API:
+
+1. **`GET /events/joined` no longer shows finished events.** A `done` event is excluded even with `includeExpired=true` — that flag is about dates, not completion. Use `?status=done` for a history view.
+2. **`POST /events/:id/teams/generate` returns only `{ message }`.** The `teams`, `matches`, `matchCount` and `schedule` fields are **gone** — read them back from `GET /events/:id/teams` and `GET /events/:id/matches`. It also accepts a new optional **`colors`** array to name the teams (count must equal `teamsCount`, names must be distinct; spelling is not validated).
+3. **The fixture list is no longer truncated to the booked slot.** The full double round-robin is generated, so 3 teams give 6 matches, not the 2–3 that `GET /events/:id/matches` used to show. **Plan for the schedule exceeding the event duration** — the server no longer prevents it.
+
+Detail in [events-api §5.1b and §11.1](./events-api.md).
+
 ## ⚠️ Breaking changes — 2026-08-26
 
 **Group privacy is now enforced on contents instead of on discovery.** `isPrivate` previously did exactly one thing — hide a group from search. That is inverted:

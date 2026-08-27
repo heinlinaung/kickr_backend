@@ -183,15 +183,81 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       // Players are assigned in a SEPARATE step — generation must not fill them.
       expect(inserted.every((t: any) => t.players.length === 0)).toBe(true);
       expect(inserted.every((t: any) => t.status === 'pending')).toBe(true);
-      expect(res.teams).toHaveLength(3);
+      // Response is a plain success message now — the client re-reads
+      // GET /events/:id/teams for ids.
+      expect(res).toEqual({ message: expect.any(String) });
     });
 
-    it('names teams from the colour vocabulary in order', async () => {
+    it('returns ONLY a success message', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc());
+      const res: any = await generate();
+
+      expect(Object.keys(res)).toEqual(['message']);
+      expect(res.teams).toBeUndefined();
+      expect(res.matches).toBeUndefined();
+      expect(res.matchCount).toBeUndefined();
+      expect(res.schedule).toBeUndefined();
+    });
+
+    it('falls back to the colour vocabulary when no colours are sent', async () => {
       eventModel.findById.mockResolvedValue(eventDoc());
       await generate();
 
       const names = teamModel.insertMany.mock.calls[0][0].map((t: any) => t.name);
       expect(names).toEqual(['Red', 'Yellow', 'Blue']);
+    });
+
+    describe('caller-supplied colours', () => {
+      it('names the teams from `colors`, in order', async () => {
+        eventModel.findById.mockResolvedValue(eventDoc());
+        await generate({ colors: ['red', 'blue', 'white'] });
+
+        const names = teamModel.insertMany.mock.calls[0][0].map(
+          (t: any) => t.name,
+        );
+        expect(names).toEqual(['red', 'blue', 'white']);
+      });
+
+      it('does not validate spelling — any label is accepted', async () => {
+        eventModel.findById.mockResolvedValue(eventDoc());
+        await generate({ colors: ['puce', 'not-a-colour', 'zzz'] });
+
+        const names = teamModel.insertMany.mock.calls[0][0].map(
+          (t: any) => t.name,
+        );
+        expect(names).toEqual(['puce', 'not-a-colour', 'zzz']);
+      });
+
+      it('rejects a colour count that disagrees with teamsCount', async () => {
+        eventModel.findById.mockResolvedValue(eventDoc());
+        await expect(
+          generate({ teamsCount: 3, colors: ['red', 'blue'] }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        await expect(
+          generate({ teamsCount: 3, colors: ['a', 'b', 'c', 'd'] }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+      });
+
+      it('rejects duplicate colours', async () => {
+        // Team names key the fixtures and the chat rooms, so two teams sharing
+        // a name makes both ambiguous. Case-insensitive: Red and red collide.
+        eventModel.findById.mockResolvedValue(eventDoc());
+        await expect(
+          generate({ colors: ['red', 'blue', 'red'] }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        await expect(
+          generate({ colors: ['Red', 'blue', 'red'] }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+      });
+
+      it('builds the fixtures from the supplied names', async () => {
+        eventModel.findById.mockResolvedValue(eventDoc());
+        await generate({ teamsCount: 2, colors: ['pink', 'green'] });
+
+        const fixtures = matchModel.insertMany.mock.calls[0][0];
+        const named = fixtures.flatMap((f: any) => [f.teamA, f.teamB]);
+        expect(new Set(named)).toEqual(new Set(['pink', 'green']));
+      });
     });
 
     it('stores the match duration on each team', async () => {
@@ -218,41 +284,54 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       await expect(generate({ numberOfPlayers: 11 })).resolves.toBeDefined();
     });
 
-    // The spec's worked examples.
+    // Fix: the fixture list used to be TRUNCATED to whatever fitted the
+    // booked slot, which is why /events/:id/matches showed only 2-3 matches
+    // for 3 teams. The full double round-robin is generated now.
     it.each([
-      [90, 30, 2],
-      [100, 30, 3],
-      [60, 30, 1],
+      [2, 2],
+      [3, 6],
+      [4, 12],
     ])(
-      'event %i min with %i-min matches -> %i matches',
-      async (eventDuration, matchDuration, expected) => {
-        eventModel.findById.mockResolvedValue(
-          eventDoc({ duration: eventDuration }),
-        );
-        const res = await generate({ duration: matchDuration });
+      '%i teams -> %i matches (full double round-robin)',
+      async (teamsCount, expected) => {
+        eventModel.findById.mockResolvedValue(eventDoc());
+        await generate({ teamsCount });
 
-        expect(res.matchCount).toBe(expected);
         expect(matchModel.insertMany.mock.calls[0][0]).toHaveLength(expected);
       },
     );
 
-    it('reports how the schedule was derived', async () => {
-      eventModel.findById.mockResolvedValue(eventDoc({ duration: 100 }));
-      const res = await generate({ duration: 30 });
+    it('generates the same match count regardless of event duration', async () => {
+      // The match count is a function of the TEAMS, not of the clock.
+      for (const duration of [40, 90, 100, 240]) {
+        jest.clearAllMocks();
+        eventModel.findById.mockResolvedValue(eventDoc({ duration }));
+        await generate({ teamsCount: 3, duration: 10 });
 
-      expect(res.schedule).toEqual({
-        eventDuration: 100,
-        bufferMinutes: 10,
-        matchDuration: 30,
-        scheduledMinutes: 90,
-      });
+        expect(matchModel.insertMany.mock.calls[0][0]).toHaveLength(6);
+      }
     });
 
-    it('never schedules more minutes than the event holds', async () => {
-      eventModel.findById.mockResolvedValue(eventDoc({ duration: 90 }));
-      const res = await generate({ duration: 30 });
+    it('numbers the fixtures contiguously from 1', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc());
+      await generate({ teamsCount: 3 });
 
-      expect(res.schedule.scheduledMinutes).toBeLessThanOrEqual(90 - 10);
+      const numbers = matchModel.insertMany.mock.calls[0][0].map(
+        (f: any) => f.matchNumber,
+      );
+      expect(numbers).toEqual([1, 2, 3, 4, 5, 6]);
+    });
+
+    it('every pair meets twice, home and away', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc());
+      await generate({ teamsCount: 3, colors: ['a', 'b', 'c'] });
+
+      const pairs = matchModel.insertMany.mock.calls[0][0].map(
+        (f: any) => `${f.teamA}v${f.teamB}`,
+      );
+      // 3 pairs x 2 legs, and each ordered pairing appears exactly once.
+      expect(pairs).toHaveLength(6);
+      expect(new Set(pairs).size).toBe(6);
     });
 
     it('replaces previous teams and fixtures on re-generation', async () => {
