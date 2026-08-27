@@ -188,6 +188,54 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       expect(res).toEqual({ message: expect.any(String) });
     });
 
+    describe('event.teamCount', () => {
+      it('is updated to the teamsCount that was generated', async () => {
+        const doc = eventDoc({ teamCount: 4 });
+        eventModel.findById.mockResolvedValue(doc);
+
+        await generate({ teamsCount: 3 });
+
+        expect(doc.teamCount).toBe(3);
+        expect(doc.save).toHaveBeenCalled();
+      });
+
+      it('keeps the event and the teams that exist in agreement', async () => {
+        // The bug this fixes: generating 3 teams left event.teamCount at 4, so
+        // a later POST /shuffle silently rebuilt as 4.
+        const doc = eventDoc({ teamCount: 4 });
+        eventModel.findById.mockResolvedValue(doc);
+
+        await generate({ teamsCount: 2 });
+
+        expect(doc.teamCount).toBe(
+          teamModel.insertMany.mock.calls[0][0].length,
+        );
+      });
+
+      it('does not persist when the request is rejected', async () => {
+        // A 400 must leave the event exactly as it was.
+        const doc = eventDoc({ teamCount: 4, duration: 60 });
+        eventModel.findById.mockResolvedValue(doc);
+
+        await expect(generate({ duration: 90 })).rejects.toThrow(/does not fit/);
+
+        expect(doc.teamCount).toBe(4);
+        expect(doc.save).not.toHaveBeenCalled();
+      });
+
+      it('does not persist when the colours are invalid', async () => {
+        const doc = eventDoc({ teamCount: 4 });
+        eventModel.findById.mockResolvedValue(doc);
+
+        await expect(
+          generate({ teamsCount: 3, colors: ['red', 'blue'] }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+
+        expect(doc.teamCount).toBe(4);
+        expect(doc.save).not.toHaveBeenCalled();
+      });
+    });
+
     it('returns ONLY a success message', async () => {
       eventModel.findById.mockResolvedValue(eventDoc());
       const res: any = await generate();
@@ -553,6 +601,22 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       expect(res.teams).toHaveLength(
         teamModel.insertMany.mock.calls[0][0].length,
       );
+    });
+
+    it('does NOT write its capped team count back to the event', async () => {
+      // Shuffle's count is a roster-derived CAP, not the organizer's intent.
+      // Persisting it would permanently downgrade teamCount whenever few
+      // players had joined: 4 intended, 2 joined, and every later shuffle
+      // would build 2 teams even once the roster filled up. Only
+      // POST /teams/generate, where the organizer states a number, persists.
+      playerModel.find.mockReturnValue(joinedPlayers([P1, P2]));
+      const doc = eventDoc({ teamCount: 4 });
+      eventModel.findById.mockResolvedValue(doc);
+
+      await service.shuffleTeams(EVENT_ID, CREATOR);
+
+      expect(teamModel.insertMany.mock.calls[0][0]).toHaveLength(2);
+      expect(doc.teamCount).toBe(4);
     });
 
     it('caps team count at the number of players so no team is empty', async () => {

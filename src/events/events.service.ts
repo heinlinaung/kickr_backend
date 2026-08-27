@@ -934,7 +934,9 @@ export class EventsService {
     userId: string,
     dto: GenerateTeamsDto,
   ): Promise<{ message: string }> {
-    await this.createTeamsAndFixtures(eventId, userId, dto);
+    await this.createTeamsAndFixtures(eventId, userId, dto, {
+      persistTeamCount: true,
+    });
     return { message: 'Teams created successfully' };
   }
 
@@ -949,6 +951,7 @@ export class EventsService {
     eventId: string,
     userId: string,
     dto: GenerateTeamsDto,
+    { persistTeamCount = false }: { persistTeamCount?: boolean } = {},
   ) {
     const event = await this.assertOrganizer(eventId, userId);
     if (!canShuffle(event.status)) {
@@ -971,6 +974,23 @@ export class EventsService {
 
     const eventObjectId = event._id as Types.ObjectId;
     const names = this.resolveTeamNames(dto);
+
+    // Record the organizer's choice on the event, so `event.teamCount` and the
+    // teams that actually exist cannot disagree. Without this, generating 3
+    // teams left teamCount at its old value and a later POST /shuffle — which
+    // reads only that field — silently rebuilt with a different count.
+    //
+    // Set AFTER the validations above, so a rejected request leaves the event
+    // untouched.
+    //
+    // Only on the generate path. A shuffle's team count is capped by the
+    // roster, so persisting it there would permanently downgrade the
+    // organizer's intent: 4 intended with 2 joined would pin teamCount to 2
+    // even once the roster filled up.
+    if (persistTeamCount && event.teamCount !== names.length) {
+      event.teamCount = names.length;
+      await event.save();
+    }
 
     // Replace wholesale: regenerating during `preparation` is legal, and
     // leaving the previous teams behind would strand players on teams that no
