@@ -1,10 +1,10 @@
 # Change Log — 2026-08-29
 
 **Branch:** `events-feature-spec`
-**Tests:** 780 passing across 39 suites · build clean
+**Tests:** 786 passing across 39 suites · build clean
 **Verified:** unit only — no run against a real MongoDB and no live client.
 
-Four changes shipped, one feature planned but **not** built (§5).
+Five changes shipped, one feature planned but **not** built (§5).
 
 | | Change | Kind |
 |---|---|---|
@@ -12,6 +12,7 @@ Four changes shipped, one feature planned but **not** built (§5).
 | §2 | Member payments — new schema + two routes | new |
 | §3 | Team member roles — captain, new route | new |
 | §4 | `additionalPrice` / `takeAdditionalPrice` on the event | new fields |
+| §4b | `GET /events` includes the caller's own joined events | **behaviour change** |
 | §5 | Plus members (`+1`/`+2`) | **plan only** |
 
 **No database migration.** Every new field has a default, and the two new
@@ -133,6 +134,43 @@ Both are settable at `POST /events` and via `PATCH /events/:id` — note the
 latter needed the field names adding to the service's `EDITABLE` allowlist, or
 a PATCH would have silently dropped them.
 
+## 4b. `GET /events` now includes the caller's joined events
+
+The filter was `{ isPublic: true }` and nothing else, so a private group's
+event was invisible here **even to someone on its roster**. It is now a
+disjunction: public, OR on the caller's roster — being on the roster is the
+permission, exactly as it is for `GET /events/joined`.
+
+```ts
+{ $or: [{ isPublic: true }, { _id: { $in: joinedEventIds } }] }
+```
+
+The `$or` sits at the top level so every other narrowing — `?region=`,
+`?status=`, `?from=`/`?to=`, `?near=` — stays ANDed against it. A joined event
+must not bypass an explicit filter.
+
+**Every row now carries `joinedByMe`.** Without it the mixed list is ambiguous:
+a client could not tell a private event it may open from a public one it has
+not joined. This matches `GET /events/:id` and `GET /events/joined`, which both
+already carried the flag. Strictly an addition beyond the request, but the
+feature is hard to consume without it.
+
+Two incidental findings:
+
+- **`userId` was a dead parameter.** `list()` took it and never used it — it
+  appeared exactly once, in the signature. This change is what finally gives it
+  a purpose.
+- **`joinedEventIds` is now shared** with `listJoined`, which had the same query
+  inline, and it guards against a malformed user id rather than letting the
+  driver raise a BSONError as a 500. Several older specs called `list('u1', …)`
+  with a placeholder id, which only surfaced once the roster lookup existed.
+
+**Still no default date or status filter on this route** — unlike its two
+siblings, it returns past and `done` events unless narrowed. That inconsistency
+predates this change and was left alone, but it is now documented in
+events-api §5.1 and the gotchas, because a discovery feed built on an
+unfiltered call shows archived events.
+
 ## 5. Plus members (`+1` / `+2`) — PLAN ONLY, nothing built
 
 A player brings a friend who has no account. The guest must be approved by the
@@ -204,7 +242,7 @@ exist, and getting them wrong means a second migration.
 | `src/events/schemas/event-payment.schema.ts` | new |
 | `src/events/schemas/team.schema.ts` | `playerRoles`, role enum |
 | `src/events/schemas/event.schema.ts` | `additionalPrice`, `takeAdditionalPrice` |
-| `src/events/events.service.ts` | fill wiring, payments, team roles, role pruning, `EDITABLE` |
+| `src/events/events.service.ts` | fill wiring, payments, team roles, role pruning, `EDITABLE`, `list()` visibility + `joinedEventIds` |
 | `src/events/events.controller.ts` | three routes + Swagger |
 | `src/events/dto/` | `set-payment`, `set-team-member-role`, create/update event fields |
 | `src/events/events.module.ts`, `events.test-providers.ts` | payment model wiring |

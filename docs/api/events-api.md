@@ -237,7 +237,7 @@ or `after_match`.
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| `GET` | `/events` | any user | Public events only. Optional `?region=`, `?near=`/`?radius=`, `?from=`/`?to=`, `?status=`. |
+| `GET` | `/events` | any user | Public events **plus the caller's own joined events** (private included). Rows carry `joinedByMe`. Optional `?region=`, `?near=`/`?radius=`, `?from=`/`?to=`, `?status=`. |
 | `GET` | `/events/joined` | any user | **NEW** — events the caller has joined, **public and private alike**, soonest first. Expired/`done` hidden unless `?includeExpired=true`. |
 | `GET` | `/events/group/:groupId` | any user | **NEW** — one group's events. Members see private ones too. Expired/`done` hidden unless `?includeExpired=true`. |
 | `GET` | `/events/search?q=` | any user | **NEW** — free-text on title/description. Public events only. **Cursor-paginated** — returns `{ items, nextCursor, hasMore }`. See §5.3. |
@@ -275,13 +275,29 @@ or `after_match`.
 
 ## 5. Listing
 
-### 5.1 `GET /events` — public discovery
+### 5.1 `GET /events` — discovery
 
-Returns **only** events with `isPublic: true`, soonest first. Optional `?region=` matches the owning group's country **or** city; events with no group are excluded when it is set.
+Returns every **public** event, **plus every event the caller has joined** —
+including private ones. Soonest first.
+
+> **Changed 2026-08-29.** This used to be `isPublic: true` and nothing else, so
+> a private group's event was invisible here even to someone on its roster.
+> Being on the roster is now the permission, exactly as it is for
+> `GET /events/joined`. Every row carries **`joinedByMe`**, so a mixed list can
+> be told apart — you can no longer assume a row from this route is public.
+
+The other filters still apply on top: a joined event does **not** bypass an
+explicit `?status=`, `?region=`, `?from=`/`?to=` or `?near=` narrowing. Optional `?region=` matches the owning group's country **or** city; events with no group are excluded when it is set.
 
 Group `country`/`city` are stored lowercase, and `region` is lowercased before matching — so `?region=Yangon`, `?region=yangon` and `?region=YANGON` are equivalent. The match is exact on the whole value, not a substring or pattern: `?region=yan` will not find `yangon`.
 
-> ⚠️ **This will not show a group's private events**, even to its members. For a group's schedule use §5.2.
+> ⚠️ **It will not show a private event you have NOT joined**, even if you are
+> a member of the owning group. Roster membership is the test, not group
+> membership. For a group's full schedule use §5.2.
+
+> ⚠️ **No default date or status filter.** Unlike §5.1b and §5.2, this route
+> does not hide past or `done` events — pass `?from=` or `?status=` to narrow
+> it. An unfiltered call returns archived events too.
 
 ### 5.1b `GET /events/joined` — events you joined
 
@@ -572,7 +588,8 @@ Do **not** design screens against these — the fields exist but nothing fills t
 - [ ] Handle **`ready_to_play`** in every `switch` on `status` and in the `?status=` filter — an unhandled sixth value is the likely crash.
 - [ ] **Shuffling is refused in `ready_to_play`** (`400`). Build the "teams are final" screen read-only, and use `ready_to_play → preparation` if the user needs to change them.
 - [ ] `isFull` is **derived**, absent from the stored document — never write it back.
-- [ ] `GET /events` hides private events. A group's schedule needs `GET /events/group/:groupId`.
+- [ ] **`GET /events` now includes private events you have joined** — check `joinedByMe`; do not assume every row is public. A group's full schedule still needs `GET /events/group/:groupId`.
+- [ ] **`GET /events` applies no default date/status filter** — pass `?from=` or `?status=` or archived events appear in a discovery feed.
 - [ ] A **pending** group member sees only public events — approval is what unlocks private ones.
 - [ ] `409` from `/status` means "illegal transition", `400` means "not a status". Different UX.
 - [ ] `done` is terminal: edit, delete, and every transition are refused.
