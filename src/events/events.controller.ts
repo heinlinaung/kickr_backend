@@ -339,9 +339,22 @@ export class EventsController {
       'teamsCount, and they must be distinct. Spelling is NOT validated, so ' +
       'any label is accepted. Omit `colors` to use the built-in vocabulary. ' +
       'Returns ONLY a success message: read the teams back from ' +
-      'GET /events/:id/teams and the fixtures from GET /events/:id/matches. ' +
+      'GET /events/:id/teams (you need their ids to assign players) and the ' +
+      'fixtures from GET /events/:id/matches. ' +
       'Assign players with PATCH /events/:id/teams/:teamId. ' +
-      'Re-running replaces the previous teams and fixtures.',
+      'Re-running replaces the previous teams and fixtures. ' +
+      'SIDE EFFECT: teamsCount is written to event.teamCount, so a later ' +
+      'POST /events/:id/shuffle — which takes no body and reads only that ' +
+      'field — reproduces the same split.',
+  })
+  @ApiResponse({
+    status: 201,
+    description:
+      'Teams and fixtures created. The body carries a message and nothing ' +
+      'else — teams, matches, matchCount and schedule are no longer returned.',
+    schema: {
+      example: { data: { message: 'Teams created successfully' } },
+    },
   })
   @ApiResponse({
     status: 400,
@@ -350,6 +363,7 @@ export class EventsController {
       'match duration does not fit the event, or wrong state',
   })
   @ApiResponse({ status: 403, description: 'Caller is not the organizer' })
+  @ApiResponse({ status: 404, description: 'Event not found' })
   generateTeams(
     @Param('id') id: string,
     @CurrentUser() user: any,
