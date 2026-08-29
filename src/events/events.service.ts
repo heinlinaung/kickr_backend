@@ -212,7 +212,21 @@ export class EventsService {
    */
   async list(userId: string, query: ListEventsQuery = {}) {
     const { region, near, radius, from, to, status } = query;
-    const filter: Record<string, unknown> = { isPublic: true };
+
+    // Visibility: anything public, PLUS anything the caller is on the roster
+    // of. The second half is what lets a private group's event appear in the
+    // caller's own discovery list — being on the roster is the permission,
+    // exactly as it is for GET /events/joined.
+    //
+    // A disjunction rather than a bare `isPublic: true`, and it sits in $or at
+    // the top level so the region/date/status/geo narrowings below stay ANDed
+    // against it: a joined event must not bypass an explicit filter.
+    const joinedIds = await this.joinedEventIds(userId);
+    const filter: Record<string, unknown> = joinedIds.length
+      ? { $or: [{ isPublic: true }, { _id: { $in: joinedIds } }] }
+      : // No roster rows means the disjunction could only ever match the
+        // public half, so keep the simpler filter and let the index work.
+        { isPublic: true };
 
     if (region?.trim()) {
       // country/city are stored lowercase, so this is an exact match on a
@@ -255,7 +269,16 @@ export class EventsService {
     }
 
     const events = await this.eventModel.find(filter).sort({ date: 1 }).lean();
-    return events.map(withIsFull);
+
+    // The list now mixes public events with the caller's own, so say which is
+    // which — otherwise a client cannot distinguish a private event it may
+    // open from a public one it has not joined. Matches GET /events/:id and
+    // GET /events/joined, which both carry this flag.
+    const joined = new Set(joinedIds.map(String));
+    return events.map((event) => ({
+      ...withIsFull(event),
+      joinedByMe: joined.has(String(event._id)),
+    }));
   }
 
   /**
@@ -1792,6 +1815,26 @@ export class EventsService {
     } catch {
       return false;
     }
+  }
+
+  /** Event ids the caller is currently on the roster of (a left event is not one). */
+  private async joinedEventIds(userId: string): Promise<unknown[]> {
+    // The id comes from the verified token, so a malformed one means something
+    // upstream is broken — but a roster row can only ever key on a real
+    // ObjectId, so the honest answer is "no joined events" rather than letting
+    // the driver throw a BSONError up as a 500.
+    if (!Types.ObjectId.isValid(userId)) return [];
+
+    const rows = await this.playerModel
+      .find({
+        userId: new Types.ObjectId(userId),
+        // A cancelled row survives for reactivation, so filter on the status
+        // rather than mere presence — otherwise an event you left comes back.
+        status: 'joined',
+      })
+      .select('eventId')
+      .lean();
+    return rows.map((row) => row.eventId);
   }
 
   private async joinedPlayerIds(eventId: string): Promise<string[]> {

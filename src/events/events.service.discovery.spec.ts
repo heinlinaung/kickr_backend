@@ -25,6 +25,7 @@ const findChain = (rows: any[]) => ({
 describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
   let service: EventsService;
   const eventModel: any = {};
+  const playerModel: any = {};
   const likeModel: any = {};
   const templateModel: any = {};
   const locationModel: any = {};
@@ -33,6 +34,11 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     eventModel.find = jest.fn().mockReturnValue(findChain([]));
+    // list() resolves the caller's roster before filtering.
+    playerModel.find = jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([]),
+    });
     eventModel.findById = jest.fn().mockReturnValue({
       select: jest.fn().mockReturnThis(),
       lean: jest.fn().mockResolvedValue({ _id: EVENT_ID }),
@@ -53,6 +59,7 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
         EventsService,
         ...eventsProviders({
           eventModel,
+          playerModel,
           likeModel,
           templateModel,
           locationModel,
@@ -438,6 +445,93 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
       const res: any = await service.listJoined(USER);
 
       expect(res[0].joinedByMe).toBe(true);
+      expect(res[0].isFull).toBe(true);
+    });
+  });
+
+  describe('list — visibility includes the caller\'s own events', () => {
+    const JOINED_A = '507f1f77bcf86cd7994390a1';
+    const JOINED_B = '507f1f77bcf86cd7994390a2';
+
+    const roster = (eventIds: string[]) => {
+      playerModel.find = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest
+          .fn()
+          .mockResolvedValue(eventIds.map((id) => ({ eventId: id }))),
+      });
+    };
+
+    const filter = () => eventModel.find.mock.calls[0][0];
+
+    it('returns public events OR events the caller joined', async () => {
+      roster([JOINED_A, JOINED_B]);
+
+      await service.list(USER);
+
+      // A private event the caller is on the roster of must come back, so the
+      // visibility rule is a disjunction rather than a bare isPublic.
+      expect(filter().$or).toEqual([
+        { isPublic: true },
+        { _id: { $in: [JOINED_A, JOINED_B] } },
+      ]);
+      expect(filter().isPublic).toBeUndefined();
+    });
+
+    it('falls back to public-only when the caller has joined nothing', async () => {
+      roster([]);
+
+      await service.list(USER);
+
+      expect(filter().isPublic).toBe(true);
+      expect(filter().$or).toBeUndefined();
+    });
+
+    it('counts only live roster rows, not events the caller left', async () => {
+      roster([JOINED_A]);
+
+      await service.list(USER);
+
+      expect(playerModel.find.mock.calls[0][0]).toEqual(
+        expect.objectContaining({ status: 'joined' }),
+      );
+    });
+
+    it('still ANDs the other filters against the visibility rule', async () => {
+      // A joined event must not bypass a status or date narrowing.
+      roster([JOINED_A]);
+
+      await service.list(USER, { status: 'join', from: '2026-09-01' });
+
+      expect(filter().$or).toBeDefined();
+      expect(filter().status).toBe('join');
+      expect(filter().date.$gte).toBeInstanceOf(Date);
+    });
+
+    it('marks which rows the caller is on', async () => {
+      roster([JOINED_A]);
+      eventModel.find.mockReturnValue(
+        findChain([
+          { _id: JOINED_A, joinedCount: 1, maxPlayers: 4 },
+          { _id: 'someone-elses', joinedCount: 0, maxPlayers: 4 },
+        ]),
+      );
+
+      const res: any = await service.list(USER);
+
+      // Without this the mixed list is ambiguous — a caller cannot tell which
+      // rows are theirs.
+      expect(res[0].joinedByMe).toBe(true);
+      expect(res[1].joinedByMe).toBe(false);
+    });
+
+    it('still derives isFull', async () => {
+      roster([]);
+      eventModel.find.mockReturnValue(
+        findChain([{ _id: 'e1', joinedCount: 4, maxPlayers: 4 }]),
+      );
+
+      const res: any = await service.list(USER);
       expect(res[0].isFull).toBe(true);
     });
   });

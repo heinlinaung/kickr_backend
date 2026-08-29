@@ -45,6 +45,19 @@ export class EventsController {
   constructor(private eventsService: EventsService) {}
 
   @Get()
+  @ApiOperation({
+    summary: 'Discover events',
+    description:
+      'Every PUBLIC event, plus every event the caller has joined — private ' +
+      'ones included, because being on the roster is the permission. Each row ' +
+      'carries `joinedByMe`, so a mixed list can be told apart; do not assume ' +
+      'a row from here is public. Roster membership is the test, not group ' +
+      'membership: a private event you have not joined stays hidden even from ' +
+      "a member of the owning group — use GET /events/group/:groupId for a " +
+      'group schedule. NOTE: unlike /events/joined and /events/group/:groupId, ' +
+      'this route applies NO default date or status filter, so past and ' +
+      '`done` events are returned unless narrowed with ?from= or ?status=.',
+  })
   @ApiQuery({
     name: 'region',
     required: false,

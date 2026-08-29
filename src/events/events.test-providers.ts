@@ -45,7 +45,14 @@ export interface EventsTestDoubles {
 export function eventsProviders(doubles: EventsTestDoubles = {}) {
   const {
     eventModel = {},
-    playerModel = {},
+    // list() and listJoined() both resolve the caller's roster first, so the
+    // default double has to answer a find().select().lean() chain.
+    playerModel = {
+      find: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([]),
+      }),
+    },
     memberModel = {},
     groupModel = {},
     // findById/standings always query fixtures now, so the default double has

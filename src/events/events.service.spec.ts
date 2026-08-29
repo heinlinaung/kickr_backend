@@ -22,6 +22,12 @@ describe('EventsService — location handling on create', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     eventModel.create = jest.fn().mockResolvedValue({ _id: 'e1' });
+    // list() resolves the caller's roster first, so it can widen visibility to
+    // the events they joined.
+    playerModel.find = jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([]),
+    });
     const m = await Test.createTestingModule({
       providers: [
         EventsService,
@@ -131,6 +137,9 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
     Object.assign(eventModel, { find: jest.fn(), findById: jest.fn() });
     Object.assign(groupModel, { find: jest.fn(), findById: jest.fn() });
     playerModel.exists = jest.fn().mockResolvedValue(null);
+    // list() resolves the caller's roster first, so it can widen visibility to
+    // the events they joined.
+    playerModel.find = jest.fn().mockReturnValue(q([]));
 
     const m = await Test.createTestingModule({
       providers: [
