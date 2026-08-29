@@ -349,15 +349,41 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       },
     );
 
-    it('generates the same match count regardless of event duration', async () => {
-      // The match count is a function of the TEAMS, not of the clock.
-      for (const duration of [40, 90, 100, 240]) {
-        jest.clearAllMocks();
-        eventModel.findById.mockResolvedValue(eventDoc({ duration }));
-        await generate({ teamsCount: 3, duration: 10 });
+    // The reported case: a 2-hour event of 10-minute matches has room for 11
+    // slots, and three teams round-robin to only 6 — leaving an hour of the
+    // booked pitch unscheduled.
+    it.each([
+      [120, 10, 11],
+      [90, 10, 8],
+      [240, 10, 23],
+      // Below one round-robin the schedule is NOT trimmed: 40 minutes has room
+      // for 3, but dropping half the pairings is the truncation bug.
+      [40, 10, 6],
+      [60, 30, 6],
+    ])(
+      '%i-min event with %i-min matches -> %i fixtures (3 teams)',
+      async (eventDuration, matchDuration, expected) => {
+        eventModel.findById.mockResolvedValue(
+          eventDoc({ duration: eventDuration }),
+        );
+        await generate({ teamsCount: 3, duration: matchDuration });
 
-        expect(matchModel.insertMany.mock.calls[0][0]).toHaveLength(6);
-      }
+        expect(matchModel.insertMany.mock.calls[0][0]).toHaveLength(expected);
+      },
+    );
+
+    it('repeats the round-robin to fill, rather than inventing pairings', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc({ duration: 120 }));
+      await generate({ teamsCount: 3, duration: 10, colors: ['a', 'b', 'c'] });
+
+      const fixtures = matchModel.insertMany.mock.calls[0][0];
+      expect(fixtures).toHaveLength(11);
+      // Slot 7 repeats slot 1; matchNumbers stay unique across the schedule.
+      expect(fixtures[6].teamA).toBe(fixtures[0].teamA);
+      expect(fixtures[6].teamB).toBe(fixtures[0].teamB);
+      expect(fixtures.map((f: any) => f.matchNumber)).toEqual([
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+      ]);
     });
 
     it('numbers the fixtures contiguously from 1', async () => {

@@ -2,6 +2,10 @@ import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { EventsController } from './events.controller';
 import { EventTemplatesController } from './event-templates.controller';
+import {
+  EventPayment,
+  EventPaymentSchema,
+} from './schemas/event-payment.schema';
 import { EventsService } from './events.service';
 import { Event, EventSchema } from './schemas/event.schema';
 import { EventPlayer, EventPlayerSchema } from './schemas/event-player.schema';
@@ -40,6 +44,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
       { name: EventTeamChat.name, schema: EventTeamChatSchema },
       { name: EventLike.name, schema: EventLikeSchema },
       { name: EventTemplate.name, schema: EventTemplateSchema },
+      { name: EventPayment.name, schema: EventPaymentSchema },
       // Read directly for $geoNear — it must be the first aggregation stage,
       // so the geo query starts from locations rather than from events.
       { name: Location.name, schema: LocationSchema },

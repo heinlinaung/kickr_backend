@@ -78,6 +78,26 @@ export class Event {
   price: number;
 
   /**
+   * A surcharge on top of `price`, charged only when `takeAdditionalPrice` is
+   * true.
+   *
+   * Kept as its own field rather than folded into `price` so the base fee and
+   * the surcharge stay separately reportable — a client can show "20 + 5" and
+   * the organizer can switch the surcharge off without losing its amount.
+   */
+  @Prop({ default: 0, min: 0 })
+  additionalPrice: number;
+
+  /**
+   * Whether `additionalPrice` actually applies.
+   *
+   * Separate from the amount being non-zero so an organizer can keep a
+   * configured surcharge and toggle it off between events without retyping it.
+   */
+  @Prop({ default: false })
+  takeAdditionalPrice: boolean;
+
+  /**
    * Lifecycle state (spec §4.1). Replaces the old `open|full|done`.
    * There is no `full` — capacity is derived via the `isFull` virtual.
    */

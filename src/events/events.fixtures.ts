@@ -92,6 +92,36 @@ export function generateFixturesLimited(
   return generateFixtures(teamNames).slice(0, limit);
 }
 
+/**
+ * The round-robin, repeated as many times as the booked slot has room for.
+ *
+ * A round-robin is a fixed length — 3 teams meet 6 times — but an event is a
+ * block of time, and the two rarely coincide. A two-hour event of ten-minute
+ * matches has room for 11, so returning only the 6 leaves an hour of the pitch
+ * unscheduled. Extra slots repeat the round-robin from the start rather than
+ * inventing pairings, so the rotation stays balanced.
+ *
+ * `minCount` is a floor, not a cap: a schedule shorter than one full
+ * round-robin would drop pairings entirely, which is the truncation this
+ * replaced. A short event therefore overruns rather than losing fixtures — the
+ * organizer can shorten the match duration or drop matches at the end.
+ */
+export function generateFixturesFilling(
+  teamNames: string[],
+  minCount: number,
+): Fixture[] {
+  const base = generateFixtures(teamNames);
+  if (!base.length) return [];
+
+  const target = Math.max(base.length, Math.floor(minCount) || 0);
+  return Array.from({ length: target }, (_, index) => ({
+    ...base[index % base.length],
+    // Renumbered across the whole schedule so slot 7 is match 7, not match 1
+    // again — matchNumber addresses a slot and must stay unique.
+    matchNumber: index + 1,
+  }));
+}
+
 export function generateFixtures(teamNames: string[]): Fixture[] {
   const fixtures: Fixture[] = [];
   let matchNumber = 1;

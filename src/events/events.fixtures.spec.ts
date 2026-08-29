@@ -7,6 +7,7 @@ import {
   dealIntoTeams,
   generateFixtures,
   generateFixturesLimited,
+  generateFixturesFilling,
   matchCountFor,
   shuffled,
 } from './events.fixtures';
@@ -289,5 +290,62 @@ describe('computeStandings (spec §4.3, decision #5)', () => {
 
   it('returns an empty table when there is nothing to fold', () => {
     expect(computeStandings([])).toEqual([]);
+  });
+});
+
+describe('generateFixturesFilling — repeat the round-robin to fill the slot', () => {
+  const TEAMS = ['Red', 'Yellow', 'Blue'];
+
+  it('reproduces the reported case: 2h event, 10-min matches -> 11', () => {
+    // 120 minutes minus the 10-minute buffer is 110 playable, so 11 slots.
+    // A 3-team round-robin is only 6, which is what used to be returned.
+    const fixtures = generateFixturesFilling(TEAMS, matchCountFor(120, 10));
+    expect(fixtures).toHaveLength(11);
+  });
+
+  it('cycles the round-robin rather than inventing pairings', () => {
+    const base = generateFixtures(TEAMS);
+    const filled = generateFixturesFilling(TEAMS, 8);
+
+    // Slot 7 repeats slot 1, slot 8 repeats slot 2.
+    expect(filled[6].teamA).toBe(base[0].teamA);
+    expect(filled[6].teamB).toBe(base[0].teamB);
+    expect(filled[7].teamA).toBe(base[1].teamA);
+  });
+
+  it('numbers every slot contiguously from 1', () => {
+    const filled = generateFixturesFilling(TEAMS, 11);
+    expect(filled.map((f) => f.matchNumber)).toEqual([
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+    ]);
+  });
+
+  it('never returns fewer than one full round-robin', () => {
+    // A short event must not silently drop half the schedule — that was the
+    // truncation bug. The floor is the round-robin, the ceiling is the slot.
+    expect(generateFixturesFilling(TEAMS, 2)).toHaveLength(6);
+    expect(generateFixturesFilling(TEAMS, 0)).toHaveLength(6);
+    expect(generateFixturesFilling(TEAMS, -5)).toHaveLength(6);
+  });
+
+  it('leaves every fixture unplayed', () => {
+    for (const f of generateFixturesFilling(TEAMS, 11)) {
+      expect(f.scoreA).toBeNull();
+      expect(f.scoreB).toBeNull();
+      expect(f.playedAt).toBeNull();
+    }
+  });
+
+  it('returns nothing when there is no pairing to make', () => {
+    expect(generateFixturesFilling(['Red'], 10)).toEqual([]);
+    expect(generateFixturesFilling([], 10)).toEqual([]);
+  });
+
+  it('keeps two teams alternating home and away', () => {
+    const filled = generateFixturesFilling(['Red', 'Blue'], 5);
+    expect(filled).toHaveLength(5);
+    expect(filled[0].teamA).toBe('Red');
+    expect(filled[1].teamA).toBe('Blue');
+    expect(filled[2].teamA).toBe('Red');
   });
 });

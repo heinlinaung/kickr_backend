@@ -17,6 +17,7 @@ import { Team } from './schemas/team.schema';
 import { EventTeamChat } from './schemas/event-team-chat.schema';
 import { EventLike } from './schemas/event-like.schema';
 import { EventTemplate } from './schemas/event-template.schema';
+import { EventPayment } from './schemas/event-payment.schema';
 import { GroupMember } from '../groups/schemas/group-member.schema';
 import { Group } from '../groups/schemas/group.schema';
 import { Location } from '../locations/schemas/location.schema';
@@ -34,6 +35,7 @@ export interface EventsTestDoubles {
   teamChatModel?: any;
   likeModel?: any;
   templateModel?: any;
+  paymentModel?: any;
   locationModel?: any;
   locations?: any;
   imagekit?: any;
@@ -66,6 +68,7 @@ export function eventsProviders(doubles: EventsTestDoubles = {}) {
     teamChatModel = {},
     likeModel = {},
     templateModel = {},
+    paymentModel = {},
     locationModel = {},
     locations = { assertOwnedBy: jest.fn(), assertCanEdit: jest.fn() },
     imagekit = { upload: jest.fn(), deleteFile: jest.fn() },
@@ -82,6 +85,7 @@ export function eventsProviders(doubles: EventsTestDoubles = {}) {
     { provide: getModelToken(EventTeamChat.name), useValue: teamChatModel },
     { provide: getModelToken(EventLike.name), useValue: likeModel },
     { provide: getModelToken(EventTemplate.name), useValue: templateModel },
+    { provide: getModelToken(EventPayment.name), useValue: paymentModel },
     { provide: getModelToken(Location.name), useValue: locationModel },
     { provide: LocationsService, useValue: locations },
     { provide: ImageKitService, useValue: imagekit },
