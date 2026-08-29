@@ -147,6 +147,8 @@ The JSON above is a freshly created event, so most optional fields are empty. Th
 | `likeCount` | `POST`/`DELETE /events/:id/like` |
 | `templateId` | set at creation when `POST /events` is given a `templateId` |
 | `startTime`, `endTime` | optional, set at create or via `PATCH /events/:id` |
+| `additionalPrice` | **NEW** — a surcharge on top of `price`. Settable at create or via `PATCH`. Defaults to `0` |
+| `takeAdditionalPrice` | **NEW** — whether `additionalPrice` actually applies. Defaults to `false` |
 
 Model them as nullable/empty and render accordingly — an event in `join` legitimately has all of them empty.
 
@@ -247,6 +249,9 @@ or `after_match`.
 | `POST` | `/events/:id/join` | any user | Gated to `join` + capacity. |
 | `DELETE` | `/events/:id/join` | any user | Gated to `join`. |
 | `GET` | `/events/:id/players` | any user | Joined players. |
+| `GET` | `/events/:id/payments` | any user | **NEW** — payment status. Organizer sees everyone; anyone else sees only their own row. See §12. |
+| `PATCH` | `/events/:id/payments/:memberId` | organizer | **NEW** — mark a member paid/unpaid. See §12. |
+| `PATCH` | `/events/:id/teams/:teamId/members/:userId/role` | owner/admin/**captain** | **NEW** — set a player's role in a team. See §11.2c. |
 | `DELETE` | `/events/:id/players/:userId` | organizer | **NEW** — remove a player from the event. `join` only. See §8.3. |
 | `POST` | `/events/:id/teams/generate` | organizer | Create empty teams + the **full** round-robin fixture list. Accepts `colors`. Returns a message only. `preparation` only. See §11.1. |
 | `GET` | `/events/:id/teams` | any user | **NEW** — the event's teams, players populated. |
@@ -576,8 +581,11 @@ Do **not** design screens against these — the fields exist but nothing fills t
 - [ ] Join failures — "not open" and "full" — are **both** `400`; read the message.
 - [ ] Deleting an event is a **hard delete** with no notification to joined players.
 - [ ] Teams are a **two-step** flow: `POST /teams/generate` creates them empty, then `PATCH /teams/:teamId` assigns players. Never author `matches[]` client-side.
-- [ ] **`teamsCount` decides how many matches exist** — the full double round-robin, `n*(n-1)`: 2→2, 3→6, 4→12. **Changed 2026-08-27**: it used to be `floor((event.duration - 10) / matchDuration)`, which silently truncated the schedule.
-- [ ] **The schedule can now overrun the booked slot** — 3 teams × 6 matches × 30 min is 180 min in a 90-min event. The server no longer polices it; show the total.
+- [ ] **Match count = `max(roundRobin, slotsInTheBookedTime)`** — a 2-hour event of 10-min matches gives **11** fixtures for 3 teams, not 6. Extra slots repeat the round-robin. **Changed 2026-08-29.**
+- [ ] **A short event still overruns** — 3 teams in a 40-min event get all 6 round-robin matches where only 3 fit. The server does not police it; show the total.
+- [ ] **`GET /events/:id/payments` is role-aware** — organizers get everyone, a member gets only their own row. A member with **no row** means *unrecorded*, not unpaid (§12).
+- [ ] **Payment rows carry no amount.** Compute it from the event: `price + (takeAdditionalPrice ? additionalPrice : 0)`.
+- [ ] **Team roles are stored as absence for `player`** — read `team.playerRoles` for captains; anyone in `players` but not in `playerRoles` is a plain player (§11.2c).
 - [ ] **`POST /teams/generate` returns only `{ message }`.** Read teams from `GET /events/:id/teams` (you need the ids for §11.2) and fixtures from `GET /events/:id/matches`. `data.teams`/`matches`/`matchCount`/`schedule` are gone.
 - [ ] **`POST /teams/generate` now updates `event.teamCount`** to the split it created, so a later `POST /shuffle` (which reads only that field) reproduces it instead of silently rebuilding with the old count.
 - [ ] **Send `colors` to name the teams** — one per team, count must equal `teamsCount`, must be distinct (case-insensitively). Spelling is not validated.
@@ -635,27 +643,37 @@ POST /events/6a7055f42e55b9cdbe427eb4/teams/generate
 > `data.matchCount` or `data.schedule` from this call breaks — those fields
 > are gone.
 
-**How many matches you get:** the **full double round-robin**. Every pair meets
-twice, home and away, so the count depends only on the number of teams:
+**How many matches you get:** enough to **fill the booked slot**, and never
+fewer than one full double round-robin.
 
-| `teamsCount` | Matches |
-|---|---|
-| 2 | **2** |
-| 3 | **6** |
-| 4 | **12** |
-| 5 | **20** |
-| 6 | **30** |
+```
+slots       = floor((event.duration - 10) / duration)   ← 10 min buffer
+roundRobin  = teamsCount * (teamsCount - 1)             ← every pair, twice
+matches     = max(roundRobin, slots)
+```
 
-> ⚠️ **Changed:** the list used to be truncated to
-> `floor((event.duration - 10) / duration)`, which is why
-> `GET /events/:id/matches` returned only two or three fixtures for three
-> teams — the tail of the schedule was dropped at generation time and there was
-> no way to recover it. Nothing is trimmed now.
+| Event | Match length | Teams | Round-robin | Slots | Matches |
+|---|---|---|---|---|---|
+| 120 min | 10 min | 3 | 6 | 11 | **11** |
+| 90 min | 10 min | 3 | 6 | 8 | **8** |
+| 40 min | 10 min | 3 | 6 | 3 | **6** |
+| 90 min | 30 min | 4 | 12 | 2 | **12** |
+
+Extra slots **repeat the round-robin from the start** — slot 7 replays the
+pairing from slot 1 — so the rotation stays balanced rather than inventing
+pairings. `matchNumber` runs contiguously across the whole schedule, so slot 7
+is match 7.
+
+> ⚠️ **Changed twice — this is the current behaviour.** The list was originally
+> *truncated* to the slot count, which dropped the tail of the schedule. It was
+> then changed to the bare round-robin, which left the opposite gap: a two-hour
+> event of ten-minute matches has room for 11 and got only 6, leaving an hour of
+> pitch time unscheduled. It now fills the slot with the round-robin as a floor.
 >
-> **The consequence to plan for:** the schedule can exceed the booked slot.
-> 3 teams × 6 matches × 30 minutes is 180 minutes in a 90-minute event. The
-> server no longer polices this, so show the organizer the total and let them
-> decide — or use a shorter `duration`.
+> **The consequence to plan for:** a short event still overruns. 3 teams in a
+> 40-minute event get 6 matches — a full round-robin — where only 3 fit. The
+> floor wins, because dropping pairings is worse than running long. Show the
+> organizer the total and let them shorten `duration` or drop trailing matches.
 
 A `duration` so long that not even one match fits the event is still rejected
 with `400`, as a sanity check on the input.
@@ -734,6 +752,51 @@ Assigning players flips it to `"ready"` and notifies each one.
 
 `EventPlayer.team` is kept in step automatically, so player-facing reads stay
 consistent with the team documents.
+
+### 11.2c Team roles — `PATCH /events/:id/teams/:teamId/members/:userId/role`
+
+*New 2026-08-29.* Names a captain within a team, once players are assigned.
+
+```http
+PATCH /events/6a70…/teams/6a71…/members/6a69…/role
+{ "role": "captain" }
+```
+
+| Role | Meaning |
+|---|---|
+| `player` | The default. **Stored as absence** — setting it clears an existing captaincy |
+| `captain` | Team captain |
+
+**Who may call it:** the event organizer (owner/admin) **or a group `captain`**.
+This is the only team route a captain may use — naming a captain is squad
+management, which the role exists for. It grants nothing else: a captain still
+cannot edit the event, change its status, or take payments.
+
+- **The player must already be in the team.** Assign them with §11.2 first;
+  otherwise `400`. A role on someone outside the squad would be invisible on
+  every read and would resurface if they were assigned later.
+- **Allowed in every state except `done`.**
+- **Roles are dropped automatically** when a player is removed from the team by
+  a later §11.2 call — `players` is the source of truth for membership and
+  `playerRoles` only annotates it.
+
+**How it is stored.** `team.players` is unchanged — still a flat array of ids,
+populated into user objects on read. A parallel `team.playerRoles` array holds
+`{ userId, role }` for **non-default roles only**, so a player absent from it is
+a plain `player`.
+
+> Reshaping `players` into `[{ userId, role }]` would be the tidier model — one
+> source of truth — but it changes the `GET /events/:id/teams` response for
+> every existing client, and the assign path, notifications and the shuffle all
+> read `players` as ids. Annotating was chosen as the cheaper half of that
+> trade. To render a team, read `players` for the squad and check `playerRoles`
+> for captaincy.
+
+| Code | When |
+|---|---|
+| `400` | Malformed ids, the player is not in this team, or the event is `done` |
+| `403` | Caller is not owner/admin/captain |
+| `404` | That team does not belong to this event |
 
 ### 11.2b The server-side fallback — `POST /events/:id/shuffle`
 
@@ -822,3 +885,90 @@ Win 3 / draw 1 / loss 0. Ordered by points, then goal difference, then goals for
 ### 11.6 Team chats
 
 One room per team name is created on submission and archived when the event reaches `done`. Resubmitting the same names keeps the existing rooms; renaming a team creates a new one. There is no messaging endpoint yet (§9).
+
+---
+
+## 12. Member payments
+
+*New 2026-08-29.* Records **whether** each member has paid — not how much.
+
+### 12.1 What an event costs
+
+The amount lives on the **event**, not on the payment row:
+
+```
+total = price + (takeAdditionalPrice ? additionalPrice : 0)
+```
+
+Both `additionalPrice` and `takeAdditionalPrice` are settable at
+`POST /events` and via `PATCH /events/:id`. The surcharge amount and whether it
+applies are separate fields on purpose, so an organizer can keep a configured
+surcharge and switch it off between events without retyping it.
+
+> **No amount is stored per member.** Copying the price onto each payment row
+> would drift the moment an organizer edited the event. The row answers one
+> question: has this member paid? Compute the amount client-side from the event.
+
+### 12.2 `GET /events/:id/payments`
+
+**Role-aware, one route:**
+
+| Caller | Sees |
+|---|---|
+| Organizer (owner/admin) | Every member's row — this is the "Manage Payments" screen |
+| Anyone else | **Only their own row** |
+
+A member has no business reading who else has paid, hence the narrowing.
+
+```json
+{
+  "data": [
+    {
+      "_id": "…",
+      "eventId": "…",
+      "memberId": { "_id": "…", "name": "Thant", "username": "thant",
+                    "displayName": "Thant", "profileImage": "https://…" },
+      "isPaid": true,
+      "paidAt": "2026-08-29T09:12:00.000Z",
+      "recordedBy": "…"
+    }
+  ]
+}
+```
+
+> **A member with no row is ABSENT, not returned as unpaid.** That means "not
+> recorded yet", which is deliberately distinct from "recorded as unpaid". Join
+> against `GET /events/:id/players` for the roster and treat a missing row as
+> *unrecorded* in the UI.
+
+`memberId` is populated with display fields only — **never the email**, matching
+`/users/search` and `/groups/:id/members`.
+
+### 12.3 `PATCH /events/:id/payments/:memberId`
+
+Organizer only.
+
+```http
+PATCH /events/6a70…/payments/6a69…
+{ "isPaid": true }
+```
+
+- **Upserts** — the first call for a member creates their record, so there is no
+  separate "open the payment sheet" step.
+- The member must be **on the roster** (`status: joined`), else `404`.
+- `paidAt` is stamped when `isPaid` becomes true and **cleared when a payment is
+  reversed**, so it can never read as a payment date for someone currently
+  unpaid.
+- `recordedBy` captures which organizer marked it — payments are *recorded*
+  here, not taken. No money moves through this API.
+
+| Code | When |
+|---|---|
+| `400` | Malformed `memberId` |
+| `403` | Caller is not the organizer |
+| `404` | Unknown event, or that member has not joined |
+
+> **Guest players are not covered yet.** The `+1`/`+2` flow is unbuilt (§9), so
+> a guest has no user id and therefore cannot hold a payment row. Once guests
+> exist, `memberId` will need to accept them or the schema will need a guest
+> reference.

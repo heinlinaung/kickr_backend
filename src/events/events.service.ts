@@ -26,6 +26,10 @@ import {
   EventTemplateDocument,
 } from './schemas/event-template.schema';
 import {
+  EventPayment,
+  EventPaymentDocument,
+} from './schemas/event-payment.schema';
+import {
   GroupMember,
   GroupMemberDocument,
 } from '../groups/schemas/group-member.schema';
@@ -58,14 +62,20 @@ import {
   canTransition,
   isEventStatus,
 } from './events.lifecycle';
-import { Team, TeamDocument } from './schemas/team.schema';
+import {
+  Team,
+  TeamDocument,
+  DEFAULT_TEAM_MEMBER_ROLE,
+} from './schemas/team.schema';
+import { SetPaymentDto } from './dto/set-payment.dto';
+import { SetTeamMemberRoleDto } from './dto/set-team-member-role.dto';
 import {
   MATCH_BUFFER_MINUTES,
   MIN_TEAMS,
   TEAM_COLOURS,
   computeStandings,
   dealIntoTeams,
-  generateFixtures,
+  generateFixturesFilling,
   matchCountFor,
   shuffled,
 } from './events.fixtures';
@@ -89,6 +99,15 @@ const ORGANIZER_ROLES = ['owner', 'admin'] as const;
  * role is for. It grants no other event permission.
  */
 const SCORER_ROLES = ['owner', 'admin', 'referee'] as const;
+
+/**
+ * Group roles that may set a player's role inside a team.
+ *
+ * Adds `captain` to the organizer pair: naming a captain is squad management,
+ * which is what the group captain role exists for. It grants nothing else —
+ * a captain still cannot edit the event, change its status or take payments.
+ */
+const TEAM_ROLE_MANAGER_ROLES = ['owner', 'admin', 'captain'] as const;
 
 /** Filters accepted by `GET /events` (spec §6). */
 export interface ListEventsQuery {
@@ -122,6 +141,8 @@ export class EventsService {
     private likeModel: Model<EventLikeDocument>,
     @InjectModel(EventTemplate.name)
     private templateModel: Model<EventTemplateDocument>,
+    @InjectModel(EventPayment.name)
+    private paymentModel: Model<EventPaymentDocument>,
     @InjectModel(Location.name)
     private locationModel: Model<LocationDocument>,
     private readonly locationsService: LocationsService,
@@ -862,6 +883,8 @@ export class EventsService {
       'sportType',
       'skillLevel',
       'price',
+      'additionalPrice',
+      'takeAdditionalPrice',
     ] as const;
     for (const key of EDITABLE) {
       if (dto[key] !== undefined) (event as any)[key] = dto[key];
@@ -1016,13 +1039,16 @@ export class EventsService {
     // Fixtures are derived now, from the team NAMES — assignment comes later and
     // does not change who plays whom.
     //
-    // The FULL double round-robin, deliberately not trimmed to what fits the
-    // booked slot. Trimming is why GET /events/:id/matches used to show two or
-    // three fixtures for three teams: the tail of the schedule was silently
-    // dropped at generation time and there was no way to get it back. The
-    // match count is a property of the teams, so it is generated in full and
-    // the organizer decides what actually gets played.
-    const fixtures = generateFixtures(names);
+    // Enough fixtures to fill the booked slot, never fewer than a full
+    // round-robin.
+    //
+    // Two failure modes, one on each side. Trimming to the slot dropped the
+    // tail of the schedule — three teams in a short event lost half their
+    // pairings. Emitting only the round-robin left the opposite gap: a
+    // two-hour event of ten-minute matches has room for 11, and six fixtures
+    // leave an hour of pitch time unscheduled. The floor is the round-robin,
+    // the target is the slot.
+    const fixtures = generateFixturesFilling(names, matchCount);
     await this.matchModel.deleteMany({ eventId: eventObjectId });
     const matches = await this.matchModel.insertMany(
       fixtures.map((fixture) => ({ ...fixture, eventId: eventObjectId })),
@@ -1148,6 +1174,14 @@ export class EventsService {
     if (dto.name !== undefined) team.name = dto.name.trim();
     team.players = roster.map((id) => new Types.ObjectId(id));
     team.status = roster.length ? 'ready' : 'pending';
+
+    // Roles annotate `players`, so a player dropped from the squad must not
+    // keep a captaincy here — it would be invisible to every read and would
+    // reappear if they were assigned again later.
+    const rosterIds = new Set(roster.map(String));
+    team.playerRoles = (team.playerRoles ?? []).filter((entry) =>
+      rosterIds.has(entry.userId.toString()),
+    );
     await team.save();
 
     // Keep EventPlayer.team in step — it is what player-facing reads use.
@@ -1597,6 +1631,169 @@ export class EventsService {
   }
 
   /** Joined player ids as strings, in join order. */
+  // --- Payments -----------------------------------------------------------
+
+  /**
+   * Payment rows for an event.
+   *
+   * Role-aware rather than two routes: an organizer gets every member's status
+   * because they are the one collecting, and anyone else gets only their own
+   * row — a member has no business reading who else has paid.
+   *
+   * Members with no row yet are absent rather than synthesised as unpaid. The
+   * caller knows the roster from `GET /events/:id/players`; inventing rows here
+   * would blur "not recorded" with "recorded as unpaid".
+   */
+  async listPayments(eventId: string, userId: string) {
+    const event = await this.eventModel.findById(eventId).select('_id').lean();
+    if (!event) throw new NotFoundException('Event not found');
+
+    const isOrganizer = await this.isOrganizer(eventId, userId);
+    const filter: Record<string, unknown> = { eventId: event._id };
+    if (!isOrganizer) filter.memberId = new Types.ObjectId(userId);
+
+    return this.paymentModel
+      .find(filter)
+      .populate('memberId', 'name username displayName profileImage')
+      .sort({ createdAt: 1 })
+      .lean();
+  }
+
+  /**
+   * Record whether one member has paid. Organizer only.
+   *
+   * Upserts, so the first call for a member creates the row — there is no
+   * separate "open the payment sheet" step, and a member who never appears
+   * simply has no record.
+   *
+   * `paidAt` tracks the transition rather than the write: it is stamped when
+   * `isPaid` becomes true and cleared when a payment is reversed, so it can
+   * never read as a payment date for someone currently unpaid.
+   */
+  async setPayment(
+    eventId: string,
+    requesterId: string,
+    memberId: string,
+    dto: SetPaymentDto,
+  ) {
+    await this.assertOrganizer(eventId, requesterId);
+
+    if (!Types.ObjectId.isValid(memberId)) {
+      throw new BadRequestException('Invalid member id');
+    }
+
+    // Only someone actually on the roster can owe for the event.
+    const player = await this.playerModel.findOne({
+      eventId: new Types.ObjectId(eventId),
+      userId: new Types.ObjectId(memberId),
+      status: 'joined',
+    });
+    if (!player) {
+      throw new NotFoundException('That member has not joined this event');
+    }
+
+    const updated = await this.paymentModel.findOneAndUpdate(
+      {
+        eventId: new Types.ObjectId(eventId),
+        memberId: new Types.ObjectId(memberId),
+      },
+      {
+        $set: {
+          isPaid: dto.isPaid,
+          paidAt: dto.isPaid ? new Date() : null,
+          recordedBy: new Types.ObjectId(requesterId),
+        },
+      },
+      { new: true, upsert: true },
+    );
+
+    return updated;
+  }
+
+  // --- Team member roles ---------------------------------------------------
+
+  /**
+   * Set one player's role within one team.
+   *
+   * Owner, admin or group captain. Only meaningful once players are assigned,
+   * so the target must already be in `team.players` — a role on someone who is
+   * not in the squad would be invisible and would linger if they never joined.
+   *
+   * `player` is the default and is stored as ABSENCE: setting it removes the
+   * entry rather than writing `role: 'player'`. That keeps one representation
+   * for the common case, so a player cannot be both absent and explicitly
+   * default at once.
+   */
+  async setTeamMemberRole(
+    eventId: string,
+    teamId: string,
+    targetUserId: string,
+    requesterId: string,
+    dto: SetTeamMemberRoleDto,
+  ) {
+    const event = await this.assertOrganizer(
+      eventId,
+      requesterId,
+      TEAM_ROLE_MANAGER_ROLES,
+    );
+    if (!canModify(event.status)) {
+      throw new BadRequestException(
+        'This event is archived; team roles can no longer be changed',
+      );
+    }
+
+    if (!Types.ObjectId.isValid(teamId)) {
+      throw new BadRequestException('Invalid team id');
+    }
+    if (!Types.ObjectId.isValid(targetUserId)) {
+      throw new BadRequestException('Invalid user id');
+    }
+
+    const team = await this.teamModel.findOne({
+      _id: new Types.ObjectId(teamId),
+      eventId: new Types.ObjectId(eventId),
+    });
+    if (!team) throw new NotFoundException('Team not found for this event');
+
+    const isInSquad = team.players.some(
+      (playerId) => playerId.toString() === targetUserId,
+    );
+    if (!isInSquad) {
+      throw new BadRequestException(
+        'That player is not in this team — assign them first',
+      );
+    }
+
+    // Drop any existing entry, then re-add only if the role is non-default.
+    team.playerRoles = team.playerRoles.filter(
+      (entry) => entry.userId.toString() !== targetUserId,
+    );
+    if (dto.role !== DEFAULT_TEAM_MEMBER_ROLE) {
+      team.playerRoles.push({
+        userId: new Types.ObjectId(targetUserId),
+        role: dto.role,
+      });
+    }
+    await team.save();
+
+    return {
+      message: `Role updated to '${dto.role}'`,
+      teamId: String(team._id),
+      userId: targetUserId,
+      role: dto.role,
+    };
+  }
+
+  /** True when the caller may act as the event's organizer, without throwing. */
+  private async isOrganizer(eventId: string, userId: string): Promise<boolean> {
+    try {
+      await this.assertOrganizer(eventId, userId);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   private async joinedPlayerIds(eventId: string): Promise<string[]> {
     const players = await this.playerModel
       .find({ eventId: new Types.ObjectId(eventId), status: 'joined' })

@@ -5,6 +5,16 @@ import { HydratedDocument, Types } from 'mongoose';
 export type TeamDocument = HydratedDocument<Team>;
 
 /**
+ * Roles a player can hold inside a team.
+ *
+ * `player` is the default and is never stored — absence from `playerRoles`
+ * means `player`, so the common case costs nothing and cannot drift.
+ */
+export const TEAM_MEMBER_ROLES = ['player', 'captain'] as const;
+export type TeamMemberRole = (typeof TEAM_MEMBER_ROLES)[number];
+export const DEFAULT_TEAM_MEMBER_ROLE: TeamMemberRole = 'player';
+
+/**
  * One team within an event.
  *
  * Its own collection rather than a string on EventPlayer, because a team now
@@ -33,6 +43,31 @@ export class Team {
   /** Assigned players. Empty until the organizer assigns them. */
   @Prop({ type: [{ type: Types.ObjectId, ref: 'User' }], default: [] })
   players: Types.ObjectId[];
+
+  /**
+   * Per-player roles within this team. Only NON-default roles are stored, so
+   * a player absent from this list is a plain `player`.
+   *
+   * `players` deliberately stays a flat id array rather than becoming
+   * `[{ userId, role }]`. That would be the tidier domain model — one source
+   * of truth — but `players` is populated straight into user objects by
+   * `GET /events/:id/teams`, so reshaping it changes the response for every
+   * existing client, and the assign path, notifications and the shuffle all
+   * read it as ids. Annotating is the cheaper half of that trade; the cost is
+   * that the two fields have to be kept consistent, which
+   * `assignTeamPlayers` does by pruning roles for players who left the team.
+   */
+  @Prop({
+    type: [
+      {
+        userId: { type: Types.ObjectId, ref: 'User', required: true },
+        role: { type: String, enum: TEAM_MEMBER_ROLES, required: true },
+        _id: false,
+      },
+    ],
+    default: [],
+  })
+  playerRoles: { userId: Types.ObjectId; role: string }[];
 
   /** Minutes this team plays per match — the unit fixtures are built from. */
   @Prop({ required: true, min: 1 })

@@ -111,6 +111,29 @@ export class UpdateEventDto {
   @Min(0)
   price?: number;
 
+  @ApiProperty({
+    example: 5,
+    required: false,
+    minimum: 0,
+    description:
+      'Surcharge on top of `price`. Only charged when takeAdditionalPrice ' +
+      'is true, so the amount can be configured and left switched off.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  additionalPrice?: number;
+
+  @ApiProperty({
+    example: false,
+    required: false,
+    description: 'Whether `additionalPrice` applies. Defaults to false.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  takeAdditionalPrice?: boolean;
+
   @ApiProperty({ example: '2026-07-01T18:00:00.000Z', required: false })
   @IsOptional()
   @IsDateString()

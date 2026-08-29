@@ -34,6 +34,8 @@ import { AssignTeamPlayersDto } from './dto/assign-team-players.dto';
 import { AddMatchDto } from './dto/add-match.dto';
 import { UpdateMatchScoreDto } from './dto/update-match-score.dto';
 import { SubmitResultDto } from './dto/submit-result.dto';
+import { SetPaymentDto } from './dto/set-payment.dto';
+import { SetTeamMemberRoleDto } from './dto/set-team-member-role.dto';
 
 @ApiTags('Events')
 @ApiBearerAuth()
@@ -372,6 +374,53 @@ export class EventsController {
     return this.eventsService.generateTeams(id, user._id.toString(), dto);
   }
 
+  // --- Payments ------------------------------------------------------------
+
+  @Get(':id/payments')
+  @ApiOperation({
+    summary: 'Payment status for the event',
+    description:
+      'Role-aware: an organizer gets every member, anyone else gets only ' +
+      'their own row. A member with no row yet is simply absent — that means ' +
+      '"not recorded", which is deliberately distinct from "recorded as ' +
+      'unpaid". The amount is not stored per member; it comes from the ' +
+      "event's `price` plus `additionalPrice` when `takeAdditionalPrice` is " +
+      'set.',
+  })
+  @ApiResponse({ status: 404, description: 'Event not found' })
+  listPayments(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.eventsService.listPayments(id, user._id.toString());
+  }
+
+  @Patch(':id/payments/:memberId')
+  @ApiOperation({
+    summary: 'Mark a member paid or unpaid (organizer)',
+    description:
+      'Upserts, so the first call for a member creates their record. The ' +
+      'member must be on the roster. `paidAt` is stamped when isPaid becomes ' +
+      'true and cleared when a payment is reversed, so it never reads as a ' +
+      'payment date for someone currently unpaid.',
+  })
+  @ApiResponse({ status: 400, description: 'Malformed member id' })
+  @ApiResponse({ status: 403, description: 'Caller is not the organizer' })
+  @ApiResponse({
+    status: 404,
+    description: 'Unknown event, or that member has not joined',
+  })
+  setPayment(
+    @Param('id') id: string,
+    @Param('memberId') memberId: string,
+    @CurrentUser() user: any,
+    @Body() dto: SetPaymentDto,
+  ) {
+    return this.eventsService.setPayment(
+      id,
+      user._id.toString(),
+      memberId,
+      dto,
+    );
+  }
+
   @Get(':id/teams')
   @ApiOperation({ summary: "The event's teams, with players populated" })
   teams(@Param('id') id: string) {
@@ -398,6 +447,41 @@ export class EventsController {
     return this.eventsService.assignTeamPlayers(
       id,
       teamId,
+      user._id.toString(),
+      dto,
+    );
+  }
+
+  @Patch(':id/teams/:teamId/members/:userId/role')
+  @ApiOperation({
+    summary: "Set a player's role within a team (owner/admin/captain)",
+    description:
+      'Roles are `player` (default) and `captain`. The player must already ' +
+      'be assigned to the team — assign them with ' +
+      'PATCH /events/:id/teams/:teamId first. Setting `player` clears an ' +
+      'existing captaincy; the default is stored as absence, so it is not ' +
+      'echoed back on team reads. A group `captain` may call this, unlike ' +
+      'most team routes, since naming a captain is squad management. Roles ' +
+      'are dropped automatically if the player is later removed from the team.',
+  })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Malformed ids, the player is not in this team, or the event is done',
+  })
+  @ApiResponse({ status: 403, description: 'Caller may not manage team roles' })
+  @ApiResponse({ status: 404, description: 'Team not found for this event' })
+  setTeamMemberRole(
+    @Param('id') id: string,
+    @Param('teamId') teamId: string,
+    @Param('userId') userId: string,
+    @CurrentUser() user: any,
+    @Body() dto: SetTeamMemberRoleDto,
+  ) {
+    return this.eventsService.setTeamMemberRole(
+      id,
+      teamId,
+      userId,
       user._id.toString(),
       dto,
     );

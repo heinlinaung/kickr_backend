@@ -12,6 +12,14 @@ Integration guides written against the **live** API — every request/response s
 
 **Live reference while the server is running:** Swagger UI at `/api-docs`, OpenAPI JSON at `/api-docs-json`.
 
+## New — 2026-08-29
+
+- **`GET` / `PATCH /events/:id/payments`** — record whether each member has paid. Role-aware: organizers see everyone, a member sees only their own row. No amount is stored per member; compute it from the event.
+- **`PATCH /events/:id/teams/:teamId/members/:userId/role`** — name a team captain. Owner/admin **or group captain**.
+- **`additionalPrice` / `takeAdditionalPrice` on the event** — a surcharge and its on/off switch, kept separate so the amount survives being switched off.
+
+**Fixed:** `GET /events/:id/matches` now fills the booked slot. A 2-hour event of 10-minute matches gives **11** fixtures for 3 teams, not 6 — extra slots repeat the round-robin, which stays the floor. Detail in [events-api §11.1 and §12](./events-api.md).
+
 ## ⚠️ Breaking changes — 2026-08-27
 
 Three fixes to the events API:
