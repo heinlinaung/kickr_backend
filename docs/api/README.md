@@ -12,6 +12,19 @@ Integration guides written against the **live** API — every request/response s
 
 **Live reference while the server is running:** Swagger UI at `/api-docs`, OpenAPI JSON at `/api-docs-json`.
 
+## New — 2026-08-31
+
+**Guest players (`+1` / `+2`)** — a member brings a friend with no account; an organizer approves or rejects them. Four routes under `/events/:id/guests`. Detail in [events-api §13](./events-api.md).
+
+Four things to build against:
+
+1. **A guest row has no `userId`.** Branch on `type: "guest"` and read `guestName`. No placeholder account is ever created.
+2. **`joinedCount` can exceed `maxPlayers`.** Capacity is a soft limit for guests by decision, so `isFull` flips true and joining closes for everyone else — but going over is allowed, not an error.
+3. **Leaving takes your guests with you.** The leave and remove responses carry `guestsRemoved`.
+4. **Guests never hold a payment row** — the sponsor covers them.
+
+Not yet: guests cannot be assigned to a team (`team.players` references `User`). Standings need no change — they carry no player names.
+
 ## New — 2026-08-29
 
 - **`GET` / `PATCH /events/:id/payments`** — record whether each member has paid. Role-aware: organizers see everyone, a member sees only their own row. No amount is stored per member; compute it from the event.

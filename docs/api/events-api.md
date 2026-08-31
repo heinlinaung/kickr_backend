@@ -249,6 +249,10 @@ or `after_match`.
 | `POST` | `/events/:id/join` | any user | Gated to `join` + capacity. |
 | `DELETE` | `/events/:id/join` | any user | Gated to `join`. |
 | `GET` | `/events/:id/players` | any user | Joined players. |
+| `POST` | `/events/:id/guests` | joined member | **NEW** — add a `+1`/`+2` guest. Pending until approved. See §13. |
+| `GET` | `/events/:id/guests` | any user | **NEW** — guests on the event. Role-aware. See §13. |
+| `PATCH` | `/events/:id/guests/:guestId/approval` | organizer | **NEW** — approve or reject a guest. See §13. |
+| `DELETE` | `/events/:id/guests/:guestId` | sponsor or organizer | **NEW** — withdraw a guest. See §13. |
 | `GET` | `/events/:id/payments` | any user | **NEW** — payment status. Organizer sees everyone; anyone else sees only their own row. See §12. |
 | `PATCH` | `/events/:id/payments/:memberId` | organizer | **NEW** — mark a member paid/unpaid. See §12. |
 | `PATCH` | `/events/:id/teams/:teamId/members/:userId/role` | owner/admin/**captain** | **NEW** — set a player's role in a team. See §11.2c. |
@@ -602,6 +606,11 @@ Do **not** design screens against these — the fields exist but nothing fills t
 - [ ] **A short event still overruns** — 3 teams in a 40-min event get all 6 round-robin matches where only 3 fit. The server does not police it; show the total.
 - [ ] **`GET /events/:id/payments` is role-aware** — organizers get everyone, a member gets only their own row. A member with **no row** means *unrecorded*, not unpaid (§12).
 - [ ] **Payment rows carry no amount.** Compute it from the event: `price + (takeAdditionalPrice ? additionalPrice : 0)`.
+- [ ] **Guests have NO `userId`** — branch on `type: "guest"` and read `guestName`. Never assume a roster row has a user.
+- [ ] **`joinedCount` can exceed `maxPlayers`** once guests are approved. It is a soft limit; "12 / 10" is valid, don't clamp it.
+- [ ] **Pending guests are absent from `/players`** — use `/guests` to show them awaiting a decision.
+- [ ] **Leaving takes your guests with you.** Read `guestsRemoved` on the leave/remove response and tell the user.
+- [ ] **Guests never get a payment row** — the sponsor covers them (§13.4).
 - [ ] **Team roles are stored as absence for `player`** — read `team.playerRoles` for captains; anyone in `players` but not in `playerRoles` is a plain player (§11.2c).
 - [ ] **`POST /teams/generate` returns only `{ message }`.** Read teams from `GET /events/:id/teams` (you need the ids for §11.2) and fixtures from `GET /events/:id/matches`. `data.teams`/`matches`/`matchCount`/`schedule` are gone.
 - [ ] **`POST /teams/generate` now updates `event.teamCount`** to the split it created, so a later `POST /shuffle` (which reads only that field) reproduces it instead of silently rebuilding with the old count.
@@ -985,7 +994,116 @@ PATCH /events/6a70…/payments/6a69…
 | `403` | Caller is not the organizer |
 | `404` | Unknown event, or that member has not joined |
 
-> **Guest players are not covered yet.** The `+1`/`+2` flow is unbuilt (§9), so
-> a guest has no user id and therefore cannot hold a payment row. Once guests
-> exist, `memberId` will need to accept them or the schema will need a guest
-> reference.
+> **Guests never hold a payment row, by decision.** A guest is covered by the
+> member who brought them, so the sponsor's single row settles for both. That is
+> also why `memberId` could stay a `User` reference rather than widening to
+> accept a guest — see §13.4.
+
+---
+
+## 13. Guests — `+1` / `+2`
+
+*New 2026-08-31.* A member brings a friend who has no KickR account. The guest
+must be approved by an organizer before they count.
+
+### 13.1 The flow
+
+```
+member joins  →  POST /guests (pending)  →  organizer approves  →  on the roster
+                                        ↘  organizer rejects   →  not playing
+```
+
+- **The caller must already have joined.** A guest is somebody else's plus-one;
+  an organizer who never joined has no allowance of their own (`403`).
+- **`join` state only**, like every other roster change.
+- **Two guests per member**, counting pending and approved but **not rejected** —
+  a rejection does not burn the allowance.
+- A guest has **no account**: `guestName` is everything the system knows. There
+  is no email, phone or profile, and **no placeholder user is created**.
+
+### 13.2 A guest row
+
+Guests live on the same collection as players, distinguished by `type`:
+
+```json
+{
+  "_id": "6a94…",
+  "eventId": "6a94…",
+  "type": "guest",
+  "guestName": "John",
+  "addedByUserId": { "_id": "6a69…", "name": "Thant", "username": "thant" },
+  "approval": "pending",
+  "status": "joined"
+}
+```
+
+| Field | Note |
+|---|---|
+| `type` | `registered` or `guest`. **Branch on this, never on the presence of `userId`** |
+| `userId` | **Absent on a guest.** It is now optional on the schema |
+| `approval` | `pending` \| `approved` \| `rejected`. A **second axis** from `status` |
+| `addedByUserId` | The sponsor. Load-bearing: caps the allowance, decides who may withdraw, drives the cascade |
+
+> **`approval` and `status` are orthogonal, not alternatives.** An approved guest
+> can still leave (`status: cancelled`), and a pending guest is not on the roster
+> yet. Folding them into one field would make "approved but left"
+> unrepresentable.
+
+### 13.3 Capacity — a soft limit
+
+**An approved guest counts toward `joinedCount`**, and **may push the event past
+`maxPlayers`**. That is deliberate: a guest arriving with a member is a fact on
+the ground, not a booking to validate. Going over is allowed.
+
+The knock-on effects are real, so plan for them:
+
+- `isFull` becomes `true` and **joining closes for everyone else**.
+- `joinedCount` can exceed `maxPlayers`, so a "12 / 10 players" display is a
+  legitimate state — don't clamp it or treat it as corrupt.
+
+Capacity moves only on the **approval transition**: submitting a guest does not
+count them, approving does, rejecting or withdrawing an approved one gives the
+slot back. Re-approving is idempotent.
+
+### 13.4 Guests and payments
+
+**A guest never gets a payment row.** The sponsor pays for their guests, so the
+sponsor's own row in §12 settles for both. `memberId` therefore stays a `User`
+reference — no guest-shaped payments to model.
+
+### 13.5 A guest leaves with their sponsor
+
+**When a member leaves — or an organizer removes them — their guests are
+cancelled too.** A guest exists only as somebody's plus-one: with the sponsor
+gone there is nobody vouching for them, nobody paying for them, and nobody to
+arrive with. Leaving them would quietly convert a guest into an unattached
+player.
+
+Both exits report how many went:
+
+```json
+{ "data": { "message": "Left event successfully", "guestsRemoved": 2 } }
+```
+
+Surface that — "you and your 2 guests left" is very different from "you left".
+Only the **approved** guests give capacity back, since pending ones never held
+any.
+
+### 13.6 Who sees what
+
+| Route | Organizer | Anyone else |
+|---|---|---|
+| `GET /events/:id/guests` | every guest | approved guests, **plus their own** pending/rejected |
+| `GET /events/:id/players` | registered + **approved** guests | same |
+
+Pending and rejected guests are **absent from `/players`** — they are not
+playing, and a team-builder must not be offered them. `addedByUserId` is
+populated with display fields only, never the email.
+
+### 13.7 Not built yet
+
+| | State |
+|---|---|
+| **Guests in teams** | `team.players` references `User`, so a guest cannot be assigned to a team yet. Approved guests appear on the roster but not in the shuffle or `team.players`. Needs a `team.guests` field referencing roster rows — the same annotate-don't-reshape choice made for `playerRoles` (§11.2c). |
+| **Guests in standings** | Standings are team-level (`team`, `played`, `points`) and carry no player names at all, so there is nothing for a guest to appear in. No change needed. |
+| **Notifying a guest** | Impossible by definition — no account, no device. Their sponsor is the contact. |
