@@ -613,6 +613,9 @@ Do **not** design screens against these — the fields exist but nothing fills t
 - [ ] **Pending guests are absent from `/players`** — use `/guests` to show them awaiting a decision.
 - [ ] **Leaving takes your guests with you.** Read `guestsRemoved` on the leave/remove response and tell the user.
 - [ ] **Guests never get a payment row** — the sponsor covers them (§13.4).
+- [ ] **A team's squad is `players` + `guests`** — reading only `players` drops guests (§13.8).
+- [ ] **`guestIds` replaces outright** — omit it on a `PATCH /teams/:teamId` and the team's guests are cleared.
+- [ ] **`numberOfPlayers` counts guests too**, so 4 players + 2 guests breaches a limit of 5.
 - [ ] **Team roles are stored as absence for `player`** — read `team.playerRoles` for captains; anyone in `players` but not in `playerRoles` is a plain player (§11.2c).
 - [ ] **`POST /teams/generate` returns only `{ message }`.** Read teams from `GET /events/:id/teams` (you need the ids for §11.2) and fixtures from `GET /events/:id/matches`. `data.teams`/`matches`/`matchCount`/`schedule` are gone.
 - [ ] **`POST /teams/generate` now updates `event.teamCount`** to the split it created, so a later `POST /shuffle` (which reads only that field) reproduces it instead of silently rebuilding with the old count.
@@ -1141,6 +1144,71 @@ populated with display fields only, never the email.
 
 | | State |
 |---|---|
-| **Guests in teams** | `team.players` references `User`, so a guest cannot be assigned to a team yet. Approved guests appear on the roster but not in the shuffle or `team.players`. Needs a `team.guests` field referencing roster rows — the same annotate-don't-reshape choice made for `playerRoles` (§11.2c). |
 | **Guests in standings** | Standings are team-level (`team`, `played`, `points`) and carry no player names at all, so there is nothing for a guest to appear in. No change needed. |
 | **Notifying a guest** | Impossible by definition — no account, no device. Their sponsor is the contact. |
+
+*Guests in teams shipped 2026-09-01 — see §13.8.*
+
+### 13.8 Guests in teams
+
+A team's squad is the **union of two fields**, because `team.players`
+references `User` and a guest has no account:
+
+| Field | Holds |
+|---|---|
+| `team.players` | registered players, by **user id** |
+| `team.guests` | approved guests, by their **roster-row id** (`_id` from `GET /events/:id/guests`) |
+
+`GET /events/:id/teams` populates both:
+
+```json
+{
+  "name": "Blue",
+  "players": [ { "_id": "6a69…", "name": "Thant", "profileImage": "https://…" } ],
+  "guests":  [ { "_id": "6a95…", "guestName": "Thant guest 1",
+                 "type": "guest", "approval": "approved",
+                 "addedByUserId": "6a69…" } ],
+  "numberOfPlayers": 5
+}
+```
+
+> **Render the squad as `players` + `guests`.** A screen reading only `players`
+> silently drops guests — which is what it did before this change.
+
+**Assigning them.** `PATCH /events/:id/teams/:teamId` takes an optional
+`guestIds` alongside `playerIds`:
+
+```json
+{ "playerIds": ["6a69…"], "guestIds": ["6a95…"] }
+```
+
+- **Replaces outright, like `playerIds`.** Omitting `guestIds` **clears** the
+  team's guests — one call fully describes the squad, so a stale client cannot
+  preserve a guest it did not mean to keep.
+- Each id must be an **approved** guest on this event, else `400`.
+- A guest already in another team is refused by name, same as a player.
+- **`numberOfPlayers` counts players AND guests.** 4 players + 2 guests against
+  a limit of 5 is a `400` — checking only the registered half would let a team
+  quietly field 6.
+- A **guest-only** team still counts as `ready`.
+
+**The shuffle deals guests too.** `POST /events/:id/shuffle` spreads approved
+guests across the teams alongside registered players. Two consequences:
+
+- `numberOfPlayers` is sized from the **whole** roster: `ceil((players +
+  guests) / teams)`. Sizing off registered players alone would set a limit the
+  guests then breach.
+- Guests count toward the two-player minimum, so one registered player plus two
+  approved guests is shuffleable.
+
+**Answering "which team is this guest in?"** `EventPlayer.team` is now stamped
+for guests as well, so the guest's own row carries the team name:
+
+```json
+{ "type": "guest", "guestName": "Thant guest 1", "team": "Blue" }
+```
+
+That write is keyed on the roster-row `_id`, not `userId` — a guest has none, so
+the player-facing update could never reach them. Before this, a guest sat in
+`team.guests` while their own row still read `team: null`, and there was no way
+to answer the question from the roster at all.

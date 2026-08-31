@@ -50,6 +50,21 @@ const joinedPlayers = (ids: string[]) => ({
     .mockResolvedValue(ids.map((id) => ({ userId: new Types.ObjectId(id) }))),
 });
 
+/** playerModel.find(...).select(...).sort(...).lean() -> guest roster rows */
+const guestRows = (ids: string[]) => ({
+  select: jest.fn().mockReturnThis(),
+  sort: jest.fn().mockReturnThis(),
+  lean: jest
+    .fn()
+    .mockResolvedValue(ids.map((id) => ({ _id: new Types.ObjectId(id) }))),
+});
+
+/** Overrides only the REGISTERED half of the roster mock; guests stay empty. */
+const onlyPlayers = (playerModel: any, ids: string[]) =>
+  playerModel.find.mockImplementation((q: any = {}) =>
+    q.type === 'guest' ? guestRows([]) : joinedPlayers(ids),
+  );
+
 describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
   let service: EventsService;
   const eventModel: any = {};
@@ -63,7 +78,14 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     eventModel.findById = jest.fn();
-    playerModel.find = jest.fn().mockReturnValue(joinedPlayers([P1, P2, P3, P4]));
+    // Two roster queries now: registered players, then approved guests. The
+    // double branches on the query so the guest lookup does not receive player
+    // documents; individual tests override it to supply guests.
+    playerModel.find = jest.fn().mockImplementation((q: any = {}) =>
+      q.type === 'guest'
+        ? guestRows([])
+        : joinedPlayers([P1, P2, P3, P4]),
+    );
     playerModel.findOne = jest.fn().mockResolvedValue(null);
     playerModel.bulkWrite = jest.fn().mockResolvedValue({});
     memberModel.findOne = jest.fn().mockResolvedValue(null);
@@ -600,6 +622,202 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
     });
   });
 
+  describe('guests in teams', () => {
+    const GUEST = '507f1f77bcf86cd7994390f1';
+    const GUEST2 = '507f1f77bcf86cd7994390f2';
+
+    /** Roster mock with both halves populated. */
+    const withGuests = (players: string[], guests: string[]) =>
+      playerModel.find.mockImplementation((q: any = {}) =>
+        q.type === 'guest' ? guestRows(guests) : joinedPlayers(players),
+      );
+
+    const teamDoc = (over: Record<string, unknown> = {}) => {
+      const doc: any = {
+        _id: new Types.ObjectId(),
+        eventId: new Types.ObjectId(EVENT_ID),
+        name: 'Red',
+        players: [],
+        guests: [],
+        playerRoles: [],
+        numberOfPlayers: 5,
+        status: 'pending',
+        save: jest.fn().mockResolvedValue(undefined),
+        toJSON() {
+          return { name: this.name };
+        },
+        ...over,
+      };
+      return doc;
+    };
+
+    describe('assignTeamPlayers', () => {
+      it('persists guests by their roster-row id', async () => {
+        eventModel.findById.mockResolvedValue(eventDoc());
+        withGuests([P1], [GUEST]);
+        const team = teamDoc();
+        teamModel.findOne.mockResolvedValue(team);
+
+        await service.assignTeamPlayers(
+          EVENT_ID,
+          String(team._id),
+          CREATOR,
+          { playerIds: [P1], guestIds: [GUEST] },
+        );
+
+        expect(team.guests.map(String)).toEqual([GUEST]);
+      });
+
+      it('stamps EventPlayer.team for the guest, keyed on _id', async () => {
+        // A guest has no userId, so the userId-keyed update can never reach
+        // them. Without this their row stays team: null while they sit in
+        // team.guests — two sources disagreeing.
+        eventModel.findById.mockResolvedValue(eventDoc());
+        withGuests([P1], [GUEST]);
+        const team = teamDoc({ name: 'Blue' });
+        teamModel.findOne.mockResolvedValue(team);
+
+        await service.assignTeamPlayers(
+          EVENT_ID,
+          String(team._id),
+          CREATOR,
+          { playerIds: [], guestIds: [GUEST] },
+        );
+
+        const byId = playerModel.updateMany.mock.calls.find(
+          ([filter]: any[]) => filter._id?.$in,
+        );
+        expect(byId).toBeDefined();
+        expect(String(byId[0]._id.$in[0])).toBe(GUEST);
+        expect(byId[1]).toEqual({ $set: { team: 'Blue' } });
+      });
+
+      it('refuses a guest who is not approved on this event', async () => {
+        eventModel.findById.mockResolvedValue(eventDoc());
+        withGuests([P1], []);
+        teamModel.findOne.mockResolvedValue(teamDoc());
+
+        await expect(
+          service.assignTeamPlayers(EVENT_ID, String(new Types.ObjectId()), CREATOR, {
+            playerIds: [],
+            guestIds: [GUEST],
+          }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+      });
+
+      it('counts guests toward the squad limit', async () => {
+        // 4 players + 2 guests against a limit of 5 must fail: checking only
+        // registered players would let a team quietly field 6.
+        eventModel.findById.mockResolvedValue(eventDoc());
+        withGuests([P1, P2, P3, P4], [GUEST, GUEST2]);
+        teamModel.findOne.mockResolvedValue(teamDoc({ numberOfPlayers: 5 }));
+
+        await expect(
+          service.assignTeamPlayers(EVENT_ID, String(new Types.ObjectId()), CREATOR, {
+            playerIds: [P1, P2, P3, P4],
+            guestIds: [GUEST, GUEST2],
+          }),
+        ).rejects.toThrow(/holds at most 5/);
+      });
+
+      it('refuses a guest already in another team', async () => {
+        eventModel.findById.mockResolvedValue(eventDoc());
+        withGuests([P1], [GUEST]);
+        teamModel.findOne.mockResolvedValue(teamDoc());
+        teamModel.find.mockReturnValue({
+          lean: jest.fn().mockResolvedValue([
+            { name: 'Yellow', players: [], guests: [new Types.ObjectId(GUEST)] },
+          ]),
+        });
+
+        await expect(
+          service.assignTeamPlayers(EVENT_ID, String(new Types.ObjectId()), CREATOR, {
+            playerIds: [],
+            guestIds: [GUEST],
+          }),
+        ).rejects.toThrow(/already in Yellow/);
+      });
+
+      it('clears guests when guestIds is omitted', async () => {
+        // Replace-outright, like playerIds — a stale client must not silently
+        // preserve a guest it did not mean to keep.
+        eventModel.findById.mockResolvedValue(eventDoc());
+        withGuests([P1], [GUEST]);
+        const team = teamDoc({ guests: [new Types.ObjectId(GUEST)] });
+        teamModel.findOne.mockResolvedValue(team);
+
+        await service.assignTeamPlayers(
+          EVENT_ID,
+          String(team._id),
+          CREATOR,
+          { playerIds: [P1] },
+        );
+
+        expect(team.guests).toEqual([]);
+      });
+
+      it('a guest-only team still counts as ready', async () => {
+        eventModel.findById.mockResolvedValue(eventDoc());
+        withGuests([], [GUEST]);
+        const team = teamDoc();
+        teamModel.findOne.mockResolvedValue(team);
+
+        await service.assignTeamPlayers(
+          EVENT_ID,
+          String(team._id),
+          CREATOR,
+          { playerIds: [], guestIds: [GUEST] },
+        );
+
+        expect(team.status).toBe('ready');
+      });
+    });
+
+    describe('shuffleTeams', () => {
+      beforeEach(() => {
+        teamModel.findOne = jest.fn().mockImplementation(() => teamDoc());
+        teamModel.find = jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue([]),
+        });
+      });
+
+      it('deals guests across the teams too', async () => {
+        eventModel.findById.mockResolvedValue(eventDoc({ teamCount: 2 }));
+        withGuests([P1, P2], [GUEST, GUEST2]);
+
+        await service.shuffleTeams(EVENT_ID, CREATOR);
+
+        // Both guest ids land somewhere across the assign calls.
+        const dealt = playerModel.updateMany.mock.calls
+          .filter(([f]: any[]) => f._id?.$in)
+          .flatMap(([f]: any[]) => f._id.$in.map(String));
+        expect(dealt.sort()).toEqual([GUEST, GUEST2].sort());
+      });
+
+      it('counts guests toward the minimum to shuffle', async () => {
+        // One registered player plus two approved guests is playable.
+        eventModel.findById.mockResolvedValue(eventDoc({ teamCount: 2 }));
+        withGuests([P1], [GUEST, GUEST2]);
+
+        await expect(
+          service.shuffleTeams(EVENT_ID, CREATOR),
+        ).resolves.toBeDefined();
+      });
+
+      it('sizes numberOfPlayers from players AND guests', async () => {
+        // 2 + 2 over 2 teams is 2 each. Counting only registered players would
+        // set a limit of 1 that the guests then breach.
+        eventModel.findById.mockResolvedValue(eventDoc({ teamCount: 2 }));
+        withGuests([P1, P2], [GUEST, GUEST2]);
+
+        await service.shuffleTeams(EVENT_ID, CREATOR);
+
+        const inserted = teamModel.insertMany.mock.calls[0][0];
+        expect(inserted.every((t: any) => t.numberOfPlayers === 2)).toBe(true);
+      });
+    });
+  });
+
   describe('the roster query must tolerate legacy rows', () => {
     it('excludes guests rather than requiring type: registered', async () => {
       // REGRESSION. `type` was added on 2026-08-31 with a default, and Mongoose
@@ -611,7 +829,7 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       //
       // Phrased as an exclusion, legacy rows pass and guests still do not.
       eventModel.findById.mockResolvedValue(eventDoc());
-      playerModel.find.mockReturnValue(joinedPlayers([P1, P2, P3, P4]));
+      onlyPlayers(playerModel, [P1, P2, P3, P4]);
 
       // Only the roster QUERY is under test here; the shuffle goes on to
       // assign teams, which this block does not mock. Whether that later half
@@ -660,7 +878,7 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       // players had joined: 4 intended, 2 joined, and every later shuffle
       // would build 2 teams even once the roster filled up. Only
       // POST /teams/generate, where the organizer states a number, persists.
-      playerModel.find.mockReturnValue(joinedPlayers([P1, P2]));
+      onlyPlayers(playerModel, [P1, P2]);
       const doc = eventDoc({ teamCount: 4 });
       eventModel.findById.mockResolvedValue(doc);
 
@@ -671,7 +889,7 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
     });
 
     it('caps team count at the number of players so no team is empty', async () => {
-      playerModel.find.mockReturnValue(joinedPlayers([P1, P2]));
+      onlyPlayers(playerModel, [P1, P2]);
       eventModel.findById.mockResolvedValue(eventDoc({ teamCount: 4 }));
 
       await service.shuffleTeams(EVENT_ID, CREATOR);
@@ -680,7 +898,7 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
     });
 
     it('refuses to shuffle fewer than two players', async () => {
-      playerModel.find.mockReturnValue(joinedPlayers([P1]));
+      onlyPlayers(playerModel, [P1]);
       eventModel.findById.mockResolvedValue(eventDoc());
 
       await expect(

@@ -1204,11 +1204,34 @@ export class EventsService {
     // not just a display target: an over-filled team would field more players
     // than the organizer planned for, and nothing downstream would catch it.
     // Under-filling stays legal — a roster is built up incrementally.
-    if (roster.length > team.numberOfPlayers) {
+    // --- Guests, validated on the same terms as players ---------------------
+    const guestRoster = (dto.guestIds ?? []).map(String);
+    if (guestRoster.length) {
+      const approvedGuests = await this.approvedGuestIds(eventId);
+      const notApproved = guestRoster.find((id) => !approvedGuests.includes(id));
+      if (notApproved) {
+        throw new BadRequestException(
+          `Guest ${notApproved} is not an approved guest on this event`,
+        );
+      }
+      const dupGuest = guestRoster.find(
+        (id, i) => guestRoster.indexOf(id) !== i,
+      );
+      if (dupGuest) {
+        throw new BadRequestException(
+          `Guest ${dupGuest} is listed twice in this team`,
+        );
+      }
+    }
+
+    // The squad limit counts EVERYONE who will take the pitch. Checking only
+    // registered players would let a team of 9 plus 2 guests quietly field 11.
+    if (roster.length + guestRoster.length > team.numberOfPlayers) {
       throw new BadRequestException(
         `${team.name} holds at most ${team.numberOfPlayers} player(s); ` +
-          `received ${roster.length}. Regenerate the teams with a larger ` +
-          'numberOfPlayers to raise the limit.',
+          `received ${roster.length} player(s) and ${guestRoster.length} ` +
+          'guest(s). Regenerate the teams with a larger numberOfPlayers to ' +
+          'raise the limit.',
       );
     }
 
@@ -1225,11 +1248,21 @@ export class EventsService {
           `Player ${clash} is already in ${other.name}`,
         );
       }
+      const guestClash = guestRoster.find((id) =>
+        (other.guests ?? []).some((g) => g.toString() === id),
+      );
+      if (guestClash) {
+        throw new BadRequestException(
+          `Guest ${guestClash} is already in ${other.name}`,
+        );
+      }
     }
 
     if (dto.name !== undefined) team.name = dto.name.trim();
     team.players = roster.map((id) => new Types.ObjectId(id));
-    team.status = roster.length ? 'ready' : 'pending';
+    team.guests = guestRoster.map((id) => new Types.ObjectId(id));
+    team.status =
+      roster.length || guestRoster.length ? 'ready' : 'pending';
 
     // Roles annotate `players`, so a player dropped from the squad must not
     // keep a captaincy here — it would be invisible to every read and would
@@ -1245,6 +1278,19 @@ export class EventsService {
       { eventId: eventObjectId, team: team.name },
       { $set: { team: null } },
     );
+
+    // Guests are stamped by roster-row `_id`, not by `userId`: they have none,
+    // so the userId-keyed update below can never reach them. Without this a
+    // guest sat in `team.guests` while their own row still read `team: null` —
+    // two sources of truth disagreeing, and no way to answer "which team is
+    // this guest in?" from the roster.
+    if (guestRoster.length) {
+      await this.playerModel.updateMany(
+        { _id: { $in: guestRoster.map((id) => new Types.ObjectId(id)) } },
+        { $set: { team: team.name } },
+      );
+    }
+
     if (roster.length) {
       await this.playerModel.updateMany(
         {
@@ -1277,6 +1323,10 @@ export class EventsService {
     return this.teamModel
       .find({ eventId: event._id })
       .populate('players', 'name profileImage')
+      // Guests come from the roster collection, so the useful fields are the
+      // guest's display name and who brought them — they have no user account
+      // and therefore no profile image of their own.
+      .populate('guests', 'guestName addedByUserId type approval')
       .sort({ name: 1 })
       .lean();
   }
@@ -1298,7 +1348,11 @@ export class EventsService {
     }
 
     const joined = await this.joinedPlayerIds(eventId);
-    if (joined.length < MIN_TEAMS) {
+    const guests = await this.approvedGuestIds(eventId);
+
+    // Guests count toward the minimum: they are playing, so an event with one
+    // registered player and two approved guests is shuffleable.
+    if (joined.length + guests.length < MIN_TEAMS) {
       throw new BadRequestException(
         `At least ${MIN_TEAMS} joined players are needed to shuffle teams`,
       );
@@ -1308,7 +1362,7 @@ export class EventsService {
     // team, and an empty team still appears in fixtures it can never play.
     const teamsCount = Math.max(
       MIN_TEAMS,
-      Math.min(event.teamCount ?? 4, joined.length),
+      Math.min(event.teamCount ?? 4, joined.length + guests.length),
     );
 
     // No body to take a match duration from, so aim for DEFAULT_SHUFFLE_MATCHES
@@ -1323,14 +1377,22 @@ export class EventsService {
     const generated = await this.createTeamsAndFixtures(eventId, userId, {
       teamsCount,
       duration,
-      // The shuffle deals every joined player, so the squad size each team is
-      // aiming for IS its share of the roster — rounded up, since a remainder
-      // lands on the earlier teams.
-      numberOfPlayers: Math.ceil(joined.length / teamsCount),
+      // The shuffle deals everyone who will play — registered and guests — so
+      // the squad size each team aims for IS its share of the whole roster,
+      // rounded up since a remainder lands on the earlier teams. Counting only
+      // registered players here would set a limit the guests then breach.
+      numberOfPlayers: Math.ceil(
+        (joined.length + guests.length) / teamsCount,
+      ),
     });
 
-    // Deal the shuffled players across the teams just created.
+    // Deal the shuffled players across the teams just created, and the guests
+    // separately. Two deals rather than one over a merged list, because the two
+    // land in different fields — `players` takes user ids, `guests` takes
+    // roster-row ids — and mixing them would need the ids tagged and split
+    // again at the far end.
     const dealt = dealIntoTeams(shuffled(joined), teamsCount);
+    const dealtGuests = dealIntoTeams(shuffled(guests), teamsCount);
     const teams: unknown[] = [];
     for (const [index, team] of generated.teams.entries()) {
       teams.push(
@@ -1338,7 +1400,10 @@ export class EventsService {
           eventId,
           String((team as { _id: unknown })._id),
           userId,
-          { playerIds: dealt[index]?.playerIds ?? [] },
+          {
+            playerIds: dealt[index]?.playerIds ?? [],
+            guestIds: dealtGuests[index]?.playerIds ?? [],
+          },
         ),
       );
     }
@@ -2117,6 +2182,27 @@ export class EventsService {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Roster-row ids of the APPROVED guests on an event, oldest first.
+   *
+   * The guest counterpart to `joinedPlayerIds`. Returns roster-row ids rather
+   * than user ids because a guest has no user account — those ids are what
+   * `team.guests` holds.
+   */
+  private async approvedGuestIds(eventId: string): Promise<string[]> {
+    const guests = await this.playerModel
+      .find({
+        eventId: new Types.ObjectId(eventId),
+        type: 'guest',
+        status: 'joined',
+        approval: 'approved',
+      })
+      .select('_id')
+      .sort({ joinedAt: 1 })
+      .lean();
+    return guests.map((guest) => String(guest._id));
   }
 
   /** Event ids the caller is currently on the roster of (a left event is not one). */

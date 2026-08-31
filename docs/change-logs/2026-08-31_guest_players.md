@@ -324,15 +324,19 @@ listing, and the cascade from both exits.
 
 ## 8. Still not built
 
+> **The teams gap was closed on 2026-09-01** — see
+> [2026-09-01_guests_in_teams.md](./2026-09-01_guests_in_teams.md). The row
+> below is left as written, since it is what was true at the time.
+
 | | Why |
 |---|---|
-| **Guests in teams** | `team.players` references `User`, so a guest cannot go in it. Needs a `team.guests` field referencing roster rows — the same annotate-don't-reshape trade as `playerRoles`. Approved guests appear on the roster but not in the shuffle. |
+| **Guests in teams** | ~~`team.players` references `User`, so a guest cannot go in it. Needs a `team.guests` field referencing roster rows — the same annotate-don't-reshape trade as `playerRoles`. Approved guests appear on the roster but not in the shuffle.~~ **Done 2026-09-01.** |
 | **Guests in standings** | Nothing to do — see decision 3. |
 | **Notifying a guest** | Impossible: no account, no device. The sponsor is the contact. |
 
-The teams gap is the real remaining work, and it is the reason "officially added
-to the team" is only half-true today: an approved guest is officially on the
-**roster**, but cannot yet be placed in a team.
+The teams gap was the real remaining work, and was the reason "officially added
+to the team" was only half-true — an approved guest was officially on the
+**roster** but could not be placed in a team. Closed on 2026-09-01.
 
 ## 9. Files
 
