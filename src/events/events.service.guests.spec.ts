@@ -76,7 +76,13 @@ describe('EventsService — guests (+1 / +2)', () => {
     });
     eventModel.updateOne = jest.fn().mockResolvedValue({ modifiedCount: 1 });
     // The sponsor is on the roster by default.
-    playerModel.findOne = jest.fn().mockResolvedValue({ status: 'joined' });
+    // addGuest populates the sponsor's name to derive a default guestName, so
+    // the double answers both a bare await and a .populate() chain.
+    const sponsorRow: any = { status: 'joined', userId: { name: 'Thant' } };
+    sponsorRow.populate = () => Promise.resolve(sponsorRow);
+    playerModel.findOne = jest
+      .fn()
+      .mockReturnValue(Object.assign(Promise.resolve(sponsorRow), sponsorRow));
     playerModel.countDocuments = jest.fn().mockResolvedValue(0);
     playerModel.create = jest
       .fn()
@@ -120,10 +126,70 @@ describe('EventsService — guests (+1 / +2)', () => {
       expect(playerModel.create.mock.calls[0][0].guestName).toBe('John');
     });
 
+    describe('default guestName', () => {
+      const addWithout = (sponsor = SPONSOR) =>
+        service.addGuest(EVENT_ID, sponsor, {} as any);
+
+      it('derives it from the sponsor name and a sequence number', async () => {
+        playerModel.countDocuments.mockResolvedValue(0);
+
+        await addWithout();
+
+        expect(playerModel.create.mock.calls[0][0].guestName).toBe(
+          'Thant guest 1',
+        );
+      });
+
+      it('numbers the second guest 2', async () => {
+        playerModel.countDocuments.mockResolvedValue(1);
+
+        await addWithout();
+
+        expect(playerModel.create.mock.calls[0][0].guestName).toBe(
+          'Thant guest 2',
+        );
+      });
+
+      it('numbers from every guest ever added, so names never repeat', async () => {
+        // Sequencing off the ALLOWANCE count would reuse "guest 1" after a
+        // rejection, colliding with the rejected row's name.
+        playerModel.countDocuments.mockResolvedValue(0);
+        await addWithout();
+
+        // Two counts: one for the cap, one for the sequence. The sequence one
+        // must not filter on approval or status.
+        const sequenceQuery = playerModel.countDocuments.mock.calls[1][0];
+        expect(sequenceQuery.approval).toBeUndefined();
+        expect(sequenceQuery.status).toBeUndefined();
+        expect(sequenceQuery.type).toBe('guest');
+      });
+
+      it('an explicit name still wins', async () => {
+        await service.addGuest(EVENT_ID, SPONSOR, { guestName: 'John' });
+        expect(playerModel.create.mock.calls[0][0].guestName).toBe('John');
+      });
+
+      it('falls back when the sponsor has no readable name', async () => {
+        const row: any = { status: 'joined', userId: null };
+        row.populate = () => Promise.resolve(row);
+        playerModel.findOne.mockReturnValue(
+          Object.assign(Promise.resolve(row), row),
+        );
+        playerModel.countDocuments.mockResolvedValue(0);
+
+        await addWithout();
+
+        expect(playerModel.create.mock.calls[0][0].guestName).toBe('Guest 1');
+      });
+    });
+
     it('requires the sponsor to have joined', async () => {
       // A guest is somebody else's plus-one; an organizer who never joined has
-      // no allowance of their own.
-      playerModel.findOne.mockResolvedValue(null);
+      // no allowance of their own. The lookup now chains .populate(), so the
+      // "absent" double has to answer that and still resolve to null.
+      playerModel.findOne.mockReturnValue({
+        populate: () => Promise.resolve(null),
+      });
       await expect(add()).rejects.toBeInstanceOf(ForbiddenException);
       expect(playerModel.create).not.toHaveBeenCalled();
     });

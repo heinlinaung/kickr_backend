@@ -1710,11 +1710,15 @@ export class EventsService {
 
     // Only someone playing may bring someone. An organizer who never joined
     // has no roster row and so no guest allowance of their own.
-    const sponsor = await this.playerModel.findOne({
-      eventId: new Types.ObjectId(eventId),
-      userId: new Types.ObjectId(sponsorId),
-      status: 'joined',
-    });
+    // The sponsor's name is populated because it seeds the default guestName —
+    // cheaper than injecting the User model into this service for one string.
+    const sponsor = await this.playerModel
+      .findOne({
+        eventId: new Types.ObjectId(eventId),
+        userId: new Types.ObjectId(sponsorId),
+        status: 'joined',
+      })
+      .populate('userId', 'name');
     if (!sponsor) {
       throw new ForbiddenException('Join the event before adding a guest');
     }
@@ -1734,7 +1738,9 @@ export class EventsService {
     const guest = await this.playerModel.create({
       eventId: new Types.ObjectId(eventId),
       type: 'guest',
-      guestName: dto.guestName.trim(),
+      guestName:
+        dto.guestName?.trim() ||
+        (await this.defaultGuestName(eventId, sponsorId, sponsor)),
       addedByUserId: new Types.ObjectId(sponsorId),
       approval: 'pending',
       status: 'joined',
@@ -1742,6 +1748,40 @@ export class EventsService {
     });
 
     return guest.toJSON();
+  }
+
+  /**
+   * `<sponsor name> guest <n>` — the name used when the client sends none.
+   *
+   * Lets the UI offer a bare "+ Add Guest" button with nothing to type, while
+   * still producing something an organizer can tell apart on an approval list.
+   *
+   * The sequence counts EVERY guest row this sponsor has ever created for the
+   * event, including rejected and withdrawn ones. Numbering off the live
+   * allowance instead would reuse "guest 1" after a rejection and collide with
+   * the rejected row's own name.
+   */
+  private async defaultGuestName(
+    eventId: string,
+    sponsorId: string,
+    sponsor: EventPlayerDocument,
+  ): Promise<string> {
+    const everBrought = await this.playerModel.countDocuments({
+      eventId: new Types.ObjectId(eventId),
+      addedByUserId: new Types.ObjectId(sponsorId),
+      type: 'guest',
+    });
+
+    // `userId` is populated to a user document here, not an id.
+    const sponsorName = (
+      sponsor.userId as unknown as { name?: string } | null
+    )?.name?.trim();
+
+    return sponsorName
+      ? `${sponsorName} guest ${everBrought + 1}`
+      : // No readable name to borrow — still numbered, so two guests from the
+        // same member never share a label.
+        `Guest ${everBrought + 1}`;
   }
 
   /**

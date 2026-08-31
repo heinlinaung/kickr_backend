@@ -1021,6 +1021,25 @@ member joins  →  POST /guests (pending)  →  organizer approves  →  on the 
 - A guest has **no account**: `guestName` is everything the system knows. There
   is no email, phone or profile, and **no placeholder user is created**.
 
+**`guestName` is optional.** Omit it and the server derives
+`<sponsor name> guest <n>`:
+
+```http
+POST /events/6a94…/guests
+{}                                  → guestName: "Thant guest 1"
+{}                                  → guestName: "Thant guest 2"
+{ "guestName": "John" }             → guestName: "John"
+```
+
+So the UI can offer a bare **`+ Add Guest`** button with nothing to type, while
+an organizer still sees something they can tell apart on the approval list. Send
+a value to override it.
+
+The number counts **every** guest this member has ever added to the event,
+including rejected and withdrawn ones — so after a rejection the next guest is
+"guest 2", not a second "guest 1" colliding with the rejected row. If the
+sponsor has no readable name the fallback is `Guest <n>`.
+
 ### 13.2 A guest row
 
 Guests live on the same collection as players, distinguished by `type`:

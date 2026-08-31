@@ -1,7 +1,7 @@
 # Change Log — 2026-08-31
 
 **Branch:** `events-feature-spec`
-**Tests:** 820 passing across 40 suites · build clean
+**Tests:** 825 passing across 40 suites · build clean
 **Verified:** unit only — no run against a real MongoDB and no live client. §6
 lists what that leaves unproven, and one item there needs a real database.
 
@@ -79,6 +79,22 @@ Minting a placeholder user per guest was rejected outright. A guest must never
 be representable as an application user, or they leak into auth, search and
 profiles.
 
+## 2.2 `guestName` is derived by default
+
+`guestName` is optional on the request. Omitted, the server names the guest
+`<sponsor name> guest <n>` — "Thant guest 1", "Thant guest 2" — so the UI can
+offer a bare "+ Add Guest" button with nothing to type, while an organizer still
+sees something distinguishable on the approval list. An explicit value wins.
+
+Two details:
+
+- **The sequence counts every guest the member has ever added** to the event,
+  rejected and withdrawn included. Numbering off the live allowance would reuse
+  "guest 1" after a rejection and collide with the rejected row's own name.
+- **The sponsor's name is populated onto the roster row already being fetched**,
+  rather than injecting the `User` model into `EventsService` for one string.
+  Falls back to `Guest <n>` when there is no readable name.
+
 ## 3. Routes
 
 | Method | Path | Who |
@@ -134,7 +150,7 @@ addition to two existing routes, additive only.
 
 ## 6. Testing, and what is NOT proven
 
-34 new tests in `events.service.guests.spec.ts`, 820 total. Covered: the
+39 new tests in `events.service.guests.spec.ts`, 825 total. Covered: the
 pending-by-default creation, the two-guest cap and its rejection exemption, the
 `join`-only gate across all six states, every capacity transition in §4
 including idempotency, the sponsor/organizer split on withdrawal, the role-aware
