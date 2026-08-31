@@ -600,6 +600,31 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
     });
   });
 
+  describe('the roster query must tolerate legacy rows', () => {
+    it('excludes guests rather than requiring type: registered', async () => {
+      // REGRESSION. `type` was added on 2026-08-31 with a default, and Mongoose
+      // defaults apply on WRITE, not on read - so every roster row created
+      // before that date has NO `type` field at all. A positive
+      // { type: 'registered' } matched none of them, so shuffle saw an empty
+      // roster on every pre-existing event and answered
+      // "At least 2 joined players are needed to shuffle teams".
+      //
+      // Phrased as an exclusion, legacy rows pass and guests still do not.
+      eventModel.findById.mockResolvedValue(eventDoc());
+      playerModel.find.mockReturnValue(joinedPlayers([P1, P2, P3, P4]));
+
+      // Only the roster QUERY is under test here; the shuffle goes on to
+      // assign teams, which this block does not mock. Whether that later half
+      // succeeds is irrelevant to the filter shape.
+      await service.shuffleTeams(EVENT_ID, CREATOR).catch(() => undefined);
+
+      const q = playerModel.find.mock.calls[0][0];
+      expect(q.type).toEqual({ $ne: 'guest' });
+      // Same reasoning already applied to approval.
+      expect(q.approval).toEqual({ $nin: ['pending', 'rejected'] });
+    });
+  });
+
   describe('shuffleTeams — the server-side fallback (§4.3.3)', () => {
     beforeEach(() => {
       teamModel.findOne = jest.fn().mockImplementation(() =>

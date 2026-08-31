@@ -2142,18 +2142,24 @@ export class EventsService {
   /**
    * User ids of the REGISTERED players on the roster, oldest first.
    *
-   * Scoped to `type: 'registered'` deliberately. These ids flow into
-   * `team.players`, which references `User`, and into notifications — a guest
-   * has neither an account to reference nor a device to notify, and a guest row
-   * carries no `userId` at all, so including them here would dereference
-   * undefined. Guests are assigned to teams by their own roster-row id.
+   * Guests are EXCLUDED. These ids flow into `team.players`, which references
+   * `User`, and into notifications — a guest has neither an account to
+   * reference nor a device to notify, and a guest row carries no `userId` at
+   * all, so including them here would dereference undefined.
+   *
+   * Phrased as `type: { $ne: 'guest' }` rather than `type: 'registered'`, for
+   * the same reason `PLAYABLE_APPROVAL` is an exclusion: `type` was added with
+   * a default, and Mongoose defaults apply on WRITE, not on read. Every roster
+   * row created before that field existed has no `type` at all, so a positive
+   * match found none of them and shuffle reported an empty roster on every
+   * pre-existing event.
    */
   private async joinedPlayerIds(eventId: string): Promise<string[]> {
     const players = await this.playerModel
       .find({
         eventId: new Types.ObjectId(eventId),
         status: 'joined',
-        type: 'registered',
+        type: { $ne: 'guest' },
         approval: PLAYABLE_APPROVAL,
       })
       .select('userId')
