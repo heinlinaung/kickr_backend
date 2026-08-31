@@ -1,7 +1,7 @@
 # Change Log — 2026-08-31
 
 **Branch:** `events-feature-spec`
-**Tests:** 829 passing across 40 suites · build clean
+**Tests:** 830 passing across 40 suites · build clean
 **Verified:** unit only — no run against a real MongoDB and no live client. §7
 lists what that leaves unproven, and one item there needs a real database.
 
@@ -148,7 +148,7 @@ but left".
 Registered rows default to `approved` so a playable query needs no branch on
 `type`.
 
-### 3.1 Two traps in the schema change
+### 3.1 Three traps in the schema change — one of them missed
 
 **The unique index would have broken.** `{ eventId, userId }` was unique, and
 guests carry no `userId` — so every guest on an event would collide with every
@@ -176,6 +176,34 @@ reference nor a device to notify.
 Minting a placeholder user per guest was rejected outright. A guest must never
 be representable as an application user, or they leak into auth, search and
 profiles.
+
+**The third trap was missed, and found in live testing.** `joinedEventIds`
+aside, the same defaults-apply-on-write reasoning was written down for
+`approval` and then not applied one line later to `type`:
+`joinedPlayerIds` filtered `{ type: 'registered' }` positively. Every roster row
+created before today has no `type` field, so that matched **none** of them, and
+`POST /events/:id/shuffle` answered
+
+```
+400  "At least 2 joined players are needed to shuffle teams"
+```
+
+on every pre-existing event — while `GET /events/:id/players` kept working,
+because it never filtered on `type`. That divergence is what made it confusing
+to look at: the roster was plainly there in one endpoint and empty in the other.
+
+Now `{ type: { $ne: 'guest' } }`, phrased as an exclusion for exactly the reason
+`PLAYABLE_APPROVAL` is. A regression test pins the filter shape.
+
+Worth recording as a pattern rather than a one-off: **adding a defaulted field
+to an existing collection makes every positive filter on that field a silent
+data-loss bug.** The guest-only queries (`type: 'guest'`) are safe because guest
+rows are only ever written after the field existed — the danger is only ever on
+the pre-existing side.
+
+That this shipped despite being written down in this very section is the
+argument for the live-database check listed in §7: unit tests mock Mongoose, so
+no test in this suite could have caught it.
 
 ### 3.2 `guestName` is derived by default
 
@@ -276,7 +304,7 @@ addition to two existing routes, additive only.
 
 ## 7. Testing, and what is NOT proven
 
-43 new tests in `events.service.guests.spec.ts`, 829 total. Covered: the
+43 new tests in `events.service.guests.spec.ts`, 830 total. Covered: the
 pending-by-default creation, the two-guest cap and its rejection exemption, the
 `join`-only gate across all six states, every capacity transition in §5
 including idempotency, the sponsor/organizer split on withdrawal, the role-aware
