@@ -98,6 +98,18 @@ export class CreateEventDto {
   takeAdditionalPrice?: boolean;
 
   @ApiProperty({
+    example: false,
+    required: false,
+    description:
+      'Whether members may bring guests (+1 / +2) to this event. Defaults ' +
+      'to false — guests are opt-in. Only members who have JOINED the event ' +
+      'may add one. Turning it off later does not remove approved guests.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  isAllowExtraPlayer?: boolean;
+
+  @ApiProperty({
     example: '2026-07-01T18:00:00.000Z',
     required: false,
     description: 'Kick-off time; `date` remains the scheduling field.',

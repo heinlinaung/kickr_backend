@@ -98,6 +98,22 @@ export class Event {
   takeAdditionalPrice: boolean;
 
   /**
+   * Whether members may bring guests (`+1` / `+2`) to this event.
+   *
+   * Defaults to **false**: a capability switch stays off until an organizer
+   * asks for it. That also makes the rollout safe without a migration — events
+   * created before this field existed have no value, which reads as false, so
+   * no event silently starts accepting guests.
+   *
+   * Only gates ADDING a guest. Flipping it off later does not remove guests
+   * already approved, in the same way that closing registration does not
+   * expel players who already joined.
+   */
+  @Prop({ default: false })
+  isAllowExtraPlayer: boolean;
+
+
+  /**
    * Lifecycle state (spec §4.1). Replaces the old `open|full|done`.
    * There is no `full` — capacity is derived via the `isFull` virtual.
    */

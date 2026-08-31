@@ -149,6 +149,7 @@ The JSON above is a freshly created event, so most optional fields are empty. Th
 | `startTime`, `endTime` | optional, set at create or via `PATCH /events/:id` |
 | `additionalPrice` | **NEW** — a surcharge on top of `price`. Settable at create or via `PATCH`. Defaults to `0` |
 | `takeAdditionalPrice` | **NEW** — whether `additionalPrice` actually applies. Defaults to `false` |
+| `isAllowExtraPlayer` | **NEW** — whether members may bring guests (§13). Defaults to **`false`** — guests are opt-in |
 
 Model them as nullable/empty and render accordingly — an event in `join` legitimately has all of them empty.
 
@@ -606,6 +607,7 @@ Do **not** design screens against these — the fields exist but nothing fills t
 - [ ] **A short event still overruns** — 3 teams in a 40-min event get all 6 round-robin matches where only 3 fit. The server does not police it; show the total.
 - [ ] **`GET /events/:id/payments` is role-aware** — organizers get everyone, a member gets only their own row. A member with **no row** means *unrecorded*, not unpaid (§12).
 - [ ] **Payment rows carry no amount.** Compute it from the event: `price + (takeAdditionalPrice ? additionalPrice : 0)`.
+- [ ] **Guests are off by default** — set `isAllowExtraPlayer: true` on the event or `POST /guests` is a `400`. Existing events read as false.
 - [ ] **Guests have NO `userId`** — branch on `type: "guest"` and read `guestName`. Never assume a roster row has a user.
 - [ ] **`joinedCount` can exceed `maxPlayers`** once guests are approved. It is a soft limit; "12 / 10" is valid, don't clamp it.
 - [ ] **Pending guests are absent from `/players`** — use `/guests` to show them awaiting a decision.
@@ -1013,8 +1015,24 @@ member joins  →  POST /guests (pending)  →  organizer approves  →  on the 
                                         ↘  organizer rejects   →  not playing
 ```
 
-- **The caller must already have joined.** A guest is somebody else's plus-one;
-  an organizer who never joined has no allowance of their own (`403`).
+**Two gates, in this order:**
+
+1. **The event must allow it.** `isAllowExtraPlayer` must be `true`, set at
+   `POST /events` or via `PATCH /events/:id`. It defaults to **`false`**, so
+   guests are opt-in per event — and an event created before this field existed
+   has no value, which reads as false. `400` otherwise.
+2. **The caller must be a member OF THIS EVENT.** Not a member of the owning
+   group — someone with a `status: joined` roster row on this specific event. An
+   organizer who never joined has no allowance of their own (`403`).
+
+The flag is checked first on purpose: a non-member asking about a
+guests-disabled event hears "this event does not allow extra players" rather
+than "join first", since joining would not help them.
+
+> **Turning the flag off later does not remove approved guests**, in the same
+> way closing registration does not expel players who already joined. It only
+> stops new ones being added.
+
 - **`join` state only**, like every other roster change.
 - **Two guests per member**, counting pending and approved but **not rejected** —
   a rejection does not burn the allowance.

@@ -925,6 +925,7 @@ export class EventsService {
       'price',
       'additionalPrice',
       'takeAdditionalPrice',
+      'isAllowExtraPlayer',
     ] as const;
     for (const key of EDITABLE) {
       if (dto[key] !== undefined) (event as any)[key] = dto[key];
@@ -1705,6 +1706,15 @@ export class EventsService {
     if (!canJoin(event.status)) {
       throw new BadRequestException(
         'Guests can only be added while registration is open',
+      );
+    }
+
+    // Checked BEFORE the roster lookup on purpose: a non-member asking about a
+    // guests-disabled event should hear "this event does not allow guests"
+    // rather than "join first", since joining would not help them.
+    if (!event.isAllowExtraPlayer) {
+      throw new BadRequestException(
+        'This event does not allow extra players',
       );
     }
 

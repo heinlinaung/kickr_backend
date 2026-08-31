@@ -1,7 +1,7 @@
 # Change Log — 2026-08-31
 
 **Branch:** `events-feature-spec`
-**Tests:** 825 passing across 40 suites · build clean
+**Tests:** 829 passing across 40 suites · build clean
 **Verified:** unit only — no run against a real MongoDB and no live client. §6
 lists what that leaves unproven, and one item there needs a real database.
 
@@ -95,6 +95,34 @@ Two details:
   rather than injecting the `User` model into `EventsService` for one string.
   Falls back to `Guest <n>` when there is no readable name.
 
+## 2.3 `isAllowExtraPlayer` — guests are opt-in per event
+
+A boolean on the event, settable at `POST /events` and via `PATCH /events/:id`.
+`addGuest` refuses with `400` unless it is true.
+
+**Defaults to `false`.** A capability switch stays off until an organizer asks
+for it, and that also makes the rollout migration-free: an event created before
+the field existed has no value, which reads as false, so no existing event
+silently starts accepting guests. Worth stating plainly because it means the
+guest feature is inert until someone flips the flag — if the intent is
+guests-by-default, it is a one-word change.
+
+**Checked before the roster lookup**, so a non-member asking about a
+guests-disabled event hears "this event does not allow extra players" rather
+than "join first" — joining would not have helped.
+
+Turning the flag off later does **not** remove approved guests, in the same way
+closing registration does not expel players who already joined. It only stops
+new ones.
+
+### The member-only rule was already enforced
+
+"Only members inside that event may invite guests" needed no new code:
+`addGuest` has always required a `status: 'joined'` roster row **on that
+specific event**, and `403`s otherwise, with a test covering it. Group
+membership is deliberately not sufficient — an organizer who never joined has
+no allowance of their own.
+
 ## 3. Routes
 
 | Method | Path | Who |
@@ -150,7 +178,7 @@ addition to two existing routes, additive only.
 
 ## 6. Testing, and what is NOT proven
 
-39 new tests in `events.service.guests.spec.ts`, 825 total. Covered: the
+43 new tests in `events.service.guests.spec.ts`, 829 total. Covered: the
 pending-by-default creation, the two-guest cap and its rejection exemption, the
 `join`-only gate across all six states, every capacity transition in §4
 including idempotency, the sponsor/organizer split on withdrawal, the role-aware

@@ -29,6 +29,7 @@ describe('EventsService — guests (+1 / +2)', () => {
       status: 'join',
       joinedCount: 4,
       maxPlayers: 10,
+      isAllowExtraPlayer: true,
       ...over,
     };
     // Different call sites chain differently: assertOrganizer awaits the
@@ -180,6 +181,55 @@ describe('EventsService — guests (+1 / +2)', () => {
         await addWithout();
 
         expect(playerModel.create.mock.calls[0][0].guestName).toBe('Guest 1');
+      });
+    });
+
+    describe('isAllowExtraPlayer', () => {
+      const withFlag = (isAllowExtraPlayer: unknown) => {
+        const d = eventDoc({ isAllowExtraPlayer });
+        eventModel.findById.mockReturnValue(
+          Object.assign(Promise.resolve(d), d),
+        );
+      };
+
+      it('refuses when the event does not allow extra players', async () => {
+        withFlag(false);
+
+        await expect(
+          service.addGuest(EVENT_ID, SPONSOR, { guestName: 'John' }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expect(playerModel.create).not.toHaveBeenCalled();
+      });
+
+      it('refuses when the flag is absent, so guests are opt-in', async () => {
+        // Events created before this flag existed have no value, which reads
+        // as false — a capability switch should be off until asked for.
+        withFlag(undefined);
+
+        await expect(
+          service.addGuest(EVENT_ID, SPONSOR, { guestName: 'John' }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+      });
+
+      it('allows guests when the organizer enabled it', async () => {
+        withFlag(true);
+
+        await expect(
+          service.addGuest(EVENT_ID, SPONSOR, { guestName: 'John' }),
+        ).resolves.toBeDefined();
+      });
+
+      it('checks the flag before the roster, so the message is the useful one', async () => {
+        // A non-member on a guests-disabled event should hear "this event does
+        // not allow guests", not "join first" — joining would not help.
+        withFlag(false);
+        playerModel.findOne.mockReturnValue({
+          populate: () => Promise.resolve(null),
+        });
+
+        await expect(
+          service.addGuest(EVENT_ID, SPONSOR, { guestName: 'John' }),
+        ).rejects.toBeInstanceOf(BadRequestException);
       });
     });
 
