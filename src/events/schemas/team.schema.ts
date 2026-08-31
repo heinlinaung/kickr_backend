@@ -45,6 +45,21 @@ export class Team {
   players: Types.ObjectId[];
 
   /**
+   * Approved GUESTS assigned to this team, by their roster-row id.
+   *
+   * A separate field because `players` references `User` and a guest has no
+   * account — there is no user id to put in that array, and minting one would
+   * make a guest representable as an application user. So membership of a team
+   * is the union of `players` (registered) and `guests` (roster rows).
+   *
+   * Referencing `EventPlayer` rather than a name string keeps the link to the
+   * approval state and the sponsor, so a team read can still tell who brought
+   * this person and whether they are still approved.
+   */
+  @Prop({ type: [{ type: Types.ObjectId, ref: 'EventPlayer' }], default: [] })
+  guests: Types.ObjectId[];
+
+  /**
    * Per-player roles within this team. Only NON-default roles are stored, so
    * a player absent from this list is a plain `player`.
    *

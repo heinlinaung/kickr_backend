@@ -16,7 +16,7 @@ Integration guides written against the **live** API — every request/response s
 
 **Guest players (`+1` / `+2`)** — a member brings a friend with no account; an organizer approves or rejects them. Four routes under `/events/:id/guests`. Detail in [events-api §13](./events-api.md).
 
-Six things to build against:
+Seven things to build against:
 
 1. **Guests are opt-in per event.** Set `isAllowExtraPlayer: true` at create (or via `PATCH`) or `POST /guests` returns `400`. Defaults to false, and events created earlier read as false.
 2. **Only members of THAT event may invite.** A `status: joined` roster row on the specific event — group membership is not enough.
@@ -26,7 +26,7 @@ Six things to build against:
 6. **Leaving takes your guests with you.** The leave and remove responses carry `guestsRemoved`.
 7. **Guests never hold a payment row** — the sponsor covers them.
 
-Not yet: guests cannot be assigned to a team (`team.players` references `User`). Standings need no change — they carry no player names.
+**Guests in teams shipped 2026-09-01.** A squad is now the union of `team.players` (user ids) and `team.guests` (roster-row ids) — render both, or you drop guests. `PATCH /teams/:teamId` takes `guestIds`, the shuffle deals guests, `numberOfPlayers` counts them, and `EventPlayer.team` is stamped for guests so a guest's own row says which team they are in. Standings need no change — they carry no player names.
 
 ## New — 2026-08-29
 
