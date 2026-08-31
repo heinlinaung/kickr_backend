@@ -2,7 +2,7 @@
 
 **Branch:** `events-feature-spec`
 **Tests:** 829 passing across 40 suites · build clean
-**Verified:** unit only — no run against a real MongoDB and no live client. §6
+**Verified:** unit only — no run against a real MongoDB and no live client. §7
 lists what that leaves unproven, and one item there needs a real database.
 
 Implements guest players (`+1` / `+2`), planned in
@@ -30,7 +30,105 @@ Answer 3 was worth asking even though it turned out moot — it confirmed the
 standings shape (`team`, `played`, `won`, `points`, …) has no player dimension
 at all, so there was nothing to extend.
 
-## 2. Schema
+## 2. The flow, end to end
+
+The order below is the order the code runs in, because which error a member sees
+depends on it.
+
+### 2.0 Prerequisites
+
+Two things must already be true before anyone can invite:
+
+| | Requirement | Set by |
+|---|---|---|
+| 1 | Event has `isAllowExtraPlayer: true` | Organizer, at `POST /events` or `PATCH /events/:id`. **Defaults to false** (§3.3) |
+| 2 | The member has **joined this event** | `POST /events/:id/join` |
+
+### 2.1 Step 1 — the member adds a guest
+
+```http
+POST /events/{id}/guests
+{}                              ← guestName optional (§3.2)
+```
+
+Five checks, **in this order**:
+
+| | Check | Failure |
+|---|---|---|
+| 1 | Event exists | `404` |
+| 2 | Status is `join` | `400` "Guests can only be added while registration is open" |
+| 3 | `isAllowExtraPlayer` is true | `400` "This event does not allow extra players" |
+| 4 | Caller has a `status: joined` row **on this event** | `403` "Join the event before adding a guest" |
+| 5 | Caller has fewer than 2 non-rejected guests | `400` "You can add at most 2 guests" |
+
+Check 3 sits before check 4 on purpose: a non-member asking about a
+guests-disabled event should hear that guests are off, not that they should
+join — joining would not have helped.
+
+The row is then created `type: "guest"`, `approval: "pending"`, with `guestName`
+either as sent or derived. **`joinedCount` is untouched** — a pending guest is
+not playing.
+
+### 2.2 Step 2 — waiting for a decision
+
+| Who | Call | Sees |
+|---|---|---|
+| The sponsor | `GET /events/{id}/guests` | Approved guests, **plus their own** pending and rejected |
+| Organizer | same route | **Every** guest — this is the approval queue |
+| Anyone | `GET /events/{id}/players` | Registered players + **approved** guests only |
+
+Pending guests are deliberately **absent from `/players`**: a team-builder must
+not be offered someone who is not confirmed.
+
+### 2.3 Step 3 — the organizer decides
+
+```http
+PATCH /events/{id}/guests/{guestId}/approval
+{ "approval": "approved" }      // or "rejected"
+```
+
+Organizer only (`403`). `pending` is not accepted — a decision cannot be
+un-made.
+
+**Approved:** `joinedCount` **+1** and the guest appears in `/players`. This is
+where the soft limit bites — the count may pass `maxPlayers`, which makes
+`isFull` true and **closes joining for everyone else** (§5).
+
+**Rejected:** nothing counts, and the allowance is **not** burned, so the member
+can add somebody else instead.
+
+Re-sending the same decision is a no-op, so a double-tap cannot count twice.
+
+### 2.4 Step 4 — withdrawal (optional)
+
+```http
+DELETE /events/{id}/guests/{guestId}
+```
+
+The **sponsor or an organizer**. The row is cancelled rather than deleted, so
+the record of who was brought survives. An approved guest gives their slot
+back; a pending one never held one.
+
+### 2.5 Step 5 — if the sponsor leaves
+
+Automatic, from either exit — the member leaving, or an organizer removing them
+(§6). Both responses report it:
+
+```json
+{ "data": { "message": "Left event successfully", "guestsRemoved": 2 } }
+```
+
+Surface that number: "you and your 2 guests left" reads very differently from
+"you left".
+
+### 2.6 What the flow does NOT do
+
+- **An approved guest still cannot be placed in a team.** They are on the
+  roster, but invisible to the shuffle and to `team.players` (§8). This is why
+  "officially added to the team" is only half-true today.
+- **A guest never gets a payment row.** The sponsor covers them (decision 2).
+
+## 3. Schema
 
 `EventPlayer` gains four fields, and loses a `required`:
 
@@ -50,7 +148,7 @@ but left".
 Registered rows default to `approved` so a playable query needs no branch on
 `type`.
 
-### 2.1 Two traps in the schema change
+### 3.1 Two traps in the schema change
 
 **The unique index would have broken.** `{ eventId, userId }` was unique, and
 guests carry no `userId` — so every guest on an event would collide with every
@@ -79,7 +177,7 @@ Minting a placeholder user per guest was rejected outright. A guest must never
 be representable as an application user, or they leak into auth, search and
 profiles.
 
-## 2.2 `guestName` is derived by default
+### 3.2 `guestName` is derived by default
 
 `guestName` is optional on the request. Omitted, the server names the guest
 `<sponsor name> guest <n>` — "Thant guest 1", "Thant guest 2" — so the UI can
@@ -95,7 +193,7 @@ Two details:
   rather than injecting the `User` model into `EventsService` for one string.
   Falls back to `Guest <n>` when there is no readable name.
 
-## 2.3 `isAllowExtraPlayer` — guests are opt-in per event
+### 3.3 `isAllowExtraPlayer` — guests are opt-in per event
 
 A boolean on the event, settable at `POST /events` and via `PATCH /events/:id`.
 `addGuest` refuses with `400` unless it is true.
@@ -115,7 +213,7 @@ Turning the flag off later does **not** remove approved guests, in the same way
 closing registration does not expel players who already joined. It only stops
 new ones.
 
-### The member-only rule was already enforced
+### 3.4 The member-only rule was already enforced
 
 "Only members inside that event may invite guests" needed no new code:
 `addGuest` has always required a `status: 'joined'` roster row **on that
@@ -123,7 +221,7 @@ specific event**, and `403`s otherwise, with a test covering it. Group
 membership is deliberately not sufficient — an organizer who never joined has
 no allowance of their own.
 
-## 3. Routes
+## 4. Routes
 
 | Method | Path | Who |
 |---|---|---|
@@ -145,7 +243,7 @@ they brought without reading everyone else's pending list.
 guest is created in, and allowing a move back to it would silently undo an
 organizer's own decision.
 
-## 4. Capacity — the soft limit in practice
+## 5. Capacity — the soft limit in practice
 
 Capacity moves **only on the approval transition**, and that is the whole
 subtlety:
@@ -166,7 +264,7 @@ knock-on effect is worth stating plainly because it is easy to read as a bug:
 intended behaviour, not an accident, and a client showing "12 / 10 players"
 is displaying a legitimate state.
 
-## 5. The sponsor cascade
+## 6. The sponsor cascade
 
 Both exits — a member leaving, and an organizer removing them — cancel that
 member's guests. The two call one shared `cancelGuestRows`, so the count is
@@ -176,11 +274,11 @@ Both responses now carry `guestsRemoved`, so the client can say "you and your 2
 guests left" rather than silently dropping people. That is a response-shape
 addition to two existing routes, additive only.
 
-## 6. Testing, and what is NOT proven
+## 7. Testing, and what is NOT proven
 
 43 new tests in `events.service.guests.spec.ts`, 829 total. Covered: the
 pending-by-default creation, the two-guest cap and its rejection exemption, the
-`join`-only gate across all six states, every capacity transition in §4
+`join`-only gate across all six states, every capacity transition in §5
 including idempotency, the sponsor/organizer split on withdrawal, the role-aware
 listing, and the cascade from both exits.
 
@@ -196,7 +294,7 @@ listing, and the cascade from both exits.
   query against a real event that predates this deploy.
 - No live client has consumed the new `type`/`guestName` shape.
 
-## 7. Still not built
+## 8. Still not built
 
 | | Why |
 |---|---|
@@ -208,7 +306,7 @@ The teams gap is the real remaining work, and it is the reason "officially added
 to the team" is only half-true today: an approved guest is officially on the
 **roster**, but cannot yet be placed in a team.
 
-## 8. Files
+## 9. Files
 
 | File | Change |
 |---|---|
