@@ -11,6 +11,8 @@ import { Event, EventDocument } from './schemas/event.schema';
 import {
   EventPlayer,
   EventPlayerDocument,
+  MAX_GUESTS_PER_MEMBER,
+  PLAYABLE_APPROVAL,
 } from './schemas/event-player.schema';
 import {
   EventMatch,
@@ -68,6 +70,8 @@ import {
   DEFAULT_TEAM_MEMBER_ROLE,
 } from './schemas/team.schema';
 import { SetPaymentDto } from './dto/set-payment.dto';
+import { AddGuestDto } from './dto/add-guest.dto';
+import { SetGuestApprovalDto } from './dto/set-guest-approval.dto';
 import { SetTeamMemberRoleDto } from './dto/set-team-member-role.dto';
 import {
   MATCH_BUFFER_MINUTES,
@@ -792,7 +796,15 @@ export class EventsService {
       { $inc: { joinedCount: -1 } },
     );
 
-    return { message: 'Left event successfully' };
+    // A guest is somebody's plus-one, so they go when their sponsor goes.
+    const guestsRemoved = await this.cascadeGuestsOfSponsor(eventId, userId);
+
+    return {
+      message: 'Left event successfully',
+      // Surfaced so the client can say "you and your 2 guests left" rather
+      // than silently dropping people the member added.
+      guestsRemoved,
+    };
   }
 
   /**
@@ -844,7 +856,12 @@ export class EventsService {
       { $inc: { joinedCount: -1 } },
     );
 
-    return { message: 'Player removed from event' };
+    const guestsRemoved = await this.cascadeGuestsOfSponsor(
+      eventId,
+      targetUserId,
+    );
+
+    return { message: 'Player removed from event', guestsRemoved };
   }
 
   /**
@@ -908,6 +925,7 @@ export class EventsService {
       'price',
       'additionalPrice',
       'takeAdditionalPrice',
+      'isAllowExtraPlayer',
     ] as const;
     for (const key of EDITABLE) {
       if (dto[key] !== undefined) (event as any)[key] = dto[key];
@@ -952,10 +970,25 @@ export class EventsService {
     return { message: 'Event deleted successfully' };
   }
 
+  /**
+   * The event roster: registered players and APPROVED guests.
+   *
+   * Pending and rejected guests are excluded — they are not playing, and a
+   * team-builder reading this list must not be offered them. Use
+   * `GET /events/:id/guests` to see them awaiting a decision.
+   *
+   * A guest row has no `userId` to populate, so the client reads `guestName`
+   * and `type` instead. Branch on `type`, not on the presence of `userId`.
+   */
   async listPlayers(eventId: string) {
     return this.playerModel
-      .find({ eventId: new Types.ObjectId(eventId), status: 'joined' })
+      .find({
+        eventId: new Types.ObjectId(eventId),
+        status: 'joined',
+        approval: PLAYABLE_APPROVAL,
+      })
       .populate('userId', 'name profileImage')
+      .populate('addedByUserId', 'name profileImage')
       .lean();
   }
 
@@ -1654,6 +1687,275 @@ export class EventsService {
   }
 
   /** Joined player ids as strings, in join order. */
+  // --- Guests (+1 / +2) ---------------------------------------------------
+
+  /**
+   * A joined member brings a guest who has no account.
+   *
+   * Created `pending`: the guest is not on the roster and does not count toward
+   * capacity until an organizer approves them, which is the whole point of the
+   * flow. `joinedCount` is therefore NOT touched here.
+   *
+   * Gated to `join`, like every other roster change. The cap counts
+   * non-rejected rows only - counting rejections would let a member add, be
+   * rejected, and retry forever.
+   */
+  async addGuest(eventId: string, sponsorId: string, dto: AddGuestDto) {
+    const event = await this.eventModel.findById(eventId);
+    if (!event) throw new NotFoundException('Event not found');
+    if (!canJoin(event.status)) {
+      throw new BadRequestException(
+        'Guests can only be added while registration is open',
+      );
+    }
+
+    // Checked BEFORE the roster lookup on purpose: a non-member asking about a
+    // guests-disabled event should hear "this event does not allow guests"
+    // rather than "join first", since joining would not help them.
+    if (!event.isAllowExtraPlayer) {
+      throw new BadRequestException(
+        'This event does not allow extra players',
+      );
+    }
+
+    // Only someone playing may bring someone. An organizer who never joined
+    // has no roster row and so no guest allowance of their own.
+    // The sponsor's name is populated because it seeds the default guestName —
+    // cheaper than injecting the User model into this service for one string.
+    const sponsor = await this.playerModel
+      .findOne({
+        eventId: new Types.ObjectId(eventId),
+        userId: new Types.ObjectId(sponsorId),
+        status: 'joined',
+      })
+      .populate('userId', 'name');
+    if (!sponsor) {
+      throw new ForbiddenException('Join the event before adding a guest');
+    }
+
+    const alreadyBrought = await this.playerModel.countDocuments({
+      eventId: new Types.ObjectId(eventId),
+      addedByUserId: new Types.ObjectId(sponsorId),
+      status: 'joined',
+      approval: { $ne: 'rejected' },
+    });
+    if (alreadyBrought >= MAX_GUESTS_PER_MEMBER) {
+      throw new BadRequestException(
+        `You can add at most ${MAX_GUESTS_PER_MEMBER} guests`,
+      );
+    }
+
+    const guest = await this.playerModel.create({
+      eventId: new Types.ObjectId(eventId),
+      type: 'guest',
+      guestName:
+        dto.guestName?.trim() ||
+        (await this.defaultGuestName(eventId, sponsorId, sponsor)),
+      addedByUserId: new Types.ObjectId(sponsorId),
+      approval: 'pending',
+      status: 'joined',
+      joinedAt: new Date(),
+    });
+
+    return guest.toJSON();
+  }
+
+  /**
+   * `<sponsor name> guest <n>` — the name used when the client sends none.
+   *
+   * Lets the UI offer a bare "+ Add Guest" button with nothing to type, while
+   * still producing something an organizer can tell apart on an approval list.
+   *
+   * The sequence counts EVERY guest row this sponsor has ever created for the
+   * event, including rejected and withdrawn ones. Numbering off the live
+   * allowance instead would reuse "guest 1" after a rejection and collide with
+   * the rejected row's own name.
+   */
+  private async defaultGuestName(
+    eventId: string,
+    sponsorId: string,
+    sponsor: EventPlayerDocument,
+  ): Promise<string> {
+    const everBrought = await this.playerModel.countDocuments({
+      eventId: new Types.ObjectId(eventId),
+      addedByUserId: new Types.ObjectId(sponsorId),
+      type: 'guest',
+    });
+
+    // `userId` is populated to a user document here, not an id.
+    const sponsorName = (
+      sponsor.userId as unknown as { name?: string } | null
+    )?.name?.trim();
+
+    return sponsorName
+      ? `${sponsorName} guest ${everBrought + 1}`
+      : // No readable name to borrow — still numbered, so two guests from the
+        // same member never share a label.
+        `Guest ${everBrought + 1}`;
+  }
+
+  /**
+   * Guests on an event.
+   *
+   * An organizer sees every guest, because they are the one deciding. Anyone
+   * else sees approved guests (they are playing, so they are public) plus their
+   * OWN pending and rejected ones - a member should be able to see the decision
+   * on someone they brought without reading everyone else's pending list.
+   */
+  async listGuests(eventId: string, userId: string) {
+    const event = await this.eventModel.findById(eventId).select('_id').lean();
+    if (!event) throw new NotFoundException('Event not found');
+
+    const filter: Record<string, unknown> = {
+      eventId: event._id,
+      type: 'guest',
+      status: 'joined',
+    };
+
+    if (!(await this.isOrganizer(eventId, userId))) {
+      filter.$or = [
+        { approval: 'approved' },
+        { addedByUserId: new Types.ObjectId(userId) },
+      ];
+    }
+
+    return this.playerModel
+      .find(filter)
+      .populate('addedByUserId', 'name username displayName profileImage')
+      .sort({ createdAt: 1 })
+      .lean();
+  }
+
+  /**
+   * Organizer approves or rejects a guest.
+   *
+   * Approving is what puts them on the roster, so this is where `joinedCount`
+   * moves. Capacity is a SOFT limit by decision: an approved guest may push the
+   * event past `maxPlayers` rather than being refused, because a guest arriving
+   * with a member is a fact on the ground rather than a booking to validate.
+   * `isFull` therefore reports true and joining closes for everyone else, which
+   * is the intended effect.
+   *
+   * Idempotent per target state: re-approving an approved guest does not
+   * increment twice.
+   */
+  async setGuestApproval(
+    eventId: string,
+    organizerId: string,
+    guestId: string,
+    dto: SetGuestApprovalDto,
+  ) {
+    await this.assertOrganizer(eventId, organizerId);
+
+    if (!Types.ObjectId.isValid(guestId)) {
+      throw new BadRequestException('Invalid guest id');
+    }
+
+    const guest = await this.playerModel.findOne({
+      _id: new Types.ObjectId(guestId),
+      eventId: new Types.ObjectId(eventId),
+      type: 'guest',
+    });
+    if (!guest) throw new NotFoundException('Guest not found for this event');
+
+    const was = guest.approval;
+    if (was === dto.approval) return guest.toJSON();
+
+    guest.approval = dto.approval;
+    await guest.save();
+
+    // Only a transition into or out of `approved` moves the count.
+    if (dto.approval === 'approved') {
+      await this.eventModel.updateOne(
+        { _id: guest.eventId },
+        { $inc: { joinedCount: 1 } },
+      );
+    } else if (was === 'approved') {
+      await this.eventModel.updateOne(
+        { _id: guest.eventId, joinedCount: { $gt: 0 } },
+        { $inc: { joinedCount: -1 } },
+      );
+    }
+
+    return guest.toJSON();
+  }
+
+  /**
+   * Withdraw a guest - by their sponsor, or by an organizer.
+   *
+   * Cancels rather than deletes, matching how a registered player leaves, so
+   * the row survives as a record of who was brought and what was decided.
+   */
+  async removeGuest(eventId: string, requesterId: string, guestId: string) {
+    if (!Types.ObjectId.isValid(guestId)) {
+      throw new BadRequestException('Invalid guest id');
+    }
+
+    const guest = await this.playerModel.findOne({
+      _id: new Types.ObjectId(guestId),
+      eventId: new Types.ObjectId(eventId),
+      type: 'guest',
+      status: 'joined',
+    });
+    if (!guest) throw new NotFoundException('Guest not found for this event');
+
+    const isSponsor = String(guest.addedByUserId) === requesterId;
+    if (!isSponsor && !(await this.isOrganizer(eventId, requesterId))) {
+      throw new ForbiddenException(
+        'Only the member who added this guest, or an organizer, can remove them',
+      );
+    }
+
+    await this.cancelGuestRows([guest]);
+    return { message: 'Guest removed' };
+  }
+
+  /**
+   * Cancels guest rows and gives back the capacity the approved ones held.
+   *
+   * Shared by `removeGuest` and the sponsor cascade so the count is adjusted in
+   * exactly one place - a guest whose approval never landed was never counted,
+   * so only approved rows decrement.
+   */
+  private async cancelGuestRows(guests: EventPlayerDocument[]) {
+    if (!guests.length) return;
+
+    const approved = guests.filter((g) => g.approval === 'approved').length;
+
+    await this.playerModel.updateMany(
+      { _id: { $in: guests.map((g) => g._id) } },
+      { $set: { status: 'cancelled' } },
+    );
+
+    if (approved > 0) {
+      await this.eventModel.updateOne(
+        { _id: guests[0].eventId, joinedCount: { $gte: approved } },
+        { $inc: { joinedCount: -approved } },
+      );
+    }
+  }
+
+  /**
+   * Removes the guests a departing member brought.
+   *
+   * A guest exists only as somebody's plus-one: with their sponsor gone there
+   * is nobody vouching for them, nobody paying for them (the sponsor covers a
+   * guest by decision), and nobody to arrive with. Leaving them on the roster
+   * would quietly convert them into an unattached player.
+   *
+   * Called from both exits - the member leaving of their own accord, and an
+   * organizer removing them.
+   */
+  private async cascadeGuestsOfSponsor(eventId: string, sponsorId: string) {
+    const guests = await this.playerModel.find({
+      eventId: new Types.ObjectId(eventId),
+      addedByUserId: new Types.ObjectId(sponsorId),
+      status: 'joined',
+    });
+    await this.cancelGuestRows(guests);
+    return guests.length;
+  }
+
   // --- Payments -----------------------------------------------------------
 
   /**
@@ -1837,13 +2139,29 @@ export class EventsService {
     return rows.map((row) => row.eventId);
   }
 
+  /**
+   * User ids of the REGISTERED players on the roster, oldest first.
+   *
+   * Scoped to `type: 'registered'` deliberately. These ids flow into
+   * `team.players`, which references `User`, and into notifications — a guest
+   * has neither an account to reference nor a device to notify, and a guest row
+   * carries no `userId` at all, so including them here would dereference
+   * undefined. Guests are assigned to teams by their own roster-row id.
+   */
   private async joinedPlayerIds(eventId: string): Promise<string[]> {
     const players = await this.playerModel
-      .find({ eventId: new Types.ObjectId(eventId), status: 'joined' })
+      .find({
+        eventId: new Types.ObjectId(eventId),
+        status: 'joined',
+        type: 'registered',
+        approval: PLAYABLE_APPROVAL,
+      })
       .select('userId')
       .sort({ joinedAt: 1 })
       .lean();
-    return players.map((player) => player.userId.toString());
+    return players
+      .filter((player) => player.userId)
+      .map((player) => String(player.userId));
   }
 }
 

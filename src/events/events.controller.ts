@@ -35,6 +35,8 @@ import { AddMatchDto } from './dto/add-match.dto';
 import { UpdateMatchScoreDto } from './dto/update-match-score.dto';
 import { SubmitResultDto } from './dto/submit-result.dto';
 import { SetPaymentDto } from './dto/set-payment.dto';
+import { AddGuestDto } from './dto/add-guest.dto';
+import { SetGuestApprovalDto } from './dto/set-guest-approval.dto';
 import { SetTeamMemberRoleDto } from './dto/set-team-member-role.dto';
 
 @ApiTags('Events')
@@ -385,6 +387,90 @@ export class EventsController {
     @Body() dto: GenerateTeamsDto,
   ) {
     return this.eventsService.generateTeams(id, user._id.toString(), dto);
+  }
+
+  // --- Guests (+1 / +2) ----------------------------------------------------
+
+  @Post(':id/guests')
+  @ApiOperation({
+    summary: 'Add a guest who has no account (+1 / +2)',
+    description:
+      'The caller must already have JOINED the event — a guest is somebody ' +
+      "else's plus-one. `join` state only. Created PENDING: the guest is not " +
+      'on the roster and does not count toward capacity until an organizer ' +
+      'approves them. At most 2 guests per member, counting pending and ' +
+      'approved but not rejected, so a rejection does not burn an allowance. ' +
+      'A guest has no account: `guestName` is all the system knows.',
+  })
+  @ApiResponse({ status: 400, description: 'Not in `join`, or allowance used' })
+  @ApiResponse({ status: 403, description: 'Caller has not joined the event' })
+  addGuest(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() dto: AddGuestDto,
+  ) {
+    return this.eventsService.addGuest(id, user._id.toString(), dto);
+  }
+
+  @Get(':id/guests')
+  @ApiOperation({
+    summary: 'Guests on the event',
+    description:
+      'An organizer sees every guest, since they decide. Anyone else sees ' +
+      'approved guests plus their OWN pending and rejected ones — you can ' +
+      'follow the decision on someone you brought without reading everyone ' +
+      "else's pending list. Approved guests also appear in " +
+      'GET /events/:id/players with `type: "guest"`.',
+  })
+  listGuests(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.eventsService.listGuests(id, user._id.toString());
+  }
+
+  @Patch(':id/guests/:guestId/approval')
+  @ApiOperation({
+    summary: 'Approve or reject a guest (organizer)',
+    description:
+      'Approving is what puts the guest on the roster and increments ' +
+      '`joinedCount`. Capacity is a SOFT limit: an approved guest may push the ' +
+      'event past `maxPlayers` rather than being refused, which makes `isFull` ' +
+      'true and closes joining for everyone else. Rejecting leaves them off ' +
+      'the roster. Idempotent — re-approving does not count twice. `pending` ' +
+      'is not an accepted value.',
+  })
+  @ApiResponse({ status: 400, description: 'Malformed guest id' })
+  @ApiResponse({ status: 403, description: 'Caller is not the organizer' })
+  @ApiResponse({ status: 404, description: 'Guest not found for this event' })
+  setGuestApproval(
+    @Param('id') id: string,
+    @Param('guestId') guestId: string,
+    @CurrentUser() user: any,
+    @Body() dto: SetGuestApprovalDto,
+  ) {
+    return this.eventsService.setGuestApproval(
+      id,
+      user._id.toString(),
+      guestId,
+      dto,
+    );
+  }
+
+  @Delete(':id/guests/:guestId')
+  @ApiOperation({
+    summary: 'Withdraw a guest (sponsor or organizer)',
+    description:
+      'Callable by the member who added the guest, or by an organizer. The ' +
+      'row is cancelled rather than deleted, so it survives as a record of ' +
+      'who was brought and what was decided. An approved guest gives their ' +
+      'capacity back.',
+  })
+  @ApiResponse({ status: 403, description: 'Neither the sponsor nor an organizer' })
+  @ApiResponse({ status: 404, description: 'Guest not found for this event' })
+  removeGuest(
+    @Param('id') id: string,
+    @Param('guestId') guestId: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.eventsService.removeGuest(id, user._id.toString(), guestId);
   }
 
   // --- Payments ------------------------------------------------------------

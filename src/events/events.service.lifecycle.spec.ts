@@ -63,6 +63,9 @@ describe('EventsService — lifecycle', () => {
     playerModel.findOne = jest.fn();
     playerModel.create = jest.fn();
     playerModel.deleteMany = jest.fn().mockResolvedValue({ deletedCount: 0 });
+    // Both exits cascade to the departing member's guests.
+    playerModel.find = jest.fn().mockResolvedValue([]);
+    playerModel.updateMany = jest.fn().mockResolvedValue({ modifiedCount: 0 });
     memberModel.findOne = jest.fn().mockResolvedValue(null);
 
     const m = await Test.createTestingModule({

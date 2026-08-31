@@ -173,6 +173,12 @@ unfiltered call shows archived events.
 
 ## 5. Plus members (`+1` / `+2`) — PLAN ONLY, nothing built
 
+> **Superseded 2026-08-31 — this is now built.** All four open questions in §5.4
+> were answered and the feature shipped; see
+> [2026-08-31_guest_players.md](./2026-08-31_guest_players.md) for what was
+> actually implemented and how the plan below changed on contact. The plan is
+> left unedited as the record of what was proposed.
+
 A player brings a friend who has no account. The guest must be approved by the
 event owner/admin before they count.
 
