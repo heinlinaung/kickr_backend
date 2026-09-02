@@ -19,6 +19,31 @@ Also a **Web Push certificate** (console → Cloud Messaging → Web configurati
 > never reads it — it authenticates with the service account. It only needs to
 > reach the page.
 
+## Browser support
+
+Use **Chrome** if you have a choice. Web push needs the browser's own push
+service, and privacy-focused browsers often disable it:
+
+- **Brave** ships Google push messaging **off**. Turn it on at
+  `brave://settings/privacy` → *Use Google services for push messaging*, then
+  restart by opening **`brave://restart` in a new tab** and re-check the toggle
+  afterwards: the in-page *Relaunch* button historically flipped it back off
+  ([brave-browser#6633](https://github.com/brave/brave-browser/issues/6633),
+  since fixed). Without the setting you get
+  `Registration failed - push service error`.
+
+  The tell that this is the cause: **permission is granted and the service
+  worker registers fine**, and it fails only at the subscription. The
+  Notification API and the Push API are separate, and Brave blocks only the
+  latter. It also fails on *every* web-push site, not just this one —
+  `brave://gcm-internals` will show no registration.
+- **Safari** supports web push only from 16.4, and macOS requires the site to
+  be added to the Dock. Not worth fighting for a test.
+- **Firefox** works, but uses Mozilla's autopush service rather than FCM.
+
+This is a browser limitation, not a Firebase or backend problem — the same
+token, once obtained, works identically.
+
 ## Run it
 
 ```bash
@@ -68,10 +93,12 @@ Then exercise the real triggers:
 
 | Symptom | Cause |
 |---|---|
+| `Registration failed - push service error` (code 20 / AbortError) | **The browser refused the subscription**, before Firebase was involved. Brave ships Google push messaging disabled — enable it in `brave://settings/privacy` and restart Brave fully. Chrome is the quickest alternative. |
 | `messaging/registration-token-not-registered` | Stale token. Reload and get a fresh one. |
 | `messaging/invalid-argument` | Token truncated on copy — it is ~160 chars. |
 | `messaging/mismatched-credential` | Token is from a different Firebase project than the service account in `.env`. |
 | `applicationServerKey is not valid` | Wrong `vapidKey` for this project. |
+| Abort even after enabling Brave's setting | A subscription already exists under a **different** VAPID key — likely if the key was regenerated. The page now unsubscribes and retries automatically; if it persists, clear site data for `localhost:8080`. |
 | Permission prompt never appears | Already denied. Reset via the padlock in the address bar. |
 | `HTTP 401` on register | Expired token, or an **id** token instead of an **access** token. |
 | CORS error on register | `CORS_EXTRA_ORIGINS` not set, or the API was not restarted after setting it. |
