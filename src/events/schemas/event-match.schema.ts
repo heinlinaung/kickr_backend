@@ -40,6 +40,22 @@ export class EventMatch {
 
   @Prop({ type: Date, default: null })
   playedAt: Date | null;
+
+  /**
+   * Minutes this fixture is scheduled to last.
+   *
+   * Lives here rather than on the team, which is where it used to sit: it is a
+   * property of a MATCH, not of a squad. Every team in an event carried the
+   * same value, so storing it per team was redundant and could drift if one
+   * team were ever edited alone — and a fixture list could not report its own
+   * length without joining back through a team.
+   *
+   * Set from the `duration` sent to `POST /events/:id/teams/generate`, and
+   * per-fixture, so a one-off longer final becomes possible later without a
+   * schema change.
+   */
+  @Prop({ required: true, min: 1 })
+  duration: number;
 }
 
 export const EventMatchSchema = SchemaFactory.createForClass(EventMatch);

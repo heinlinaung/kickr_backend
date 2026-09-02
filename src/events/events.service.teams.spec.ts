@@ -102,6 +102,13 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       ),
     );
     matchModel.findOneAndUpdate = jest.fn();
+    // shuffleTeams reads the already-scheduled match duration rather than
+    // inventing one; no schedule yet by default.
+    matchModel.findOne = jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue(null),
+    });
     playerModel.updateMany = jest.fn().mockResolvedValue({});
     teamModel.deleteMany = jest.fn().mockResolvedValue({ deletedCount: 0 });
     // toJSON must echo a REAL ObjectId: shuffleTeams feeds these ids straight
@@ -330,12 +337,17 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       });
     });
 
-    it('stores the match duration on each team', async () => {
+    it('stores the match duration on each FIXTURE, not on the team', async () => {
+      // It describes a match, not a squad. Teams all held the same value, so
+      // per-team storage was redundant and could drift.
       eventModel.findById.mockResolvedValue(eventDoc());
       await generate({ duration: 25 });
 
-      const inserted = teamModel.insertMany.mock.calls[0][0];
-      expect(inserted.every((t: any) => t.duration === 25)).toBe(true);
+      const fixtures = matchModel.insertMany.mock.calls[0][0];
+      expect(fixtures.every((f: any) => f.duration === 25)).toBe(true);
+
+      const teams = teamModel.insertMany.mock.calls[0][0];
+      expect(teams.every((t: any) => t.duration === undefined)).toBe(true);
     });
 
     it('stores numberOfPlayers on each team', async () => {
@@ -815,6 +827,29 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
         const inserted = teamModel.insertMany.mock.calls[0][0];
         expect(inserted.every((t: any) => t.numberOfPlayers === 2)).toBe(true);
       });
+    });
+  });
+
+  describe('GET /events/:id/matches carries the duration', () => {
+    it('returns each fixture whole, duration included', async () => {
+      // The fixture list must be able to report how long each game is without
+      // joining back through a team — that is why duration moved onto the
+      // match. listMatches applies no projection, so this is a guard against
+      // one being added later and silently dropping it.
+      eventModel.findById.mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue({ _id: new Types.ObjectId(EVENT_ID) }),
+      });
+      matchModel.find.mockReturnValue({
+        sort: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([
+          { matchNumber: 1, teamA: 'Red', teamB: 'Yellow', duration: 15 },
+        ]),
+      });
+
+      const rows: any = await service.listMatches(EVENT_ID);
+
+      expect(rows[0].duration).toBe(15);
     });
   });
 

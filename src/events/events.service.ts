@@ -1086,7 +1086,6 @@ export class EventsService {
         groupId: event.groupId ?? null,
         name,
         players: [],
-        duration: dto.duration,
         numberOfPlayers: dto.numberOfPlayers,
         status: 'pending',
       })),
@@ -1107,7 +1106,12 @@ export class EventsService {
     const fixtures = generateFixturesFilling(names, matchCount);
     await this.matchModel.deleteMany({ eventId: eventObjectId });
     const matches = await this.matchModel.insertMany(
-      fixtures.map((fixture) => ({ ...fixture, eventId: eventObjectId })),
+      fixtures.map((fixture) => ({
+        ...fixture,
+        eventId: eventObjectId,
+        // Per fixture, not per team: the schedule is what has a length.
+        duration: dto.duration,
+      })),
     );
 
     await Promise.all(
@@ -1365,14 +1369,22 @@ export class EventsService {
       Math.min(event.teamCount ?? 4, joined.length + guests.length),
     );
 
-    // No body to take a match duration from, so aim for DEFAULT_SHUFFLE_MATCHES
-    // matches and let matchCountFor floor it. The organizer can regenerate with
-    // an explicit duration for a different split.
-    const playable = event.duration - MATCH_BUFFER_MINUTES;
-    const duration = Math.max(
-      1,
-      Math.floor(playable / DEFAULT_SHUFFLE_MATCHES),
-    );
+    // The shuffle takes no body, so it has no duration of its own — but it must
+    // not invent one either. It used to derive `floor((event.duration - 10) / 3)`
+    // and write that over whatever the organizer had set at generation time: a
+    // 90-minute event silently turned a deliberate 15 into 26.
+    //
+    // Reuse the duration already scheduled. Only when there is no schedule at
+    // all — a shuffle before any generate — does it fall back to the derived
+    // value, which is a genuine first-time default rather than a clobber.
+    const duration =
+      (await this.scheduledMatchDuration(eventId)) ??
+      Math.max(
+        1,
+        Math.floor(
+          (event.duration - MATCH_BUFFER_MINUTES) / DEFAULT_SHUFFLE_MATCHES,
+        ),
+      );
 
     const generated = await this.createTeamsAndFixtures(eventId, userId, {
       teamsCount,
@@ -2182,6 +2194,24 @@ export class EventsService {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * The match length already scheduled for an event, or `null` if none is.
+   *
+   * Read from the fixtures rather than the teams, which is where it used to
+   * live. Returns the first fixture's value: generation writes one duration
+   * across the whole schedule, and reading one row keeps this cheap.
+   */
+  private async scheduledMatchDuration(
+    eventId: string,
+  ): Promise<number | null> {
+    const first = await this.matchModel
+      .findOne({ eventId: new Types.ObjectId(eventId) })
+      .select('duration')
+      .sort({ matchNumber: 1 })
+      .lean();
+    return first?.duration ?? null;
   }
 
   /**
