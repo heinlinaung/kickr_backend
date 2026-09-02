@@ -64,6 +64,9 @@ node webpush-test/send.js "<paste-the-token>"
 
 `SENT ✓ message id: …` plus a visible notification means push works.
 
+> **Confirmed working 2026-09-02** on Brave/macOS after enabling Brave's push
+> setting — the notification rendered via the service worker's background path.
+
 **Background the tab (or focus another window) before sending.** A focused page
 receives the message through `onMessage` and logs it instead of showing an OS
 notification — that split is FCM's design, and it is the usual reason for

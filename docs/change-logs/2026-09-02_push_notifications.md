@@ -2,10 +2,10 @@
 
 **Branch:** `events-feature-spec`
 **Tests:** 873 passing across 41 suites · build clean
-**Verified:** unit, plus a live check against the real Firebase project — the
-service account authenticates, `fcm.googleapis.com` is reachable, and FCM API
-v1 answers a real `send()`. **The FCM → device hop is still untested**; §7 marks
-the exact boundary.
+**Verified:** unit, plus **a real push delivered to a real browser** on
+2026-09-02 — service account → FCM API v1 → subscription → OS notification,
+through the service worker's background path. Mobile is still unexercised; §7
+marks the boundary.
 
 Two events now reach the user's phone:
 
@@ -123,18 +123,19 @@ logs **nothing**: a malformed JWT's contents are themselves a credential.
 
 ## 7. What is NOT verified
 
-Everything above is unit-tested against mocked Mongoose and a mocked FCM. In
-particular, **none of this has run against a real Firebase project or a real
-device**:
+The fan-out logic is unit-tested against mocked Mongoose and a mocked FCM, and
+delivery is now confirmed against the live project. What remains open:
 
-- No push has reached a **device** yet. The server-side chain, however, is
-  verified end to end from the developer machine (2026-09-02): a real
-  `send()` authenticated with the service account, reached
-  `fcm.googleapis.com`, and was answered by FCM API v1. The call was rejected
-  only because the token was a placeholder — FCM judges the token *after*
-  accepting the credentials, so that rejection proves auth, network and API
-  all work. What is untested is the last hop: FCM → device.
-- From inside the agent sandbox the same call fails at
+- ~~No push has reached a device.~~ **Delivered 2026-09-02.** A real `send()`
+  reached a real browser subscription and rendered as an OS notification, via
+  the service worker's `onBackgroundMessage` — i.e. the backgrounded path a
+  user hits with the app closed, not just the foreground `onMessage` one.
+  Verified on **web** (Brave, macOS) using `webpush-test/`.
+- Still unverified on **mobile**: Android has never been exercised, and iOS
+  cannot receive push at all until an APNs key is uploaded (see the API doc's
+  §5b). The transport is the same for all three, so what remains untested is
+  platform registration, not the fan-out.
+- From inside the agent sandbox any FCM call fails at
   `ENOTFOUND fcm.googleapis.com` (no DNS). That is an environment limit, not a
   code path — do not read it as an FCM problem.
 - ~~The private-key `\n` conversion is untested against a real PEM.~~

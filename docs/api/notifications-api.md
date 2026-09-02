@@ -8,11 +8,13 @@ Three delivery channels for the same notification:
 | socket.io `/notifications` | Live banner while the app is open. |
 | FCM push | Reaching the user when the app is closed. |
 
-> ⚠️ **Payload shapes written from source, not captured live.** The server side
-> is verified — the service account authenticates and FCM API v1 answers a real
-> `send()` — but **no push has reached a device yet**, and iOS cannot receive one
-> until an APNs key is uploaded (§5b). Treat the JSON below as intended rather
-> than confirmed.
+> **Delivery is verified on web** (2026-09-02): a real push rendered as an OS
+> notification through the service worker's background path. **Mobile is not** —
+> Android is unexercised and iOS cannot receive push until an APNs key is
+> uploaded (§5b).
+>
+> ⚠️ The REST payload shapes below are still written from source rather than
+> captured from live calls; treat them as intended rather than confirmed.
 
 **Design rule you can rely on:** a notification never fails the action that
 triggered it. Creating an event succeeds even if every notification channel is
