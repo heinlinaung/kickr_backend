@@ -12,6 +12,14 @@ Integration guides written against the **live** API — every request/response s
 
 **Live reference while the server is running:** Swagger UI at `/api-docs`, OpenAPI JSON at `/api-docs-json`.
 
+## ⚠️ Changed — 2026-09-02
+
+**`duration` moved from the team to the fixture.** `team.duration` is **gone** — read it from `GET /events/:id/matches`, where each fixture now carries its own. It describes a match, not a squad.
+
+**`POST /events/:id/shuffle` no longer overwrites it.** It used to derive `floor((event.duration - 10) / 3)` and write that over the organizer's choice, silently turning a deliberate `15` into `26`. It now reuses the scheduled duration.
+
+The match count is unchanged — still `max(roundRobin, slots)`, so a short event can still overrun. Detail in [events-api §11.1](./events-api.md).
+
 ## New — 2026-08-31
 
 **Guest players (`+1` / `+2`)** — a member brings a friend with no account; an organizer approves or rejects them. Four routes under `/events/:id/guests`. Detail in [events-api §13](./events-api.md).

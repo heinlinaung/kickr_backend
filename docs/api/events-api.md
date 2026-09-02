@@ -619,6 +619,8 @@ Do **not** design screens against these — the fields exist but nothing fills t
 - [ ] **Team roles are stored as absence for `player`** — read `team.playerRoles` for captains; anyone in `players` but not in `playerRoles` is a plain player (§11.2c).
 - [ ] **`POST /teams/generate` returns only `{ message }`.** Read teams from `GET /events/:id/teams` (you need the ids for §11.2) and fixtures from `GET /events/:id/matches`. `data.teams`/`matches`/`matchCount`/`schedule` are gone.
 - [ ] **`POST /teams/generate` now updates `event.teamCount`** to the split it created, so a later `POST /shuffle` (which reads only that field) reproduces it instead of silently rebuilding with the old count.
+- [ ] **`duration` is on the FIXTURE now, not the team.** `team.duration` is gone; read it from `GET /events/:id/matches`.
+- [ ] **A shuffle preserves the generated `duration`** — it no longer invents one from the event length.
 - [ ] **Send `colors` to name the teams** — one per team, count must equal `teamsCount`, must be distinct (case-insensitively). Spelling is not validated.
 - [ ] **`GET /events/joined` never shows a `done` event**, not even with `includeExpired=true`. Use `?status=done` for history.
 - [ ] `group.rules` is now a **string, not an array**. Render with `white-space: pre-line`.
@@ -658,7 +660,7 @@ POST /events/6a7055f42e55b9cdbe427eb4/teams/generate
 | Field | Rule |
 |---|---|
 | `teamsCount` | 2–6. **Also written to `event.teamCount`** — see below |
-| `duration` | Minutes **per match**, ≥ 1. Stored on each team; it no longer bounds the fixture count |
+| `duration` | Minutes **per match**, ≥ 1. Stored on **each fixture** (`GET /events/:id/matches`), not on the team. Preserved by a later shuffle |
 | `numberOfPlayers` | Intended squad size per team, 1–50. Stored on each team as a **target**, not a constraint — see below |
 | `colors` | **NEW, optional.** Team names, one per team. Length **must equal `teamsCount`**, and they must be **distinct**. Spelling is **not** validated — any label is accepted. Omit to use the built-in colour vocabulary in order |
 
@@ -708,6 +710,35 @@ is match 7.
 
 A `duration` so long that not even one match fits the event is still rejected
 with `400`, as a sanity check on the input.
+
+**`duration` is stored on the fixtures, and survives a shuffle.**
+*(Changed 2026-09-02.)* Two related changes:
+
+- It **moved from `team.duration` to `EventMatch.duration`**, so
+  `GET /events/:id/matches` reports how long each game is without joining back
+  through a team. `team.duration` is **gone** — a client reading it now gets
+  `undefined`. It describes a match, not a squad, and every team in an event
+  held the same value.
+- **`POST /events/:id/shuffle` no longer overwrites it.** It used to derive
+  `floor((event.duration - 10) / 3)` and write that over the organizer's choice
+  — a 90-minute event silently turned a deliberate `15` into `26`. The shuffle
+  now reuses the scheduled duration, and only falls back to the derived value
+  when there is no schedule yet (a shuffle before any generate).
+
+```json
+// GET /events/:id/matches
+{ "matchNumber": 1, "teamA": "Red", "teamB": "Yellow",
+  "scoreA": null, "scoreB": null, "playedAt": null,
+  "duration": 15 }
+```
+
+> **The match count is unchanged** — still `max(roundRobin, slots)`. A
+> 90-minute event with 15-minute matches and 3 teams still gives **6** fixtures
+> (90 scheduled minutes against 80 playable), and a 120-minute one gives **7**.
+> Capping the schedule to fit was considered and deliberately not adopted: it
+> would drop a pairing, which is the truncation removed on 2026-08-27. The
+> overrun stays the client's to surface — now easy, since each fixture carries
+> its own `duration`.
 
 **Colour validation, precisely.** `colors` is checked for **count** and
 **distinctness** only:

@@ -17,10 +17,13 @@ export const DEFAULT_TEAM_MEMBER_ROLE: TeamMemberRole = 'player';
 /**
  * One team within an event.
  *
- * Its own collection rather than a string on EventPlayer, because a team now
- * carries state of its own — a per-team `duration` that drives how many matches
- * fit in the event, plus a lifecycle `status`. A bare team name could hold
- * neither.
+ * Its own collection rather than a string on EventPlayer, because a team carries
+ * state of its own — an intended squad size and a lifecycle `status`. A bare
+ * team name could hold neither.
+ *
+ * `duration` used to live here too. It moved to `EventMatch` on 2026-09-02: it
+ * describes a fixture, not a squad, and every team in an event held the same
+ * value.
  *
  * Teams are created EMPTY by the generate call and populated afterwards: the
  * client shuffles locally and may hand-edit the result, so assignment is a
@@ -83,10 +86,6 @@ export class Team {
     default: [],
   })
   playerRoles: { userId: Types.ObjectId; role: string }[];
-
-  /** Minutes this team plays per match — the unit fixtures are built from. */
-  @Prop({ required: true, min: 1 })
-  duration: number;
 
   /**
    * Intended squad size for this team.
