@@ -1,9 +1,11 @@
 # Change Log — 2026-09-02 · Push notifications (socket.io + Firebase)
 
 **Branch:** `events-feature-spec`
-**Tests:** 872 passing across 41 suites · build clean
-**Verified:** unit only. §7 lists what has never touched a real device or a real
-Firebase project, which is most of the interesting part.
+**Tests:** 873 passing across 41 suites · build clean
+**Verified:** unit, plus **a real push delivered to a real browser** on
+2026-09-02 — service account → FCM API v1 → subscription → OS notification,
+through the service worker's background path. Mobile is still unexercised; §7
+marks the boundary.
 
 Two events now reach the user's phone:
 
@@ -63,9 +65,15 @@ FIREBASE_CLIENT_EMAIL=...
 FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----\n"
 ```
 
-`FIREBASE_PRIVATE_KEY` holds **literal `\n` sequences**, which are converted to
-real newlines at init. Env vars cannot carry newlines, and a PEM without them
-is rejected as malformed — the classic FCM setup failure.
+`FIREBASE_PRIVATE_KEY` accepts the key **either way**. Init runs
+`.replace(/\\n/g, '\n')`, so a single-line value carrying literal `\n`
+sequences is restored to a real PEM — necessary because many env-var stores
+cannot hold newlines. A value that already contains real newlines (what the
+Firebase console's JSON gives you, and what a quoted multi-line `.env` entry
+preserves) passes through untouched.
+
+Quote the value either way, or it truncates at the first space in
+`BEGIN PRIVATE KEY`.
 
 ## 4. Devices are an array, and tokens are credentials
 
@@ -115,19 +123,47 @@ logs **nothing**: a malformed JWT's contents are themselves a credential.
 
 ## 7. What is NOT verified
 
-Everything above is unit-tested against mocked Mongoose and a mocked FCM. In
-particular, **none of this has run against a real Firebase project or a real
-device**:
+The fan-out logic is unit-tested against mocked Mongoose and a mocked FCM, and
+delivery is now confirmed against the live project. What remains open:
 
-- No push has ever actually been delivered. `sendEachForMulticast` is mocked in
-  every test.
-- The private-key `\n` conversion is untested against a real PEM — it is the
-  single most likely thing to be wrong on first deploy.
+- ~~No push has reached a device.~~ **Delivered 2026-09-02.** A real `send()`
+  reached a real browser subscription and rendered as an OS notification, via
+  the service worker's `onBackgroundMessage` — i.e. the backgrounded path a
+  user hits with the app closed, not just the foreground `onMessage` one.
+  Verified on **web** (Brave, macOS) using `webpush-test/`.
+- Still unverified on **mobile**: Android has never been exercised, and iOS
+  cannot receive push at all until an APNs key is uploaded (see the API doc's
+  §5b). The transport is the same for all three, so what remains untested is
+  platform registration, not the fan-out.
+- From inside the agent sandbox any FCM call fails at
+  `ENOTFOUND fcm.googleapis.com` (no DNS). That is an environment limit, not a
+  code path — do not read it as an FCM problem.
+- ~~The private-key `\n` conversion is untested against a real PEM.~~
+  **Verified 2026-09-02** against the real Firebase service account:
+  `PushService` initialises and reports `isEnabled: true`, and the key parses
+  as a 2048-bit RSA key that can sign. Note the credential downloaded from the
+  Firebase console carried **real newlines**, not literal `\n`, so the
+  `.replace(/\\n/g, '\n')` was a harmless no-op — it still matters for
+  deployments that inject the key through a single-line env var.
 - The socket handshake has never been exercised by a real client; the gateway's
   auth path is covered only by reading.
-- Token pruning is asserted against a mocked FCM error shape. The real error
-  codes are strings from the SDK and are matched with `includes`, which is
-  deliberately loose but unconfirmed.
+- **Both pruning branches are now confirmed against real FCM responses**, not
+  just mocks:
+  - A malformed token returns `messaging/invalid-argument`, which the
+    `includes('invalid-argument')` match treats as permanent → pruned.
+  - An unreachable FCM returns `messaging/unknown-error`, which matches neither
+    permanent pattern → token kept. A network outage cannot delete valid tokens.
+
+  One edge remains: FCM also uses `invalid-argument` for **request-level**
+  argument errors, not only bad tokens, so a malformed request could prune a
+  token that was actually fine. `registration-token-not-registered` is the
+  precise "device is gone" signal. Since the token is the only per-recipient
+  argument in a multicast the exposure is small, and a wrongly-pruned device
+  re-registers on next launch — accepted rather than fixed.
+
+- `registration-token-not-registered` itself (the uninstalled-app case) is
+  still only asserted against a mock; it needs a real token that has since
+  been invalidated.
 
 **First-deploy checklist:** set the three env vars, confirm the startup log says
 `Firebase push enabled for project …` rather than the warning, register a real
