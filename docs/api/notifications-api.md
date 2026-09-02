@@ -8,10 +8,11 @@ Three delivery channels for the same notification:
 | socket.io `/notifications` | Live banner while the app is open. |
 | FCM push | Reaching the user when the app is closed. |
 
-> **Delivery is verified on web** (2026-09-02): a real push rendered as an OS
-> notification through the service worker's background path. **Mobile is not** —
-> Android is unexercised and iOS cannot receive push until an APNs key is
-> uploaded (§5b).
+> **The event-created trigger is verified end to end on web**: device
+> registered via `POST /notifications/devices`, an event created by another
+> account, and the recipient's OS showed the notification. **Not yet verified:**
+> the `ready_to_play` trigger, and mobile — Android is unexercised and iOS
+> cannot receive push until an APNs key is uploaded (§5b).
 >
 > ⚠️ The REST payload shapes below are still written from source rather than
 > captured from live calls; treat them as intended rather than confirmed.

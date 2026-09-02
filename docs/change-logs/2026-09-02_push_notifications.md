@@ -2,10 +2,10 @@
 
 **Branch:** `events-feature-spec`
 **Tests:** 873 passing across 41 suites · build clean
-**Verified:** unit, plus **a real push delivered to a real browser** on
-2026-09-02 — service account → FCM API v1 → subscription → OS notification,
-through the service worker's background path. Mobile is still unexercised; §7
-marks the boundary.
+**Verified:** unit, plus **the real `POST /events` trigger delivering a push to
+a browser** — device registration → audience query against live data → FCM →
+OS notification. The `ready_to_play` trigger and mobile platforms are still
+unexercised; §7 marks the boundary.
 
 Two events now reach the user's phone:
 
@@ -126,11 +126,24 @@ logs **nothing**: a malformed JWT's contents are themselves a credential.
 The fan-out logic is unit-tested against mocked Mongoose and a mocked FCM, and
 delivery is now confirmed against the live project. What remains open:
 
-- ~~No push has reached a device.~~ **Delivered 2026-09-02.** A real `send()`
-  reached a real browser subscription and rendered as an OS notification, via
-  the service worker's `onBackgroundMessage` — i.e. the backgrounded path a
-  user hits with the app closed, not just the foreground `onMessage` one.
-  Verified on **web** (Brave, macOS) using `webpush-test/`.
+- ~~No push has reached a device.~~ **Delivered 2026-09-02/03**, in two stages:
+  1. A direct `send()` reached a browser subscription and rendered as an OS
+     notification through the service worker's `onBackgroundMessage` — the
+     backgrounded path a user hits with the app closed, not the easier
+     foreground `onMessage` one.
+  2. **The real `POST /events` trigger then did the same end to end**:
+     `POST /notifications/devices` → `201 Device registered`, event created by
+     a *different* account, and the recipient's OS showed
+     "New event — <title> — <date>".
+
+  Stage 2 is the one that matters, because it exercises what the unit tests
+  could only mock: the approved-member audience query against real Mongo data,
+  the creator exclusion, `Notification` row persistence, and token lookup from
+  the `devices` array. Verified on web (Safari + Brave, macOS).
+- The **`ready_to_play` trigger has not been exercised live** — only
+  `POST /events`. Its audience is computed differently (joined players via
+  `joinedPlayerIds`, not approved group members), so the delivery machinery is
+  proven but that specific query is not.
 - Still unverified on **mobile**: Android has never been exercised, and iOS
   cannot receive push at all until an APNs key is uploaded (see the API doc's
   §5b). The transport is the same for all three, so what remains untested is
