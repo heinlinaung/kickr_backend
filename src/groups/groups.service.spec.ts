@@ -13,6 +13,10 @@ import { Group } from './schemas/group.schema';
 import { GroupMember } from './schemas/group-member.schema';
 import { ImageKitService } from '../common/upload/imagekit.service';
 import { LocationsService } from '../locations/locations.service';
+import { EventsService } from '../events/events.service';
+import { Message } from '../chat/schemas/message.schema';
+import { Tournament } from '../tournaments/schemas/tournament.schema';
+import { Location } from '../locations/schemas/location.schema';
 
 /** thin chainable mongoose query stub */
 const q = (result: any) => ({
@@ -30,6 +34,10 @@ describe('GroupsService', () => {
   const memberModel: any = {};
   const imagekit: any = {};
   const locationsService: any = {};
+  const messageModel: any = {};
+  const tournamentModel: any = {};
+  const locationModel: any = {};
+  const eventsService: any = {};
 
   const GROUP_ID = new Types.ObjectId().toString();
   const USER_ID = new Types.ObjectId().toString();
@@ -85,6 +93,10 @@ describe('GroupsService', () => {
         { provide: getModelToken(GroupMember.name), useValue: memberModel },
         { provide: ImageKitService, useValue: imagekit },
         { provide: LocationsService, useValue: locationsService },
+        { provide: getModelToken(Message.name), useValue: messageModel },
+        { provide: getModelToken(Tournament.name), useValue: tournamentModel },
+        { provide: getModelToken(Location.name), useValue: locationModel },
+        { provide: EventsService, useValue: eventsService },
         {
           provide: ConfigService,
           useValue: { get: jest.fn().mockReturnValue('http://localhost:3000') },
@@ -285,6 +297,118 @@ describe('GroupsService', () => {
       await expect(service.search('')).resolves.toEqual([]);
       await expect(service.search('   ')).resolves.toEqual([]);
       expect(groupModel.find).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('remove — delete the group and everything it owns', () => {
+    const OWNER = USER_ID;
+
+    const groupDoc = (over: Record<string, unknown> = {}) => ({
+      _id: new Types.ObjectId(GROUP_ID),
+      ownerId: new Types.ObjectId(OWNER),
+      ...over,
+    });
+
+    beforeEach(() => {
+      groupModel.findById.mockReturnValue(q(groupDoc()));
+      groupModel.deleteOne = jest.fn().mockResolvedValue({ deletedCount: 1 });
+      memberModel.deleteMany = jest.fn().mockResolvedValue({ deletedCount: 27 });
+      messageModel.deleteMany = jest.fn().mockResolvedValue({ deletedCount: 412 });
+      tournamentModel.deleteMany = jest
+        .fn()
+        .mockResolvedValue({ deletedCount: 0 });
+      locationModel.deleteMany = jest.fn().mockResolvedValue({ deletedCount: 2 });
+      eventsService.removeAllForGroup = jest
+        .fn()
+        .mockResolvedValue({ events: 3 });
+    });
+
+    it('deletes the group and every collection that references it', async () => {
+      await service.remove(GROUP_ID, OWNER);
+
+      for (const model of [
+        memberModel,
+        messageModel,
+        tournamentModel,
+        locationModel,
+      ]) {
+        expect(model.deleteMany).toHaveBeenCalledWith(
+          expect.objectContaining({ groupId: expect.anything() }),
+        );
+      }
+      expect(groupModel.deleteOne).toHaveBeenCalled();
+    });
+
+    it('delegates the events to EventsService, not a groupId sweep', async () => {
+      // Each event owns players, fixtures, teams, chats, likes and payments.
+      // Deleting them by groupId from here would orphan all of that.
+      await service.remove(GROUP_ID, OWNER);
+
+      expect(eventsService.removeAllForGroup).toHaveBeenCalledWith(GROUP_ID);
+    });
+
+    it('removes the events BEFORE the group', async () => {
+      const order: string[] = [];
+      eventsService.removeAllForGroup = jest.fn().mockImplementation(() => {
+        order.push('events');
+        return Promise.resolve({ events: 1 });
+      });
+      groupModel.deleteOne = jest.fn().mockImplementation(() => {
+        order.push('group');
+        return Promise.resolve({ deletedCount: 1 });
+      });
+
+      await service.remove(GROUP_ID, OWNER);
+
+      expect(order).toEqual(['events', 'group']);
+    });
+
+    it('reports the blast radius, since this cannot be undone', async () => {
+      const res: any = await service.remove(GROUP_ID, OWNER);
+
+      expect(res.deleted).toEqual({
+        events: 3,
+        members: 27,
+        messages: 412,
+        tournaments: 0,
+        locations: 2,
+      });
+    });
+
+    it('403s an ADMIN — owner only', async () => {
+      // Deliberately narrower than every other management route here: an admin
+      // can be appointed and removed, so destroying the group is a different
+      // order of trust from editing it.
+      allowOwner(); // would satisfy assertOwnerOrAdmin, must not satisfy this
+      groupModel.findById.mockReturnValue(
+        q(groupDoc({ ownerId: new Types.ObjectId(TARGET_ID) })),
+      );
+
+      await expect(service.remove(GROUP_ID, OWNER)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(groupModel.deleteOne).not.toHaveBeenCalled();
+      expect(eventsService.removeAllForGroup).not.toHaveBeenCalled();
+    });
+
+    it('403s a non-member', async () => {
+      memberModel.findOne.mockResolvedValue(null);
+      groupModel.findById.mockReturnValue(
+        q(groupDoc({ ownerId: new Types.ObjectId(TARGET_ID) })),
+      );
+
+      await expect(service.remove(GROUP_ID, OWNER)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+    });
+
+    it('404s an unknown group before deleting anything', async () => {
+      groupModel.findById.mockReturnValue(q(null));
+
+      await expect(service.remove(GROUP_ID, OWNER)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(eventsService.removeAllForGroup).not.toHaveBeenCalled();
     });
   });
 

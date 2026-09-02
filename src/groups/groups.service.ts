@@ -21,6 +21,16 @@ import { AttachLocationDto } from './dto/attach-location.dto';
 import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import { ImageKitService } from '../common/upload/imagekit.service';
 import { LocationsService } from '../locations/locations.service';
+import { EventsService } from '../events/events.service';
+import { Message, MessageDocument } from '../chat/schemas/message.schema';
+import {
+  Tournament,
+  TournamentDocument,
+} from '../tournaments/schemas/tournament.schema';
+import {
+  Location,
+  LocationDocument,
+} from '../locations/schemas/location.schema';
 
 /**
  * Fields returned by group search — a discovery card, nothing more.
@@ -58,8 +68,17 @@ export class GroupsService {
     @InjectModel(Group.name) private groupModel: Model<GroupDocument>,
     @InjectModel(GroupMember.name)
     private memberModel: Model<GroupMemberDocument>,
+    // Cleared by `remove`. Registered as schemas rather than reached through
+    // ChatModule/TournamentsModule, both of which import GroupsModule — going
+    // the other way would be a circular module dependency. A schema carries no
+    // dependencies of its own, so this direction is safe.
+    @InjectModel(Message.name) private messageModel: Model<MessageDocument>,
+    @InjectModel(Tournament.name)
+    private tournamentModel: Model<TournamentDocument>,
+    @InjectModel(Location.name) private locationModel: Model<LocationDocument>,
     private readonly imagekit: ImageKitService,
     private readonly locationsService: LocationsService,
+    private readonly eventsService: EventsService,
     private config: ConfigService,
   ) {}
 
@@ -396,6 +415,69 @@ export class GroupsService {
       .find({ groupId: new Types.ObjectId(groupId), status: 'approved' })
       .populate('userId', 'name username displayName profileImage')
       .lean();
+  }
+
+  /**
+   * `DELETE /groups/:id` — delete a group and everything it owns. OWNER only.
+   *
+   * Not owner-or-admin, unlike every other management route here: an admin can
+   * be appointed and removed, and handing them the power to destroy the group's
+   * whole history is a different order of trust from editing its rules.
+   *
+   * A full cascade by decision. Seven collections reference a group, and
+   * leaving any of them would strand rows pointing at an id that no longer
+   * resolves — every read would then have to tolerate a dangling group.
+   *
+   * The order matters: events go FIRST, through `EventsService`, because each
+   * one owns its own sub-collections (players, fixtures, teams, chats, likes,
+   * payments, guests). Deleting the group's events by `groupId` here would
+   * leave all of those orphaned instead.
+   *
+   * Locations are deleted rather than handed back as personal, per decision.
+   * The consequence, stated because it is the sharpest edge of that choice: an
+   * event OUTSIDE this group that adopted one of its venues keeps a
+   * `locationId` that no longer resolves. That is the accepted cost of a clean
+   * teardown.
+   *
+   * Hard delete throughout, matching `EventsService.remove`. There is no
+   * soft-delete or archive anywhere in this codebase, and inventing one for
+   * this route alone would leave a second kind of "deleted" for every other
+   * read to learn about.
+   */
+  async remove(groupId: string, userId: string) {
+    const group = await this.groupModel.findById(groupId).lean();
+    if (!group) throw new NotFoundException('Group not found');
+
+    if (group.ownerId.toString() !== userId) {
+      throw new ForbiddenException('Only the group owner can delete the group');
+    }
+
+    const groupObjectId = new Types.ObjectId(groupId);
+
+    // Events first — each owns sub-collections this service cannot see.
+    const { events } = await this.eventsService.removeAllForGroup(groupId);
+
+    const [members, messages, tournaments, locations] = await Promise.all([
+      this.memberModel.deleteMany({ groupId: groupObjectId }),
+      this.messageModel.deleteMany({ groupId: groupObjectId }),
+      this.tournamentModel.deleteMany({ groupId: groupObjectId }),
+      this.locationModel.deleteMany({ groupId: groupObjectId }),
+    ]);
+
+    await this.groupModel.deleteOne({ _id: groupObjectId });
+
+    // Counts returned so the caller can confirm the blast radius rather than
+    // guess at it — this is irreversible.
+    return {
+      message: 'Group deleted successfully',
+      deleted: {
+        events,
+        members: members.deletedCount ?? 0,
+        messages: messages.deletedCount ?? 0,
+        tournaments: tournaments.deletedCount ?? 0,
+        locations: locations.deletedCount ?? 0,
+      },
+    };
   }
 
   /**

@@ -12,6 +12,14 @@ Integration guides written against the **live** API — every request/response s
 
 **Live reference while the server is running:** Swagger UI at `/api-docs`, OpenAPI JSON at `/api-docs-json`.
 
+## New — 2026-09-02 · `DELETE /groups/:id`
+
+**Owner only** (an admin gets `403`), **irreversible**, and a **full cascade**: the group, its members, its events — with every event's players, guests, fixtures, teams, chats, likes and payments — plus its messages, tournaments, locations and templates.
+
+The response carries per-collection counts so you can confirm the blast radius. There is no archive or undo anywhere in this API, so a confirmation step naming those counts is strongly advised.
+
+One dangling reference is accepted by design: locations are deleted rather than orphaned, so an event outside the group that adopted one of its venues keeps a `locationId` that no longer resolves. Detail in [groups §3.11](./groups-and-locations-api.md).
+
 ## ⚠️ Changed — 2026-09-02
 
 **`duration` moved from the team to the fixture.** `team.duration` is **gone** — read it from `GET /events/:id/matches`, where each fixture now carries its own. It describes a match, not a squad.

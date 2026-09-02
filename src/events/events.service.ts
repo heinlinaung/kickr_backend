@@ -971,6 +971,59 @@ export class EventsService {
   }
 
   /**
+   * Deletes every event belonging to a group, and everything under them.
+   *
+   * Exists for `DELETE /groups/:id`. Lives here rather than in GroupsService
+   * because the collections being cleared are this module's — a group has no
+   * business knowing that an event owns fixtures, chats, likes and payments,
+   * and duplicating that list there would guarantee the two drift as event
+   * sub-collections are added.
+   *
+   * Deliberately takes NO permission argument. Authorisation is the caller's
+   * job: `GroupsService.remove` has already established the caller owns the
+   * group, and re-deriving organizer rights per event would be both wasteful
+   * and wrong — a group owner may delete an event they did not create.
+   *
+   * Unlike `remove`, this ignores the `done` guard. That check protects an
+   * organizer from destroying a finished event by accident; here the owner has
+   * explicitly asked for the whole group to go, archived events included.
+   */
+  async removeAllForGroup(groupId: string) {
+    const groupObjectId = new Types.ObjectId(groupId);
+
+    const events = await this.eventModel
+      .find({ groupId: groupObjectId })
+      .select('_id')
+      .lean();
+    const eventIds = events.map((event) => event._id);
+
+    // Teams and templates hang off the GROUP as well as off events, so they are
+    // cleared by groupId — a template belongs to the group, not to any one
+    // event, and would otherwise survive with a dangling reference.
+    await this.templateModel.deleteMany({ groupId: groupObjectId });
+
+    if (!eventIds.length) {
+      await this.teamModel.deleteMany({ groupId: groupObjectId });
+      return { events: 0 };
+    }
+
+    const byEvent = { eventId: { $in: eventIds } };
+    await Promise.all([
+      this.playerModel.deleteMany(byEvent),
+      this.matchModel.deleteMany(byEvent),
+      this.teamModel.deleteMany(byEvent),
+      this.teamChatModel.deleteMany(byEvent),
+      this.likeModel.deleteMany(byEvent),
+      this.paymentModel.deleteMany(byEvent),
+    ]);
+    // Teams also carry groupId; sweep any left by an event already gone.
+    await this.teamModel.deleteMany({ groupId: groupObjectId });
+    await this.eventModel.deleteMany({ _id: { $in: eventIds } });
+
+    return { events: eventIds.length };
+  }
+
+  /**
    * The event roster: registered players and APPROVED guests.
    *
    * Pending and rejected guests are excluded — they are not playing, and a
