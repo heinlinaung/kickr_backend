@@ -2,9 +2,10 @@
 
 **Branch:** `events-feature-spec`
 **Tests:** 873 passing across 41 suites · build clean
-**Verified:** unit, plus a live credential check against the real Firebase
-service account (init succeeds, `isEnabled: true`). **No push has reached a
-device** — see §7 for the boundary.
+**Verified:** unit, plus a live check against the real Firebase project — the
+service account authenticates, `fcm.googleapis.com` is reachable, and FCM API
+v1 answers a real `send()`. **The FCM → device hop is still untested**; §7 marks
+the exact boundary.
 
 Two events now reach the user's phone:
 
@@ -126,12 +127,16 @@ Everything above is unit-tested against mocked Mongoose and a mocked FCM. In
 particular, **none of this has run against a real Firebase project or a real
 device**:
 
-- No push has ever actually been delivered to a device. A real
-  `sendEachForMulticast` was attempted against the live project on 2026-09-02
-  but the sandbox blocks DNS (`ENOTFOUND fcm.googleapis.com`,
-  `ENOTFOUND oauth2.googleapis.com`), so the request never left the machine.
-  Everything up to the network boundary is exercised; the delivery itself is
-  not.
+- No push has reached a **device** yet. The server-side chain, however, is
+  verified end to end from the developer machine (2026-09-02): a real
+  `send()` authenticated with the service account, reached
+  `fcm.googleapis.com`, and was answered by FCM API v1. The call was rejected
+  only because the token was a placeholder — FCM judges the token *after*
+  accepting the credentials, so that rejection proves auth, network and API
+  all work. What is untested is the last hop: FCM → device.
+- From inside the agent sandbox the same call fails at
+  `ENOTFOUND fcm.googleapis.com` (no DNS). That is an environment limit, not a
+  code path — do not read it as an FCM problem.
 - ~~The private-key `\n` conversion is untested against a real PEM.~~
   **Verified 2026-09-02** against the real Firebase service account:
   `PushService` initialises and reports `isEnabled: true`, and the key parses
@@ -141,12 +146,23 @@ device**:
   deployments that inject the key through a single-line env var.
 - The socket handshake has never been exercised by a real client; the gateway's
   auth path is covered only by reading.
-- Token pruning's *permanent* codes are asserted against a mocked FCM error
-  shape; the real `registration-token-not-registered` string is still
-  unconfirmed. The *transient* branch, however, was verified against a genuine
-  SDK error: an unreachable FCM yields `messaging/unknown-error`, which matches
-  neither permanent pattern, so the token is kept. A network outage cannot
-  delete valid device tokens.
+- **Both pruning branches are now confirmed against real FCM responses**, not
+  just mocks:
+  - A malformed token returns `messaging/invalid-argument`, which the
+    `includes('invalid-argument')` match treats as permanent → pruned.
+  - An unreachable FCM returns `messaging/unknown-error`, which matches neither
+    permanent pattern → token kept. A network outage cannot delete valid tokens.
+
+  One edge remains: FCM also uses `invalid-argument` for **request-level**
+  argument errors, not only bad tokens, so a malformed request could prune a
+  token that was actually fine. `registration-token-not-registered` is the
+  precise "device is gone" signal. Since the token is the only per-recipient
+  argument in a multicast the exposure is small, and a wrongly-pruned device
+  re-registers on next launch — accepted rather than fixed.
+
+- `registration-token-not-registered` itself (the uninstalled-app case) is
+  still only asserted against a mock; it needs a real token that has since
+  been invalidated.
 
 **First-deploy checklist:** set the three env vars, confirm the startup log says
 `Firebase push enabled for project …` rather than the warning, register a real

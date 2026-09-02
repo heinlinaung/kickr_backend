@@ -8,9 +8,11 @@ Three delivery channels for the same notification:
 | socket.io `/notifications` | Live banner while the app is open. |
 | FCM push | Reaching the user when the app is closed. |
 
-> ⚠️ **Written from source, not captured live.** No push has been delivered to a
-> real device yet — see the changelog's §7. Treat the payload shapes here as
-> intended rather than confirmed.
+> ⚠️ **Payload shapes written from source, not captured live.** The server side
+> is verified — the service account authenticates and FCM API v1 answers a real
+> `send()` — but **no push has reached a device yet**, and iOS cannot receive one
+> until an APNs key is uploaded (§5b). Treat the JSON below as intended rather
+> than confirmed.
 
 **Design rule you can rely on:** a notification never fails the action that
 triggered it. Creating an event succeeds even if every notification channel is
@@ -156,6 +158,24 @@ the list and the socket still work. So **"no push in dev" is expected**, not a
 bug, and the way to tell is the server's startup line: `Firebase push enabled
 for project …` versus the warning.
 
+## 5b. iOS needs an APNs key before any push arrives
+
+FCM cannot reach an iPhone on its own — Apple requires an **APNs authentication
+key** (`.p8`) or certificate uploaded to *Project settings > Cloud Messaging >
+Apple app configuration*. As of 2026-09-02 the project has **neither**, so
+`platform: "ios"` registrations are accepted and stored but **no push will be
+delivered** to them.
+
+Android and Web are unaffected: Android needs only `google-services.json`, and
+Web needs a Web Push certificate (*Generate key pair* on the same page).
+
+This is a console/Apple-account task, not a backend one — nothing in this API
+changes when the key is added.
+
+> Also note the iOS app is currently registered as `com.example.kickr`, the
+> Flutter template default. An APNs key is scoped to a bundle ID, so fix the
+> bundle ID before configuring it.
+
 ## 6. Gotchas checklist
 
 - [ ] **Nothing arrives until `POST /notifications/devices` is called.** A
@@ -170,6 +190,8 @@ for project …` versus the warning.
 - [ ] **The creator gets no notification for their own event** — do not treat
       its absence as a failure.
 - [ ] **Guests never receive anything.** They have no account.
+- [ ] **iOS delivers nothing until an APNs key is uploaded** (§5b) — a
+      successful `POST /notifications/devices` is not evidence push works.
 - [ ] **`devices` is never readable.** Do not expect it on `GET /users/me`.
 - [ ] **A missing banner is not a missing action.** The list is authoritative;
       notification delivery is best-effort by design.
