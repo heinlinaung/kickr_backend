@@ -48,11 +48,14 @@ describe('EventsService — lifecycle', () => {
   const matchModel: any = {};
   const likeModel: any = {};
   const locations: any = { assertOwnedBy: jest.fn(), assertCanEdit: jest.fn() };
+  const notifications: any = { create: jest.fn(), notifyUsers: jest.fn() };
 
   beforeEach(async () => {
     jest.clearAllMocks();
     // setStatus archives team chats on the way into `done`.
-    teamChatModel.updateMany = jest.fn().mockResolvedValue({ modifiedCount: 0 });
+    teamChatModel.updateMany = jest
+      .fn()
+      .mockResolvedValue({ modifiedCount: 0 });
     // remove() now cascades to the collections that reference the event.
     teamChatModel.deleteMany = jest.fn().mockResolvedValue({ deletedCount: 0 });
     matchModel.deleteMany = jest.fn().mockResolvedValue({ deletedCount: 0 });
@@ -64,7 +67,17 @@ describe('EventsService — lifecycle', () => {
     playerModel.create = jest.fn();
     playerModel.deleteMany = jest.fn().mockResolvedValue({ deletedCount: 0 });
     // Both exits cascade to the departing member's guests.
-    playerModel.find = jest.fn().mockResolvedValue([]);
+    // Chainable by default: the real query is
+    // playerModel.find(...).select(...).sort(...).lean(). A bare
+    // mockResolvedValue has no `.select`, which made every status change to
+    // ready_to_play log a swallowed TypeError instead of announcing.
+    // Individual tests override this with their own roster.
+    playerModel.find = jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([]),
+      then: (resolve: any) => resolve([]),
+    });
     playerModel.updateMany = jest.fn().mockResolvedValue({ modifiedCount: 0 });
     memberModel.findOne = jest.fn().mockResolvedValue(null);
 
@@ -80,6 +93,7 @@ describe('EventsService — lifecycle', () => {
           matchModel,
           likeModel,
           locations,
+          notifications,
         }),
       ],
     }).compile();
@@ -381,6 +395,90 @@ describe('EventsService — lifecycle', () => {
     });
   });
 
+  describe('notifications', () => {
+    const M1 = '507f191e810c19729de860f1';
+    const M2 = '507f191e810c19729de860f2';
+
+    beforeEach(() => {
+      notifications.notifyUsers = jest
+        .fn()
+        .mockResolvedValue({ notified: 0, pushed: 0 });
+      // The roster lookup must survive the REAL chain used by the service
+      // (.select().sort().lean()). A double missing `.select` makes the
+      // announce path throw inside its own try/catch, so a test asserting
+      // "does not fire" or "still advances" would pass without the
+      // notification code ever being reached.
+      playerModel.find = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([{ userId: new Types.ObjectId(M1) }]),
+      });
+    });
+
+    describe('on ready_to_play', () => {
+      const advance = () => {
+        const doc = eventDoc({ status: 'preparation', title: 'Friday five' });
+        eventModel.findById.mockResolvedValue(doc);
+        return service.setStatus(EVENT_ID, CREATOR, 'ready_to_play');
+      };
+
+      it('notifies the joined roster', async () => {
+        playerModel.find = jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnThis(),
+          sort: jest.fn().mockReturnThis(),
+          lean: jest
+            .fn()
+            .mockResolvedValue([
+              { userId: new Types.ObjectId(M1) },
+              { userId: new Types.ObjectId(M2) },
+            ]),
+        });
+
+        await advance();
+
+        const [recipients, payload] = notifications.notifyUsers.mock.calls[0];
+        expect(recipients.map(String).sort()).toEqual([M1, M2].sort());
+        expect(payload.type).toBe('event');
+        expect(payload.refId).toBe(String(EVENT_ID));
+      });
+
+      it.each(['preparation', 'playing', 'after_match', 'done'])(
+        'does not fire on the move to %s',
+        async (to) => {
+          // Only the transition INTO ready_to_play announces the line-up.
+          const from =
+            to === 'preparation'
+              ? 'ready_to_play'
+              : to === 'playing'
+                ? 'ready_to_play'
+                : to === 'after_match'
+                  ? 'playing'
+                  : 'after_match';
+          eventModel.findById.mockResolvedValue(eventDoc({ status: from }));
+
+          await service.setStatus(EVENT_ID, CREATOR, to);
+
+          expect(notifications.notifyUsers).not.toHaveBeenCalled();
+        },
+      );
+
+      it('still advances the status when notifying throws', async () => {
+        // The transition is the transaction; the notification is a side effect.
+        notifications.notifyUsers.mockRejectedValue(new Error('down'));
+        const doc = eventDoc({ status: 'preparation' });
+        eventModel.findById.mockResolvedValue(doc);
+
+        await expect(
+          service.setStatus(EVENT_ID, CREATOR, 'ready_to_play'),
+        ).resolves.toBeDefined();
+        expect(doc.status).toBe('ready_to_play');
+        // Guards the test itself: without this the roster query could fail
+        // first and the rejection under test would never be triggered.
+        expect(notifications.notifyUsers).toHaveBeenCalled();
+      });
+    });
+  });
+
   describe('listByGroup', () => {
     const lean = (rows: any[]) => ({
       sort: () => ({ lean: () => Promise.resolve(rows) }),
@@ -422,8 +520,7 @@ describe('EventsService — lifecycle', () => {
       const privateGroup = () => {
         groupModel.findById = jest.fn().mockReturnValue({
           select: () => ({
-            lean: () =>
-              Promise.resolve({ _id: GROUP_ID, isPrivate: true }),
+            lean: () => Promise.resolve({ _id: GROUP_ID, isPrivate: true }),
           }),
         });
       };
@@ -447,9 +544,7 @@ describe('EventsService — lifecycle', () => {
 
         await service.listByGroup(GROUP_ID, STRANGER);
 
-        expect(eventModel.find.mock.calls[0][0]).not.toHaveProperty(
-          'isPublic',
-        );
+        expect(eventModel.find.mock.calls[0][0]).not.toHaveProperty('isPublic');
       });
 
       it('still 404s an unknown group rather than 403', async () => {
@@ -508,7 +603,9 @@ describe('EventsService — lifecycle', () => {
 
     it('sorts soonest first', async () => {
       memberModel.findOne.mockResolvedValue({ role: 'member' });
-      const sort = jest.fn().mockReturnValue({ lean: () => Promise.resolve([]) });
+      const sort = jest
+        .fn()
+        .mockReturnValue({ lean: () => Promise.resolve([]) });
       eventModel.find.mockReturnValue({ sort });
       await service.listByGroup(GROUP_ID, STRANGER);
       expect(sort).toHaveBeenCalledWith({ date: 1 });
@@ -525,9 +622,9 @@ describe('EventsService — lifecycle', () => {
 
     it('rejects deleting a done event, keeping it as history', async () => {
       eventModel.findById.mockResolvedValue(eventDoc({ status: 'done' }));
-      await expect(
-        service.remove(EVENT_ID, CREATOR),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.remove(EVENT_ID, CREATOR)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
       expect(eventModel.deleteOne).not.toHaveBeenCalled();
     });
 
@@ -585,9 +682,9 @@ describe('EventsService — lifecycle', () => {
 
     it('403s a stranger deleting an event', async () => {
       eventModel.findById.mockResolvedValue(eventDoc({ status: 'join' }));
-      await expect(
-        service.remove(EVENT_ID, STRANGER),
-      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.remove(EVENT_ID, STRANGER)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
       expect(eventModel.deleteOne).not.toHaveBeenCalled();
     });
   });

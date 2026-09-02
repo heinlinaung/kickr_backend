@@ -317,21 +317,17 @@ describe('GroupsService', () => {
       tournamentModel.deleteMany = jest
         .fn()
         .mockResolvedValue({ deletedCount: 0 });
+      tournamentModel.countDocuments = jest.fn().mockResolvedValue(0);
       locationModel.deleteMany = jest.fn().mockResolvedValue({ deletedCount: 2 });
       eventsService.removeAllForGroup = jest
         .fn()
         .mockResolvedValue({ events: 3 });
     });
 
-    it('deletes the group and every collection that references it', async () => {
+    it('deletes the group and every collection it cascades to', async () => {
       await service.remove(GROUP_ID, OWNER);
 
-      for (const model of [
-        memberModel,
-        messageModel,
-        tournamentModel,
-        locationModel,
-      ]) {
+      for (const model of [memberModel, messageModel, locationModel]) {
         expect(model.deleteMany).toHaveBeenCalledWith(
           expect.objectContaining({ groupId: expect.anything() }),
         );
@@ -370,8 +366,35 @@ describe('GroupsService', () => {
         events: 3,
         members: 27,
         messages: 412,
-        tournaments: 0,
         locations: 2,
+      });
+    });
+
+    describe('tournaments are left alone', () => {
+      it('never deletes them', async () => {
+        // That module is still being designed; cascading into it would bake in
+        // assumptions about a schema that has not settled.
+        await service.remove(GROUP_ID, OWNER);
+
+        expect(tournamentModel.deleteMany).not.toHaveBeenCalled();
+      });
+
+      it('counts them and reports them as orphaned', async () => {
+        // Deleting the parent while leaving TournamentTeam/TournamentMatch
+        // behind would be WORSE than doing nothing: those rows key only on
+        // tournamentId, so nothing could ever find them again. Reporting the
+        // count stops the caller assuming a silent clean-up.
+        tournamentModel.countDocuments.mockResolvedValue(2);
+
+        const res: any = await service.remove(GROUP_ID, OWNER);
+
+        expect(res.orphanedTournaments).toBe(2);
+        expect(res.deleted).not.toHaveProperty('tournaments');
+      });
+
+      it('reports zero when the group had none', async () => {
+        const res: any = await service.remove(GROUP_ID, OWNER);
+        expect(res.orphanedTournaments).toBe(0);
       });
     });
 

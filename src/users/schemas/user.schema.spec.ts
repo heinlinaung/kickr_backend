@@ -12,6 +12,15 @@ describe('User schema (Cognito migration)', () => {
     expect(USER_SENSITIVE_PROJECTION).not.toContain('passwordResetToken');
     expect(USER_SENSITIVE_PROJECTION).not.toContain('emailVerificationToken');
   });
+
+  it('excludes devices from the sensitive projection', () => {
+    // An FCM token is a push credential: anyone holding one can send
+    // notifications to that device. This projection is what keeps them out of
+    // GET /users/me and off `request.user`, which the JWT strategy populates on
+    // every authenticated request. Dropping `-devices` would leak them silently
+    // — nothing else in the read path filters them.
+    expect(USER_SENSITIVE_PROJECTION).toContain('-devices');
+  });
 });
 
 describe('User schema (profile fields)', () => {

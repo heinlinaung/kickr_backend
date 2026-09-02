@@ -185,7 +185,7 @@ join → preparation → ready_to_play → playing → after_match → done
 |---|---|
 | `join` | Registration open. Players can join/leave. |
 | `preparation` | Teams being assigned; fixtures submitted here. |
-| `ready_to_play` | **NEW** — teams are final and reviewable; kick-off has not happened. The roster is **frozen**: shuffling is refused here. |
+| `ready_to_play` | **NEW** — teams are final and reviewable; kick-off has not happened. The roster is **frozen**: shuffling is refused here. Entering this state **notifies every joined player** ("Teams are ready") — see [notifications-api.md](./notifications-api.md). |
 | `playing` | Match in progress; scores can be entered. |
 | `after_match` | Match over; MVP/photos/ratings belong here. |
 | `done` | Archived. Terminal — nothing can change. |

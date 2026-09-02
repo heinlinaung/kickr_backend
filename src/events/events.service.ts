@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   NotFoundException,
   ForbiddenException,
   ConflictException,
@@ -14,10 +15,7 @@ import {
   MAX_GUESTS_PER_MEMBER,
   PLAYABLE_APPROVAL,
 } from './schemas/event-player.schema';
-import {
-  EventMatch,
-  EventMatchDocument,
-} from './schemas/event-match.schema';
+import { EventMatch, EventMatchDocument } from './schemas/event-match.schema';
 import {
   EventTeamChat,
   EventTeamChatDocument,
@@ -36,7 +34,10 @@ import {
   GroupMemberDocument,
 } from '../groups/schemas/group-member.schema';
 import { Group, GroupDocument } from '../groups/schemas/group.schema';
-import { Location, LocationDocument } from '../locations/schemas/location.schema';
+import {
+  Location,
+  LocationDocument,
+} from '../locations/schemas/location.schema';
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { GenerateTeamsDto } from './dto/generate-teams.dto';
@@ -127,6 +128,8 @@ export interface ListEventsQuery {
 
 @Injectable()
 export class EventsService {
+  private readonly logger = new Logger(EventsService.name);
+
   constructor(
     @InjectModel(Event.name) private eventModel: Model<EventDocument>,
     @InjectModel(EventPlayer.name)
@@ -187,7 +190,9 @@ export class EventsService {
         );
       }
     } else if (event.createdBy.toString() !== userId) {
-      throw new ForbiddenException('Only the event creator can manage this event');
+      throw new ForbiddenException(
+        'Only the event creator can manage this event',
+      );
     }
 
     return event;
@@ -473,11 +478,7 @@ export class EventsService {
    * `privacy.showMatchHistory` — a privacy control that makes no sense applied
    * to your own list.
    */
-  async listJoined(
-    userId: string,
-    status?: string,
-    includeExpired = false,
-  ) {
+  async listJoined(userId: string, status?: string, includeExpired = false) {
     const rows = await this.playerModel
       .find({
         userId: new Types.ObjectId(userId),
@@ -587,7 +588,7 @@ export class EventsService {
       // (spec §4.6). assertOwnedBy rejected exactly that case.
       await this.locationsService.assertCanEdit(locationId, userId);
     }
-    return this.eventModel.create({
+    const event = await this.eventModel.create({
       ...rest,
       date: new Date(dto.date),
       startTime: dto.startTime ? new Date(dto.startTime) : null,
@@ -597,6 +598,78 @@ export class EventsService {
       templateId: templateId ? new Types.ObjectId(templateId) : null,
       createdBy: new Types.ObjectId(userId),
     });
+
+    await this.notifyGroupOfNewEvent(event, userId);
+    return event;
+  }
+
+  /**
+   * Tells the joined roster that the teams are set and kick-off is next.
+   *
+   * Addressed to the people PLAYING, not to the group: someone who never
+   * joined has no stake in the line-up, and this is the notification that most
+   * needs to reach a phone in a pocket.
+   *
+   * Guests are excluded, unavoidably rather than by choice — a guest has no
+   * account, so no device token and no notification row. Their sponsor is the
+   * contact, which is one more reason the sponsor relationship is load-bearing.
+   */
+  private async notifyRosterReadyToPlay(event: EventDocument): Promise<void> {
+    try {
+      const playerIds = await this.joinedPlayerIds(String(event._id));
+
+      await this.notificationsService.notifyUsers(playerIds, {
+        title: 'Teams are ready',
+        body: `${event.title} — check your team and get ready to play.`,
+        type: 'event',
+        refId: String(event._id),
+      });
+    } catch (err) {
+      this.logger.error(`Failed to announce ready_to_play: ${err}`);
+    }
+  }
+
+  /**
+   * Tells a group its new event exists.
+   *
+   * Only for group events — a standalone event has no audience to announce it
+   * to, so this is a no-op there rather than a special case at the call site.
+   *
+   * Recipients are the group's **approved** members, minus the creator: they
+   * just made it, and being told about your own action is noise. Pending
+   * requesters are excluded on the same reasoning as everywhere else on this
+   * branch — approval is what grants visibility, and a private group's event
+   * must not leak to someone still waiting.
+   *
+   * Awaited but never allowed to throw. `notifyUsers` swallows its own
+   * failures, and this method guards the audience query too, so a notification
+   * problem cannot turn a successful `POST /events` into a 500.
+   */
+  private async notifyGroupOfNewEvent(
+    event: EventDocument,
+    creatorId: string,
+  ): Promise<void> {
+    if (!event.groupId) return;
+
+    try {
+      const members = await this.memberModel
+        .find({ groupId: event.groupId, status: 'approved' })
+        .select('userId')
+        .lean();
+
+      const recipients = members
+        .map((member) => String(member.userId))
+        .filter((id) => id !== creatorId);
+
+      await this.notificationsService.notifyUsers(recipients, {
+        title: 'New event',
+        body: `${event.title} — ${new Date(event.date).toDateString()}`,
+        type: 'event',
+        refId: String(event._id),
+      });
+    } catch (err) {
+      this.logger.error(`Failed to announce new event: ${err}`);
+    }
   }
 
   /**
@@ -883,6 +956,14 @@ export class EventsService {
     event.status = to as EventStatus;
     await event.save();
 
+    // Tell the people actually playing that the teams are final. Fired only on
+    // the transition INTO ready_to_play, not on every save, so re-entering the
+    // state from `playing` is the only way to notify twice — and that is a
+    // deliberate act by the organizer.
+    if (to === 'ready_to_play') {
+      await this.notifyRosterReadyToPlay(event);
+    }
+
     // Archive the team chats on the way into `done` (spec §4.1). Archived
     // rooms stay readable — this closes them to new messages, not to history.
     if (to === 'done') {
@@ -899,7 +980,9 @@ export class EventsService {
   async update(eventId: string, userId: string, dto: UpdateEventDto) {
     const event = await this.assertOrganizer(eventId, userId);
     if (!canModify(event.status)) {
-      throw new BadRequestException('A completed event can no longer be edited');
+      throw new BadRequestException(
+        'A completed event can no longer be edited',
+      );
     }
 
     const { locationId, date, startTime, endTime } = dto;
@@ -955,7 +1038,9 @@ export class EventsService {
   async remove(eventId: string, userId: string) {
     const event = await this.assertOrganizer(eventId, userId);
     if (!canModify(event.status)) {
-      throw new BadRequestException('A completed event can no longer be deleted');
+      throw new BadRequestException(
+        'A completed event can no longer be deleted',
+      );
     }
 
     // Fixtures, chats and likes live in their own collections now, so deleting
@@ -1265,7 +1350,9 @@ export class EventsService {
     const guestRoster = (dto.guestIds ?? []).map(String);
     if (guestRoster.length) {
       const approvedGuests = await this.approvedGuestIds(eventId);
-      const notApproved = guestRoster.find((id) => !approvedGuests.includes(id));
+      const notApproved = guestRoster.find(
+        (id) => !approvedGuests.includes(id),
+      );
       if (notApproved) {
         throw new BadRequestException(
           `Guest ${notApproved} is not an approved guest on this event`,
@@ -1318,8 +1405,7 @@ export class EventsService {
     if (dto.name !== undefined) team.name = dto.name.trim();
     team.players = roster.map((id) => new Types.ObjectId(id));
     team.guests = guestRoster.map((id) => new Types.ObjectId(id));
-    team.status =
-      roster.length || guestRoster.length ? 'ready' : 'pending';
+    team.status = roster.length || guestRoster.length ? 'ready' : 'pending';
 
     // Roles annotate `players`, so a player dropped from the squad must not
     // keep a captaincy here — it would be invisible to every read and would
@@ -1377,15 +1463,17 @@ export class EventsService {
     const event = await this.eventModel.findById(eventId).select('_id').lean();
     if (!event) throw new NotFoundException('Event not found');
 
-    return this.teamModel
-      .find({ eventId: event._id })
-      .populate('players', 'name profileImage')
-      // Guests come from the roster collection, so the useful fields are the
-      // guest's display name and who brought them — they have no user account
-      // and therefore no profile image of their own.
-      .populate('guests', 'guestName addedByUserId type approval')
-      .sort({ name: 1 })
-      .lean();
+    return (
+      this.teamModel
+        .find({ eventId: event._id })
+        .populate('players', 'name profileImage')
+        // Guests come from the roster collection, so the useful fields are the
+        // guest's display name and who brought them — they have no user account
+        // and therefore no profile image of their own.
+        .populate('guests', 'guestName addedByUserId type approval')
+        .sort({ name: 1 })
+        .lean()
+    );
   }
 
   /**
@@ -1446,9 +1534,7 @@ export class EventsService {
       // the squad size each team aims for IS its share of the whole roster,
       // rounded up since a remainder lands on the earlier teams. Counting only
       // registered players here would set a limit the guests then breach.
-      numberOfPlayers: Math.ceil(
-        (joined.length + guests.length) / teamsCount,
-      ),
+      numberOfPlayers: Math.ceil((joined.length + guests.length) / teamsCount),
     });
 
     // Deal the shuffled players across the teams just created, and the guests
@@ -1666,7 +1752,9 @@ export class EventsService {
   async setCover(eventId: string, userId: string, file: Express.Multer.File) {
     const event = await this.assertOrganizer(eventId, userId);
     if (!canModify(event.status)) {
-      throw new BadRequestException('A completed event can no longer be edited');
+      throw new BadRequestException(
+        'A completed event can no longer be edited',
+      );
     }
 
     const previousFileId = event.coverImageFileId;
@@ -1843,9 +1931,7 @@ export class EventsService {
     // guests-disabled event should hear "this event does not allow guests"
     // rather than "join first", since joining would not help them.
     if (!event.isAllowExtraPlayer) {
-      throw new BadRequestException(
-        'This event does not allow extra players',
-      );
+      throw new BadRequestException('This event does not allow extra players');
     }
 
     // Only someone playing may bring someone. An organizer who never joined

@@ -868,22 +868,37 @@ is a different order of trust from editing its rules. An admin gets `403`.
 
 ### What it deletes
 
-Seven collections reference a group, and **all of them go**. Leaving any behind
-would strand rows pointing at an id that no longer resolves.
+Eleven collections, in two passes. Leaving any of them would strand rows
+pointing at an id that no longer resolves.
 
 | | Also removed |
 |---|---|
 | The group | — |
 | Its members | every `GroupMember` row, including pending requests |
-| **Its events** | and for each event: players, guests, fixtures, teams, team chats, likes, payments |
-| Its chat messages | every `Message` for the group |
-| Its tournaments | — |
-| Its locations | every venue with this `groupId` |
+| **Its events** | and for each event: players **and guests**, fixtures, teams, team chats, likes, payments |
 | Its event templates | — |
+| Its chat messages | every `Message` for the group |
+| Its locations | every venue with this `groupId` |
 
 Events are deleted **first**, through the events module, because each one owns
 sub-collections the groups module cannot see. Sweeping them by `groupId` alone
 would orphan every fixture and roster row.
+
+### What it does NOT delete
+
+**Tournaments are left completely alone**, by decision — that module is still
+being designed, so cascading into it would bake in assumptions about a schema
+that has not settled.
+
+They are not merely skipped but deliberately untouched: deleting `tournaments`
+by `groupId` while leaving `TournamentTeam` and `TournamentMatch` behind would
+be **worse than doing nothing**, because those rows key only on `tournamentId`
+and would become unreachable — no query could find them again once the parent
+was gone.
+
+So any tournaments **survive with a `groupId` pointing at a deleted group**, and
+the response reports how many, as `orphanedTournaments`. Treat a non-zero value
+as work to do by hand until the tournament design lands.
 
 ### Response
 
@@ -894,12 +909,15 @@ Per-collection counts, so you can confirm the blast radius rather than guess:
   "data": {
     "message": "Group deleted successfully",
     "deleted": {
-      "events": 3, "members": 27, "messages": 412,
-      "tournaments": 0, "locations": 2
-    }
+      "events": 3, "members": 27, "messages": 412, "locations": 2
+    },
+    "orphanedTournaments": 0
   }
 }
 ```
+
+> `orphanedTournaments` counts what was **not** deleted. It sits outside
+> `deleted` on purpose, so it cannot be mistaken for a removal count.
 
 **Show these to the user before and after.** There is no archive, no soft
 delete and no undo anywhere in this API — a group with 400 messages and 3

@@ -439,6 +439,21 @@ export class GroupsService {
    * `locationId` that no longer resolves. That is the accepted cost of a clean
    * teardown.
    *
+   * TOURNAMENTS ARE LEFT ALONE, by decision — that module is still being
+   * designed, so cascading into it would bake in assumptions about a schema
+   * that has not settled.
+   *
+   * They are not merely skipped, they are deliberately not touched: deleting
+   * `tournaments` by `groupId` while leaving `TournamentTeam` and
+   * `TournamentMatch` behind would be worse than doing nothing, because those
+   * rows key only on `tournamentId` and would become unreachable — no query
+   * could find them again to clean up once the parent was gone.
+   *
+   * Any tournaments are therefore COUNTED and reported as
+   * `orphanedTournaments`, so the caller learns they now reference a deleted
+   * group rather than assuming a silent clean-up. Revisit when the tournament
+   * design lands.
+   *
    * Hard delete throughout, matching `EventsService.remove`. There is no
    * soft-delete or archive anywhere in this codebase, and inventing one for
    * this route alone would leave a second kind of "deleted" for every other
@@ -457,10 +472,14 @@ export class GroupsService {
     // Events first — each owns sub-collections this service cannot see.
     const { events } = await this.eventsService.removeAllForGroup(groupId);
 
-    const [members, messages, tournaments, locations] = await Promise.all([
+    // Tournaments are deliberately NOT cascaded — see the note above.
+    const tournaments = await this.tournamentModel.countDocuments({
+      groupId: groupObjectId,
+    });
+
+    const [members, messages, locations] = await Promise.all([
       this.memberModel.deleteMany({ groupId: groupObjectId }),
       this.messageModel.deleteMany({ groupId: groupObjectId }),
-      this.tournamentModel.deleteMany({ groupId: groupObjectId }),
       this.locationModel.deleteMany({ groupId: groupObjectId }),
     ]);
 
@@ -474,9 +493,11 @@ export class GroupsService {
         events,
         members: members.deletedCount ?? 0,
         messages: messages.deletedCount ?? 0,
-        tournaments: tournaments.deletedCount ?? 0,
         locations: locations.deletedCount ?? 0,
       },
+      // NOT deleted, and reported so the caller knows they are stranded rather
+      // than assuming a silent clean-up. See the note on `remove`.
+      orphanedTournaments: tournaments,
     };
   }
 
