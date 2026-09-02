@@ -1,7 +1,7 @@
 # Change Log — 2026-09-02 · `DELETE /groups/:id`
 
 **Branch:** `events-feature-spec`
-**Tests:** 850 passing across 40 suites · build clean
+**Tests:** 853 passing across 40 suites · build clean
 **Verified:** unit only. §5 explains why that matters more than usual here.
 
 Closes the "group delete" half of the long-standing
@@ -30,10 +30,16 @@ defensible "refuse instead" answer:
 |---|---|
 | A group's events? | **Cascade** — delete them and everything under them |
 | Group-owned locations? | **Delete** them with the group |
+| Tournaments? | **Leave untouched** — module still being designed (§2.1) |
 
-Seven collections reference a group. All are cleared, because leaving any would
-strand rows pointing at an id that no longer resolves, and every read would then
-have to tolerate a dangling group.
+**Eleven collections are cleared**, across two passes. Leaving any would strand
+rows pointing at an id that no longer resolves, and every read would then have
+to tolerate a dangling group.
+
+*(An earlier draft of this entry said "seven". That was the count of collections
+carrying a `groupId`, not the size of the cascade — it missed the five that hang
+off an event, and counted `tournaments`, which is now deliberately excluded, and
+`test-run`, which is admin seeding metadata and correctly untouched.)*
 
 **Events go first, and through `EventsService.removeAllForGroup`.** That method
 is new, and lives in the events module rather than here on purpose: each event
@@ -49,6 +55,26 @@ delete an event they did not create. It also ignores the `done` guard that
 protects `EventsService.remove` — that check stops an organizer destroying a
 finished event by accident, whereas here the owner has explicitly asked for the
 whole group to go, archives included.
+
+### 2.1 Tournaments are deliberately not cascaded
+
+The tournament module has no settled design yet, so cascading into it would bake
+in assumptions about a schema still in flux.
+
+They are **not merely skipped but deliberately untouched**, and that distinction
+is the whole point: deleting `tournaments` by `groupId` while leaving
+`TournamentTeam` and `TournamentMatch` behind would be **worse than doing
+nothing**. Those rows key only on `tournamentId`, so once the parent is gone
+nothing can find them again — a half-cascade manufactures unreachable data,
+where no cascade merely leaves a dangling `groupId` that is still queryable.
+
+The first version of this route did exactly that half-cascade. It was caught by
+auditing the actual delete calls against the collections that reference a group,
+which is also what corrected the "seven" figure above.
+
+Any tournaments are therefore **counted, not deleted**, and reported as
+`orphanedTournaments` outside the `deleted` block so the number cannot be
+mistaken for a removal count. Revisit when the tournament design lands.
 
 ### The module wiring, and the cycle avoided
 
@@ -68,7 +94,8 @@ importing the module is not.
 ```json
 { "message": "Group deleted successfully",
   "deleted": { "events": 3, "members": 27, "messages": 412,
-               "tournaments": 0, "locations": 2 } }
+               "locations": 2 },
+  "orphanedTournaments": 0 }
 ```
 
 Counts rather than a bare message, because this is irreversible: there is no
@@ -95,7 +122,7 @@ the group. The decision was a clean teardown, so this is the cost.
 
 ## 5. Testing, and why unit-only is thin here
 
-10 new tests: every collection cleared by `groupId`; events delegated to
+13 new tests: every collection cleared by `groupId`; events delegated to
 `EventsService` rather than swept locally; ordering (events strictly before the
 group); the counts returned; and `403` for an admin, `403` for a non-member,
 `404` for an unknown group with nothing deleted first.
@@ -104,9 +131,9 @@ group); the counts returned; and `403` for an admin, `403` for a non-member,
 rows.** That gap is wider than usual for this route, because the failure mode is
 not an exception — it is data quietly surviving or quietly vanishing:
 
-- A wrong filter on any of the five `deleteMany` calls either leaves orphans or
+- A wrong filter on any of the `deleteMany` calls either leaves orphans or
   **deletes another group's rows**. A mock cannot tell those apart.
-- The `Promise.all` over four deletes is not a transaction. A mid-flight failure
+- The `Promise.all` over three deletes is not a transaction. A mid-flight failure
   leaves the group deleted or half-deleted with no rollback, and nothing here
   exercises that.
 

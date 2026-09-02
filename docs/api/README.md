@@ -14,7 +14,9 @@ Integration guides written against the **live** API — every request/response s
 
 ## New — 2026-09-02 · `DELETE /groups/:id`
 
-**Owner only** (an admin gets `403`), **irreversible**, and a **full cascade**: the group, its members, its events — with every event's players, guests, fixtures, teams, chats, likes and payments — plus its messages, tournaments, locations and templates.
+**Owner only** (an admin gets `403`), **irreversible**, and a cascade over eleven collections: the group, its members, its events — with every event's players, guests, fixtures, teams, chats, likes and payments — plus its templates, messages and locations.
+
+**Tournaments are deliberately NOT cascaded** while that module is still being designed, so they survive pointing at a deleted group. The response reports how many as `orphanedTournaments` — treat a non-zero value as manual work.
 
 The response carries per-collection counts so you can confirm the blast radius. There is no archive or undo anywhere in this API, so a confirmation step naming those counts is strongly advised.
 
