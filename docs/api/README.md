@@ -8,9 +8,28 @@ Integration guides written against the **live** API — every request/response s
 | [groups-and-locations-api.md](./groups-and-locations-api.md) | Locations (venues) and Groups (fields, `country`/`city`, images, rules, members/roles, search, QR invites, joining). |
 | [events-api.md](./events-api.md) | Events — the 6-state lifecycle (incl. **`ready_to_play`**), derived `isFull`, listing a group's events, **free-text search**, create/edit/delete, join/leave. ⚠️ **breaking status change**. |
 | [users-api.md](./users-api.md) | Users — **people search** (name/username, exact-email only), and the profile routes. ⚠️ written from source, not captured live. |
+| [notifications-api.md](./notifications-api.md) | Notifications — the in-app list, the socket.io `/notifications` namespace, and **FCM device registration**. Two triggers today: event created, and event → `ready_to_play`. ⚠️ written from source, not captured live. |
 | [admin-api.md](./admin-api.md) | **Back-office only**, behind the `x-admin-key` shared secret — force-add users to a group or event, and seed a throwaway test fixture (§9). Not for the mobile app. |
 
 **Live reference while the server is running:** Swagger UI at `/api-docs`, OpenAPI JSON at `/api-docs-json`.
+
+## New — 2026-09-02 · Push notifications
+
+**Two triggers only:** an event is created (→ the group's approved members,
+minus the creator), and an event moves to `ready_to_play` (→ the users joined
+to it). Everything else in the app still has no notification.
+
+Delivered three ways — the persisted list, a socket.io banner, and FCM push.
+**The list is the source of truth**; both deliveries are best-effort and a
+notification can never fail the action that triggered it, so a missing banner
+does not mean a missing action.
+
+Push requires **`POST /notifications/devices`** with the FCM token after login
+and on every token refresh, and **`DELETE /notifications/devices/:fcmToken`**
+on logout. Device tokens are push credentials and are **never readable** — they
+are excluded from `GET /users/me` and every other user response.
+
+See [notifications-api.md](./notifications-api.md).
 
 ## New — 2026-09-02 · `DELETE /groups/:id`
 
