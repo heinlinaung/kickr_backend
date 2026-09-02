@@ -7,8 +7,19 @@ import { TransformInterceptor } from './common/interceptors/transform.intercepto
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  // CORS_EXTRA_ORIGINS is an optional comma-separated list, for local tools
+  // served from a different port than the API (the web-push test page runs on
+  // :8080). APP_BASE_URL stays the single canonical origin because invite
+  // links are built from it, so it must not become a list.
+  const extraOrigins = (process.env.CORS_EXTRA_ORIGINS ?? '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
   app.enableCors({
-    origin: process.env.APP_BASE_URL ?? 'http://localhost:3000',
+    origin: [
+      process.env.APP_BASE_URL ?? 'http://localhost:3000',
+      ...extraOrigins,
+    ],
     credentials: true,
   });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }));
