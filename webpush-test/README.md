@@ -103,6 +103,7 @@ Then exercise the real triggers:
 | `applicationServerKey is not valid` | Wrong `vapidKey` for this project. |
 | Abort even after enabling Brave's setting | A subscription already exists under a **different** VAPID key — likely if the key was regenerated. The page now unsubscribes and retries automatically; if it persists, clear site data for `localhost:8080`. |
 | Permission prompt never appears | Already denied. Reset via the padlock in the address bar. |
+| "Register with API" greyed out | It needs a value in the **FCM token** field. Press *Get FCM token*, or paste one in — the field is editable and persists across reloads. |
 | `HTTP 401` on register | Expired token, or an **id** token instead of an **access** token. |
 | CORS error on register | `CORS_EXTRA_ORIGINS` not set, or the API was not restarted after setting it. |
 | Send succeeds, nothing visible | The tab was focused — check the page log, or background it and resend. |

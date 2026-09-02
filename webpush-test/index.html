@@ -69,6 +69,8 @@
       <input id="apiBase" value="http://localhost:3000" />
       <label>Cognito ACCESS token (not the id token)</label>
       <input id="accessToken" placeholder="eyJraWQi..." />
+      <label>FCM token — filled by step 1, or paste one from another browser</label>
+      <input id="fcmToken" placeholder="press “Get FCM token”, or paste" />
     </fieldset>
 
     <button id="btnToken">1 · Get FCM token</button>
@@ -92,7 +94,7 @@
       };
 
       // Persist the fields so a reload does not mean re-pasting five values.
-      const FIELDS = ['apiKey','appId','senderId','projectId','vapidKey','apiBase','accessToken'];
+      const FIELDS = ['apiKey','appId','senderId','projectId','vapidKey','apiBase','accessToken','fcmToken'];
       FIELDS.forEach((id) => {
         const el = document.getElementById(id);
         const saved = localStorage.getItem('kickr_' + id);
@@ -100,7 +102,16 @@
         el.addEventListener('input', () => localStorage.setItem('kickr_' + id, el.value));
       });
 
-      let fcmToken = null;
+      // The token field is the single source of truth rather than a JS
+      // variable: the browser's push subscription outlives a page reload, so
+      // losing the token on refresh (while restoring every other field) was
+      // just a bug. Typing a token by hand enables step 2 too.
+      const tokenEl = document.getElementById('fcmToken');
+      const syncRegisterButton = () => {
+        document.getElementById('btnRegister').disabled = !tokenEl.value.trim();
+      };
+      tokenEl.addEventListener('input', syncRegisterButton);
+      syncRegisterButton();
 
       document.getElementById('btnClear').onclick = () => { logEl.textContent = 'Ready.'; };
 
@@ -153,6 +164,7 @@
           }
 
           log('Requesting FCM token…');
+          let fcmToken;
           try {
             fcmToken = await getToken(messaging, { vapidKey, serviceWorkerRegistration: reg });
           } catch (tokenErr) {
@@ -173,7 +185,9 @@
 
           log('FCM TOKEN (copy this):', 'ok');
           log(fcmToken);
-          document.getElementById('btnRegister').disabled = false;
+          tokenEl.value = fcmToken;
+          localStorage.setItem('kickr_fcmToken', fcmToken);
+          syncRegisterButton();
 
           // Foreground messages never reach onBackgroundMessage.
           onMessage(messaging, (payload) => {
@@ -218,7 +232,8 @@
       document.getElementById('btnRegister').onclick = async () => {
         const base = document.getElementById('apiBase').value.trim().replace(/\/$/, '');
         const token = document.getElementById('accessToken').value.trim();
-        if (!fcmToken) { log('Get a token first.', 'err'); return; }
+        const fcmToken = tokenEl.value.trim();
+        if (!fcmToken) { log('Get a token first, or paste one.', 'err'); return; }
         if (!token) { log('Need a Cognito access token.', 'err'); return; }
         try {
           log(`POST ${base}/notifications/devices …`);
