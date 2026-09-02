@@ -1,9 +1,10 @@
 # Change Log — 2026-09-02 · Push notifications (socket.io + Firebase)
 
 **Branch:** `events-feature-spec`
-**Tests:** 872 passing across 41 suites · build clean
-**Verified:** unit only. §7 lists what has never touched a real device or a real
-Firebase project, which is most of the interesting part.
+**Tests:** 873 passing across 41 suites · build clean
+**Verified:** unit, plus a live credential check against the real Firebase
+service account (init succeeds, `isEnabled: true`). **No push has reached a
+device** — see §7 for the boundary.
 
 Two events now reach the user's phone:
 
@@ -63,9 +64,15 @@ FIREBASE_CLIENT_EMAIL=...
 FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----\n"
 ```
 
-`FIREBASE_PRIVATE_KEY` holds **literal `\n` sequences**, which are converted to
-real newlines at init. Env vars cannot carry newlines, and a PEM without them
-is rejected as malformed — the classic FCM setup failure.
+`FIREBASE_PRIVATE_KEY` accepts the key **either way**. Init runs
+`.replace(/\\n/g, '\n')`, so a single-line value carrying literal `\n`
+sequences is restored to a real PEM — necessary because many env-var stores
+cannot hold newlines. A value that already contains real newlines (what the
+Firebase console's JSON gives you, and what a quoted multi-line `.env` entry
+preserves) passes through untouched.
+
+Quote the value either way, or it truncates at the first space in
+`BEGIN PRIVATE KEY`.
 
 ## 4. Devices are an array, and tokens are credentials
 
@@ -119,15 +126,27 @@ Everything above is unit-tested against mocked Mongoose and a mocked FCM. In
 particular, **none of this has run against a real Firebase project or a real
 device**:
 
-- No push has ever actually been delivered. `sendEachForMulticast` is mocked in
-  every test.
-- The private-key `\n` conversion is untested against a real PEM — it is the
-  single most likely thing to be wrong on first deploy.
+- No push has ever actually been delivered to a device. A real
+  `sendEachForMulticast` was attempted against the live project on 2026-09-02
+  but the sandbox blocks DNS (`ENOTFOUND fcm.googleapis.com`,
+  `ENOTFOUND oauth2.googleapis.com`), so the request never left the machine.
+  Everything up to the network boundary is exercised; the delivery itself is
+  not.
+- ~~The private-key `\n` conversion is untested against a real PEM.~~
+  **Verified 2026-09-02** against the real Firebase service account:
+  `PushService` initialises and reports `isEnabled: true`, and the key parses
+  as a 2048-bit RSA key that can sign. Note the credential downloaded from the
+  Firebase console carried **real newlines**, not literal `\n`, so the
+  `.replace(/\\n/g, '\n')` was a harmless no-op — it still matters for
+  deployments that inject the key through a single-line env var.
 - The socket handshake has never been exercised by a real client; the gateway's
   auth path is covered only by reading.
-- Token pruning is asserted against a mocked FCM error shape. The real error
-  codes are strings from the SDK and are matched with `includes`, which is
-  deliberately loose but unconfirmed.
+- Token pruning's *permanent* codes are asserted against a mocked FCM error
+  shape; the real `registration-token-not-registered` string is still
+  unconfirmed. The *transient* branch, however, was verified against a genuine
+  SDK error: an unreachable FCM yields `messaging/unknown-error`, which matches
+  neither permanent pattern, so the token is kept. A network outage cannot
+  delete valid device tokens.
 
 **First-deploy checklist:** set the three env vars, confirm the startup log says
 `Firebase push enabled for project …` rather than the warning, register a real
