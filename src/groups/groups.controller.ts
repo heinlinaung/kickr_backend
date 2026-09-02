@@ -12,7 +12,12 @@ import {
   UploadedFile,
   BadRequestException,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+} from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -124,6 +129,47 @@ export class GroupsController {
   @Post(':id/leave')
   leave(@Param('id') id: string, @CurrentUser() user: any) {
     return this.groupsService.leave(id, user._id.toString());
+  }
+
+  @Delete(':id')
+  @ApiOperation({
+    summary: 'Delete a group and everything it owns (OWNER only)',
+    description:
+      'Owner only — NOT owner-or-admin, unlike the other management routes. ' +
+      'An admin can be appointed and removed, so destroying the group is a ' +
+      'different order of trust from editing it. ' +
+      'IRREVERSIBLE and a FULL CASCADE: the group, its members, its events ' +
+      '(with every event\'s players, fixtures, teams, chats, likes and ' +
+      'payments), its chat messages, its tournaments and its locations are ' +
+      'all hard-deleted. There is no archive and nothing to undo. ' +
+      'The response reports how many rows of each kind went, so the caller ' +
+      'can confirm the blast radius. ' +
+      'NOTE: an event outside this group that adopted one of its venues will ' +
+      'keep a locationId that no longer resolves — the accepted cost of ' +
+      'deleting locations rather than orphaning them.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Deleted, with per-collection counts',
+    schema: {
+      example: {
+        data: {
+          message: 'Group deleted successfully',
+          deleted: {
+            events: 3,
+            members: 27,
+            messages: 412,
+            tournaments: 0,
+            locations: 2,
+          },
+        },
+      },
+    },
+  })
+  @ApiResponse({ status: 403, description: 'Caller is not the group owner' })
+  @ApiResponse({ status: 404, description: 'Group not found' })
+  remove(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.groupsService.remove(id, user._id.toString());
   }
 
   @Get(':id/members')

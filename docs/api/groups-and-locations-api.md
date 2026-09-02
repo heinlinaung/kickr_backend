@@ -253,6 +253,7 @@ The same adoption happens on `POST /groups/:id/locations` when you attach one of
 |---|---|---|---|
 | `GET` | `/groups` | member | Caller's groups; each item includes **`userRole`**. Only approved memberships, so no `memberStatus`. |
 | `POST` | `/groups` | any | Creator becomes `owner`. Accepts `rules`, `country`, `city`. |
+| `DELETE` | `/groups/:id` | **owner only** | **NEW** — delete the group and everything it owns. Irreversible full cascade. See §3.11. |
 | `GET` | `/groups/search?q=` | any | **CHANGED** — now includes **private** groups. Matches name **or** handle, max 20, returns a reduced card (no `inviteCode`). Empty `q` → `[]`. See §3.4b. |
 | `GET` | `/groups/:id` | any | Group detail **+ `userRole` / `memberStatus`** for the caller. |
 | `PATCH` | `/groups/:id` | owner/admin | Update name, description, maxPlayers, sportType, handle, rules, isPrivate, **country, city**. |
@@ -849,3 +850,71 @@ class GroupInvite {
 | Auto-generated `username` | Not implemented (`username` is `null`). `name` **can** now be set at signup — see [auth-api §3.1](./auth-api.md). |
 
 Events currently accept a `locationId` on create but there is no endpoint to change an event's location afterwards.
+
+---
+
+### 3.11 `DELETE /groups/:id` — delete a group
+
+*New 2026-09-02.* **Owner only, irreversible, and a full cascade.**
+
+```http
+DELETE /groups/6a6cce80419acf83c69c01a7
+Authorization: Bearer <accessToken>
+```
+
+**Owner only — not owner-or-admin**, unlike every other management route here.
+An admin can be appointed and removed, so destroying the group's entire history
+is a different order of trust from editing its rules. An admin gets `403`.
+
+### What it deletes
+
+Seven collections reference a group, and **all of them go**. Leaving any behind
+would strand rows pointing at an id that no longer resolves.
+
+| | Also removed |
+|---|---|
+| The group | — |
+| Its members | every `GroupMember` row, including pending requests |
+| **Its events** | and for each event: players, guests, fixtures, teams, team chats, likes, payments |
+| Its chat messages | every `Message` for the group |
+| Its tournaments | — |
+| Its locations | every venue with this `groupId` |
+| Its event templates | — |
+
+Events are deleted **first**, through the events module, because each one owns
+sub-collections the groups module cannot see. Sweeping them by `groupId` alone
+would orphan every fixture and roster row.
+
+### Response
+
+Per-collection counts, so you can confirm the blast radius rather than guess:
+
+```json
+{
+  "data": {
+    "message": "Group deleted successfully",
+    "deleted": {
+      "events": 3, "members": 27, "messages": 412,
+      "tournaments": 0, "locations": 2
+    }
+  }
+}
+```
+
+**Show these to the user before and after.** There is no archive, no soft
+delete and no undo anywhere in this API — a group with 400 messages and 3
+events' worth of scores disappears on one call. A confirmation step naming the
+counts is strongly advised; `GET /groups/:id` and
+`GET /events/group/:groupId` give you them beforehand.
+
+| Code | When |
+|---|---|
+| `403` | Caller is not the owner (an **admin** also gets this) |
+| `404` | Group does not exist |
+
+> ⚠️ **One dangling reference is accepted by design.** Locations are deleted
+> rather than handed back as personal. If an event *outside* this group had
+> adopted one of its venues, that event keeps a `locationId` which no longer
+> resolves — `GET /events/:id` will report a null location. This was the chosen
+> trade for a clean teardown; the alternative was orphaning venues back to the
+> owner as personal locations.

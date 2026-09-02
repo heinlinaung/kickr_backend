@@ -23,6 +23,7 @@ describe('GroupsController', () => {
     leave: jest.fn().mockResolvedValue({ message: 'You have left the group' }),
     updateMemberRole: jest.fn().mockResolvedValue({ role: 'admin' }),
     generateInviteCode: jest.fn().mockResolvedValue('code-1'),
+    remove: jest.fn().mockResolvedValue({ message: 'Group deleted successfully' }),
   };
 
   const user = { _id: 'requester-1' } as any;
@@ -168,6 +169,24 @@ describe('GroupsController', () => {
       const res = await controller.getInviteCode('g1', user);
       expect(svc.generateInviteCode).toHaveBeenCalledWith('g1', 'requester-1');
       expect(res).toEqual({ inviteCode: 'code-1' });
+    });
+  });
+
+  describe('remove', () => {
+    it('DELETE /groups/:id passes the group then the caller', async () => {
+      await controller.remove('g1', user);
+      expect(svc.remove).toHaveBeenCalledWith('g1', 'requester-1');
+    });
+
+    it('is declared as a bare :id DELETE, not under a sub-path', async () => {
+      const src: string = require('fs').readFileSync(
+        __dirname + '/groups.controller.ts',
+        'utf8',
+      );
+      expect(src).toContain("@Delete(':id')");
+      // Must not collide with the two existing sub-path deletes.
+      expect(src).toContain("@Delete(':id/locations/:locationId')");
+      expect(src).toContain("@Delete(':id/members/:userId')");
     });
   });
 
