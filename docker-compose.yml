@@ -6,7 +6,12 @@ services:
     env_file:
       - .env
     environment:
+      # Overrides whatever MONGODB_URI is in .env — compose applies
+      # `environment` AFTER `env_file`, so a local run never touches the Atlas
+      # cluster the checked-out .env points at. That precedence is the whole
+      # reason this line is safe.
       MONGODB_URI: mongodb://mongo:27017/kickr
+      NODE_ENV: production
     volumes:
       - uploads:/app/uploads
     depends_on:
