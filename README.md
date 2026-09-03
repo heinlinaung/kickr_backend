@@ -88,21 +88,44 @@ npm run start:dev
 
 ## Docker
 
-### Run with Docker Compose (API + MongoDB)
+### Docker
 
-```bash
-docker compose up --build
-```
-
-This starts:
-- `kickr-backend` on port `3000`
-- `mongodb` on port `27017`
-
-### Build image only
+The image runs the API only — MongoDB is external (Atlas), so there is no
+compose file. Configuration comes entirely from the environment.
 
 ```bash
 docker build -t kickr-backend .
+
+docker run -d --name kickr-api \
+  -p 3000:3000 \
+  --env-file .env \
+  -v kickr_uploads:/app/uploads \
+  --restart unless-stopped \
+  kickr-backend
 ```
+
+Notes:
+
+- **`--env-file` is required.** `.env` is excluded from the image on purpose, so
+  a container started without it has no `MONGODB_URI`, no Cognito config and no
+  Firebase credentials.
+- **Mount `uploads` as a named volume.** Profile and group images are written to
+  `/app/uploads`; without a volume they vanish with the container.
+- The container **binds no port until MongoDB connects** — Mongoose blocks
+  bootstrap. A container that looks slow to start is usually a connectivity or
+  credentials problem, not a slow image.
+
+Check it came up:
+
+```bash
+docker ps                    # STATUS should reach "healthy"
+docker logs -f kickr-api
+curl -s localhost:3000/api-docs-json | head -c 80
+```
+
+The image declares a `HEALTHCHECK` against `/api-docs-json`, which only answers
+once Nest has finished bootstrapping — so `healthy` means genuinely ready, not
+merely "port open".
 
 ---
 

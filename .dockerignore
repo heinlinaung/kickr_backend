@@ -5,3 +5,10 @@ uploads
 .git
 .claude
 coverage
+# Not build inputs — excluded to keep the context small and the cache stable.
+# A change to docs or the local test harness should not invalidate npm ci.
+docs
+webpush-test
+*.md
+.github
+.vscode
