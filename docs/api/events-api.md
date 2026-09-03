@@ -261,7 +261,7 @@ or `after_match`.
 | `POST` | `/events/:id/teams/generate` | organizer | Create empty teams + the **full** round-robin fixture list. Accepts `colors`. Returns a message only. `preparation` only. See §11.1. |
 | `GET` | `/events/:id/teams` | any user | **NEW** — the event's teams, players populated. |
 | `PATCH` | `/events/:id/teams/:teamId` | organizer | **NEW** — assign/rename one team. `preparation` only. |
-| `POST` | `/events/:id/shuffle` | organizer | Server-side colour shuffle (fallback). Gated to `preparation`. See §11. |
+| `POST` | `/events/:id/shuffle` | organizer | Server-side colour shuffle (fallback). Gated to `preparation`. Preserves existing team names and the scheduled `duration`; team `_id`s change. See §11. |
 | `GET` | `/events/:id/matches` | any user | **NEW** — fixture list. |
 | `POST` | `/events/:id/matches` | organizer | **NEW** — add one fixture by hand (§11.3b). |
 | `PATCH` | `/events/:id/matches/:matchNumber` | organizer **or referee** | **NEW** — enter a score. `playing`/`after_match`. |
@@ -635,6 +635,7 @@ Do **not** design screens against these — the fields exist but nothing fills t
 - [ ] **`POST /teams/generate` now updates `event.teamCount`** to the split it created, so a later `POST /shuffle` (which reads only that field) reproduces it instead of silently rebuilding with the old count.
 - [ ] **`duration` is on the FIXTURE now, not the team.** `team.duration` is gone; read it from `GET /events/:id/matches`.
 - [ ] **A shuffle preserves the generated `duration`** — it no longer invents one from the event length.
+- [ ] **A shuffle preserves team NAMES** (changed 2026-09-03) but **not team `_id`s** — the rows are recreated, so re-read `GET /events/:id/teams` before using a cached `teamId`.
 - [ ] **Send `colors` to name the teams** — one per team, count must equal `teamsCount`, must be distinct (case-insensitively). Spelling is not validated.
 - [ ] **`GET /events` hides `after_match` AND `done`** by default (changed 2026-09-03). Ask for either explicitly to get it back. The other lists still hide `done` only, so §5.1 and §5.1b/§5.2/§5.3 disagree on `after_match` — by design.
 - [ ] **`GET /events/joined` never shows a `done` event**, not even with `includeExpired=true`. Use `?status=done` for history.
@@ -725,6 +726,23 @@ is match 7.
 
 A `duration` so long that not even one match fits the event is still rejected
 with `400`, as a sanity check on the input.
+
+**Team names survive a shuffle.** *(Changed 2026-09-03.)* `POST /events/:id/shuffle`
+takes no body, so it has no names of its own — it used to fall through to the
+default palette and rewrite `Lions`/`Tigers`/`Bears` as `Red`/`Yellow`/`Blue`.
+It now carries the existing names over.
+
+If the team count changed, as much intent as possible is kept: growing keeps
+every existing name and pads from the **unused** defaults (`Lions`, `Tigers` →
+`Lions`, `Tigers`, `Red`), and shrinking truncates. Only when no teams exist yet
+— a shuffle before any generate — does it use the palette outright, which is a
+first-time default rather than a clobber.
+
+> ⚠️ **Team `_id`s still change on every shuffle.** The rows are deleted and
+> recreated, so a cached `teamId` is stale afterwards — re-read
+> `GET /events/:id/teams` before calling
+> `PATCH /events/:id/teams/:teamId`. Only the *names* are preserved, not the
+> identities.
 
 **`duration` is stored on the fixtures, and survives a shuffle.**
 *(Changed 2026-09-02.)* Two related changes:

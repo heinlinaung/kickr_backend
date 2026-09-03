@@ -123,6 +123,10 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
     );
     teamModel.findOne = jest.fn();
     teamModel.find = jest.fn().mockReturnValue({
+      // `.select` included because the real chain is
+      // .find().select().sort().lean() — a double missing it makes the team
+      // name lookup throw instead of returning names.
+      select: jest.fn().mockReturnThis(),
       populate: jest.fn().mockReturnThis(),
       sort: jest.fn().mockReturnThis(),
       lean: jest.fn().mockResolvedValue([]),
@@ -789,6 +793,8 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       beforeEach(() => {
         teamModel.findOne = jest.fn().mockImplementation(() => teamDoc());
         teamModel.find = jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnThis(),
+          sort: jest.fn().mockReturnThis(),
           lean: jest.fn().mockResolvedValue([]),
         });
       });
@@ -878,6 +884,129 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
     });
   });
 
+  describe('shuffleTeams — team names are preserved', () => {
+    // The shuffle deletes and recreates every team row, so without an explicit
+    // carry-over the organizer's names silently became Red/Yellow/Blue. Same
+    // class of bug as the duration clobber.
+    const namesStub = (names: string[]) => {
+      teamModel.find = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockReturnThis(),
+        lean: jest
+          .fn()
+          .mockResolvedValue(names.map((name) => ({ name }))),
+      });
+    };
+    const insertedNames = () =>
+      (teamModel.insertMany.mock.calls[0][0] as any[]).map((r) => r.name);
+
+    beforeEach(() => {
+      teamModel.findOne = jest.fn().mockImplementation(() =>
+        Promise.resolve({
+          _id: new Types.ObjectId(),
+          name: 'x',
+          players: [],
+          save: jest.fn().mockResolvedValue(undefined),
+          toJSON() {
+            return { name: this.name, players: this.players };
+          },
+        }),
+      );
+      eventModel.findById.mockResolvedValue(
+        eventDoc({ status: 'preparation', teamCount: 3 }),
+      );
+      playerModel.find = jest.fn().mockImplementation((q: any) =>
+        q?.type === 'guest'
+          ? { select: jest.fn().mockReturnThis(), sort: jest.fn().mockReturnThis(), lean: jest.fn().mockResolvedValue([]) }
+          : {
+              select: jest.fn().mockReturnThis(),
+              sort: jest.fn().mockReturnThis(),
+              lean: jest.fn().mockResolvedValue(
+                [P1, P2, P3, P4].map((id) => ({
+                  userId: new Types.ObjectId(id),
+                })),
+              ),
+            },
+      );
+    });
+
+    it('keeps custom names instead of resetting them to colours', async () => {
+      namesStub(['Lions', 'Tigers', 'Bears']);
+
+      await service.shuffleTeams(EVENT_ID, CREATOR);
+
+      expect(insertedNames()).toEqual(['Lions', 'Tigers', 'Bears']);
+    });
+
+    it('pads from unused colours when the team count grows', async () => {
+      // 2 existing names, 3 teams wanted -> keep both, add the first colour
+      // that is not already taken.
+      namesStub(['Lions', 'Tigers']);
+
+      await service.shuffleTeams(EVENT_ID, CREATOR);
+
+      const names = insertedNames();
+      expect(names.slice(0, 2)).toEqual(['Lions', 'Tigers']);
+      expect(names).toHaveLength(3);
+      expect(names[2]).toBe('Red');
+    });
+
+    it('never pads with a name already in use', async () => {
+      // 'Red' is taken, so padding must skip it rather than duplicate it —
+      // {eventId, name} is uniquely indexed, so a repeat fails the insert.
+      namesStub(['Red', 'Yellow']);
+
+      await service.shuffleTeams(EVENT_ID, CREATOR);
+
+      const names = insertedNames();
+      expect(new Set(names).size).toBe(names.length);
+      expect(names[2]).toBe('Blue');
+    });
+
+    it('truncates when the team count shrinks', async () => {
+      eventModel.findById.mockResolvedValue(
+        eventDoc({ status: 'preparation', teamCount: 2 }),
+      );
+      namesStub(['Lions', 'Tigers', 'Bears']);
+
+      await service.shuffleTeams(EVENT_ID, CREATOR);
+
+      expect(insertedNames()).toEqual(['Lions', 'Tigers']);
+    });
+
+    it('falls back to colours when no teams exist yet', async () => {
+      // A shuffle before any generate: this is a genuine first-time default,
+      // not a clobber.
+      namesStub([]);
+
+      await service.shuffleTeams(EVENT_ID, CREATOR);
+
+      expect(insertedNames()).toEqual(['Red', 'Yellow', 'Blue']);
+    });
+
+    it('reads the names BEFORE the teams are deleted', async () => {
+      // Ordering is the whole fix: createTeamsAndFixtures deletes every row,
+      // so a lookup after it would always find nothing.
+      const order: string[] = [];
+      teamModel.find = jest.fn().mockImplementation(() => {
+        order.push('find');
+        return {
+          select: jest.fn().mockReturnThis(),
+          sort: jest.fn().mockReturnThis(),
+          lean: jest.fn().mockResolvedValue([{ name: 'Lions' }]),
+        };
+      });
+      teamModel.deleteMany = jest.fn().mockImplementation(() => {
+        order.push('deleteMany');
+        return Promise.resolve({ deletedCount: 1 });
+      });
+
+      await service.shuffleTeams(EVENT_ID, CREATOR);
+
+      expect(order.indexOf('find')).toBeLessThan(order.indexOf('deleteMany'));
+    });
+  });
+
   describe('shuffleTeams — the server-side fallback (§4.3.3)', () => {
     beforeEach(() => {
       teamModel.findOne = jest.fn().mockImplementation(() =>
@@ -892,6 +1021,8 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
         }),
       );
       teamModel.find = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
     });
