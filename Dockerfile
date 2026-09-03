@@ -45,10 +45,10 @@ EXPOSE 3000
 #
 # start-period is 60s because Mongoose blocks bootstrap until it connects: the
 # app binds NO port at all while the database is unreachable (verified locally —
-# without a mongod the port stays closed rather than serving errors). On a cold
-# start the API therefore waits for Mongo's own healthcheck (up to ~50s at
-# interval=10s x retries=5) plus Nest's connect retries. A shorter period would
-# mark a perfectly healthy container unhealthy on first boot.
+# without a reachable mongod the port stays closed rather than serving errors).
+# MongoDB is external (Atlas), and Mongoose's default serverSelectionTimeoutMS
+# is 30s, so one slow DNS/TLS round trip plus a Nest retry already exceeds 30s.
+# A shorter period would mark a perfectly healthy container unhealthy on boot.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
   CMD node -e "require('http').get('http://127.0.0.1:'+(process.env.PORT||3000)+'/api-docs-json',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))"
 
