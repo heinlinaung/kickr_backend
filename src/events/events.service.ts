@@ -1543,9 +1543,18 @@ export class EventsService {
         ),
       );
 
+    // Read the names BEFORE createTeamsAndFixtures runs its deleteMany, or
+    // there is nothing left to preserve. Same reasoning as `duration` above:
+    // the shuffle has no names of its own and must not invent them.
+    const preservedNames = this.namesForShuffle(
+      await this.existingTeamNames(eventId),
+      teamsCount,
+    );
+
     const generated = await this.createTeamsAndFixtures(eventId, userId, {
       teamsCount,
       duration,
+      colors: preservedNames,
       // The shuffle deals everyone who will play — registered and guests — so
       // the squad size each team aims for IS its share of the whole roster,
       // rounded up since a remainder lands on the earlier teams. Counting only
@@ -2358,6 +2367,66 @@ export class EventsService {
    * live. Returns the first fixture's value: generation writes one duration
    * across the whole schedule, and reading one row keeps this cheap.
    */
+  /**
+   * Team names currently on an event, in creation order.
+   *
+   * The name counterpart to `scheduledMatchDuration`, and it exists for the
+   * same reason: a shuffle takes no body, so it has no names of its own — but
+   * it must not invent them either. It used to fall through to `TEAM_COLOURS`
+   * and rewrite deliberate names (`Lions`/`Tigers`) as `Red`/`Yellow`.
+   *
+   * Ordered by `_id` because Team has no explicit position field, so creation
+   * order IS the order — the same order `listTeams` returns and the shuffle
+   * deals into.
+   */
+  private async existingTeamNames(eventId: string): Promise<string[]> {
+    const teams = await this.teamModel
+      .find({ eventId: new Types.ObjectId(eventId) })
+      .select('name')
+      .sort({ _id: 1 })
+      .lean();
+    return teams.map((team) => team.name).filter(Boolean);
+  }
+
+  /**
+   * Names for `count` teams, keeping as much of `existing` as still fits.
+   *
+   * Growing pads from the defaults; shrinking truncates. Padding skips any
+   * default already taken — `{eventId, name}` is uniquely indexed, so reusing
+   * a preserved name would fail the insert rather than merely look odd.
+   *
+   * Falls back to a pure default list when nothing exists yet, which is a
+   * genuine first-time default rather than a clobber.
+   */
+  private namesForShuffle(existing: string[], count: number): string[] {
+    const kept = existing.slice(0, count);
+    if (kept.length === count) return kept;
+
+    const taken = new Set(kept.map((name) => name.toLowerCase()));
+    const names = [...kept];
+    for (const colour of TEAM_COLOURS) {
+      if (names.length === count) break;
+      if (!taken.has(String(colour).toLowerCase())) {
+        names.push(String(colour));
+        taken.add(String(colour).toLowerCase());
+      }
+    }
+
+    // More teams than distinct colours available: number the remainder so the
+    // unique index still holds. Only reachable if teamCount exceeds the colour
+    // list, which MAX_TEAMS normally prevents.
+    let n = names.length + 1;
+    while (names.length < count) {
+      const candidate = `Team ${n}`;
+      if (!taken.has(candidate.toLowerCase())) {
+        names.push(candidate);
+        taken.add(candidate.toLowerCase());
+      }
+      n += 1;
+    }
+    return names;
+  }
+
   private async scheduledMatchDuration(
     eventId: string,
   ): Promise<number | null> {

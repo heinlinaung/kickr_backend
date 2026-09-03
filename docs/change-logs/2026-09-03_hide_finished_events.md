@@ -1,7 +1,10 @@
 # Change Log — 2026-09-03 · `GET /events` hides finished events
 
 **Branch:** `events-feature-spec`
-**Tests:** 878 passing across 41 suites · build clean
+**Tests:** 884 passing across 41 suites · build clean
+
+> A second, unrelated fix landed the same day and has its own section below:
+> the shuffle no longer discards team names.
 
 `GET /events` no longer returns events whose status is `after_match` or `done`.
 
@@ -81,3 +84,67 @@ restored, all 25 in the suite pass. Tests that cannot fail prove nothing.
 There is still **no default date filter** on this route. A past-dated event
 whose status is `join` or `playing` is returned, and `?from=` remains the way
 to narrow that. Only the status default changed.
+
+---
+
+# Addendum — `POST /events/:id/shuffle` preserves team names
+
+Found while answering "is shuffle overwriting the existing teams' names?" — it
+was.
+
+## What it did
+
+`shuffleTeams` called `createTeamsAndFixtures` **without `colors`**. That path
+runs `teamModel.deleteMany({ eventId })` and then re-inserts from
+`resolveTeamNames(dto)`, which with no `colors` falls back to
+`TEAM_COLOURS.slice(0, teamsCount)`. So teams named `Lions`/`Tigers`/`Bears`
+came back as `Red`/`Yellow`/`Blue`, silently, with nothing in the response
+saying so.
+
+This is the **same shape as the `duration` clobber** fixed on 2026-09-02: the
+shuffle takes no body, so it had no names of its own, and invented them rather
+than reusing what was there. That fix did not extend to names.
+
+## What it does now
+
+`existingTeamNames()` reads the current names — deliberately **before**
+`createTeamsAndFixtures` deletes them — and `namesForShuffle()` decides the
+final list:
+
+| Case | Result |
+|---|---|
+| Same count | Names kept as-is |
+| Count grows | Keep all, pad from **unused** defaults |
+| Count shrinks | Truncate |
+| No teams yet | Full default palette (a genuine first-time default) |
+
+Padding skips any default already taken. `{eventId, name}` is **uniquely
+indexed**, so padding `['Red','Yellow']` with `Red` would fail the insert, not
+just look wrong. There is also a `Team N` tail for the case where the requested
+count exceeds the palette.
+
+## What is NOT fixed
+
+**Team `_id`s still change on every shuffle.** The rows are deleted and
+recreated, so a client holding a `teamId` for
+`PATCH /events/:id/teams/:teamId` has a stale id afterwards. Preserving
+identities would mean updating rows in place instead of delete-and-recreate —
+a bigger change than the ask, and left alone deliberately. Documented as a
+client-facing gotcha instead.
+
+## Tests
+
+Six new cases: custom names kept; padding on growth; padding never duplicates
+an in-use name; truncation on shrink; palette fallback when nothing exists; and
+that the name read happens **before** the delete — the ordering is the whole
+fix, so it is asserted directly rather than assumed.
+
+**Verified by reverting:** removing the one-line `colors:` carry-over fails 3 of
+the 6. The other 3 cover fallback and ordering, which hold either way — worth
+stating, since a test that cannot fail proves nothing.
+
+Six existing tests also failed on the way, all `teamModel.find(...).select is
+not a function`: their doubles stubbed only `.lean()` while the real chain is
+`.find().select().sort().lean()`. **This is the fourth time on this branch** a
+mock that ignored the real query shape hid a change — the pattern is now worth
+treating as a standing hazard rather than a series of accidents.
