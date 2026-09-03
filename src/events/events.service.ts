@@ -64,6 +64,7 @@ import {
   canSubmitResult,
   canTransition,
   isEventStatus,
+  FINISHED_STATUSES,
 } from './events.lifecycle';
 import {
   Team,
@@ -257,7 +258,22 @@ export class EventsService {
       if (!isEventStatus(status)) {
         throw new BadRequestException(`Unknown status '${status}'`);
       }
+      // An explicit ask wins, `after_match` and `done` included — same rule as
+      // GET /events/joined. Hiding them by default must not make them
+      // unreachable, or the history screen has no query left to run.
       filter.status = status;
+    } else {
+      // This is a DISCOVERY list: a played fixture is not something anyone can
+      // still turn up to, so neither finished state belongs here by default.
+      // `after_match` is excluded for the same reason as `done` — the match has
+      // happened; only the result is outstanding.
+      //
+      // Deliberately NOT applied to search(), listByGroup() or listJoined(),
+      // which still hide `done` alone. Narrowing this one list was the ask; a
+      // player looking at their own fixtures or a group's history has more
+      // reason to see a match still awaiting its score. Revisit together if
+      // the four lists need to agree.
+      filter.status = { $nin: FINISHED_STATUSES };
     }
 
     if (from || to) {

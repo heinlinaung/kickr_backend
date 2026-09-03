@@ -56,6 +56,26 @@ const TRANSITIONS: Readonly<Record<EventStatus, readonly EventStatus[]>> = {
   done: [],
 };
 
+/**
+ * States that mean the fixture is over.
+ *
+ * `after_match` sits here with `done` because the match has been played — it is
+ * the window for entering the result, not a fixture anyone can still turn up
+ * to. A discovery or "ongoing" list showing either is showing history.
+ *
+ * Named once rather than inlined as a `$nin` at each call site, so the two
+ * lists cannot drift on what "finished" means.
+ */
+export const FINISHED_STATUSES: readonly EventStatus[] = [
+  'after_match',
+  'done',
+];
+
+/** True when the fixture has been played. */
+export function isFinished(status: unknown): boolean {
+  return FINISHED_STATUSES.includes(status as EventStatus);
+}
+
 /** True when `value` is one of the six lifecycle states. */
 export function isEventStatus(value: unknown): value is EventStatus {
   return (
