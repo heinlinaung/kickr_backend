@@ -114,6 +114,12 @@ Notes:
 - The container **binds no port until MongoDB connects** — Mongoose blocks
   bootstrap. A container that looks slow to start is usually a connectivity or
   credentials problem, not a slow image.
+- **Keep `FIREBASE_PRIVATE_KEY` unquoted, on one line, with literal `\n`.**
+  `--env-file` does not strip quotes or process escapes — it passes the raw
+  characters after the first `=` — so a quoted value arrives with the quote
+  characters attached. The app tolerates that now, but unquoted needs no
+  forgiveness. A wrong key does not stop the app: it logs
+  `Firebase init failed, push disabled` and serves everything except push.
 
 Check it came up:
 
