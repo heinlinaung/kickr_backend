@@ -18,6 +18,30 @@ import { getMessaging } from 'firebase-admin/messaging';
  * `enabled` is checked rather than assumed — an unconfigured environment must
  * behave like a working one, minus the push.
  */
+/**
+ * Coerces a service-account private key into a parseable PEM.
+ *
+ * The same key arrives in three shapes depending on how the environment was
+ * loaded, and two of them fail without this:
+ *
+ * - **dotenv / a shell**: quotes are stripped and the newlines may already be
+ *   real. Works as-is.
+ * - **`docker run --env-file`**: Docker does **NOT** strip surrounding quotes
+ *   or process escape sequences — it passes the raw characters after the first
+ *   `=`. A quoted value therefore arrives with a literal `"` at each end, and
+ *   that alone makes the PEM unparseable ("Failed to parse private key").
+ * - **a secret manager**: usually a single line of literal backslash-n.
+ *
+ * So: strip one layer of matching wrapping quotes, then expand literal
+ * backslash-n into real newlines. Both steps are no-ops on an already-correct
+ * value, which is why this is applied unconditionally rather than sniffing
+ * where the value came from.
+ */
+export function normalisePrivateKey(raw: string): string {
+  const unquoted = raw.trim().replace(/^(['"])([\s\S]*)\1$/, '$2');
+  return unquoted.replace(/\\n/g, '\n');
+}
+
 @Injectable()
 export class PushService implements OnModuleInit {
   private readonly logger = new Logger(PushService.name);
@@ -47,10 +71,7 @@ export class PushService implements OnModuleInit {
           credential: cert({
             projectId,
             clientEmail,
-            // Env vars cannot carry real newlines, so the key is stored with
-            // literal \n sequences and restored here. Without this the PEM is
-            // rejected as malformed, which is the classic FCM setup failure.
-            privateKey: privateKey.replace(/\\n/g, '\n'),
+            privateKey: normalisePrivateKey(privateKey),
           }),
         });
       }

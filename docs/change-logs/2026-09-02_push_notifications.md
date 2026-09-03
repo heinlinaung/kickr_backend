@@ -65,15 +65,19 @@ FIREBASE_CLIENT_EMAIL=...
 FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE KEY-----\n"
 ```
 
-`FIREBASE_PRIVATE_KEY` accepts the key **either way**. Init runs
-`.replace(/\\n/g, '\n')`, so a single-line value carrying literal `\n`
-sequences is restored to a real PEM — necessary because many env-var stores
-cannot hold newlines. A value that already contains real newlines (what the
-Firebase console's JSON gives you, and what a quoted multi-line `.env` entry
-preserves) passes through untouched.
+`FIREBASE_PRIVATE_KEY` is passed through `normalisePrivateKey()`, which strips
+one layer of wrapping quotes and then expands literal `\n`. Both steps are
+no-ops on an already-valid PEM, so quoted or unquoted, escaped or real
+newlines all work.
 
-Quote the value either way, or it truncates at the first space in
-`BEGIN PRIVATE KEY`.
+> **Corrected 2026-09-03.** This section previously said "quote the value
+> either way". That is right for a `.env` read by dotenv and **wrong for
+> `docker run --env-file`**, which strips neither quotes nor escapes and passes
+> the raw characters after the first `=`. A quoted value arrived with literal
+> quote characters attached and disabled push on a droplet with
+> `Failed to parse private key`. The quote stripping exists because of that
+> deployment, and `.env.example` now recommends the unquoted single-line form,
+> which needs no forgiveness anywhere.
 
 ## 4. Devices are an array, and tokens are credentials
 
