@@ -56,9 +56,13 @@ export class EventsController {
       'a row from here is public. Roster membership is the test, not group ' +
       'membership: a private event you have not joined stays hidden even from ' +
       "a member of the owning group — use GET /events/group/:groupId for a " +
-      'group schedule. NOTE: unlike /events/joined and /events/group/:groupId, ' +
-      'this route applies NO default date or status filter, so past and ' +
-      '`done` events are returned unless narrowed with ?from= or ?status=.',
+      'group schedule. FINISHED events are hidden by default: `after_match` ' +
+      'and `done` are excluded unless asked for explicitly, since a played ' +
+      'fixture is history rather than something to turn up to. An explicit ' +
+      '?status=done or ?status=after_match still returns them. NOTE: there is ' +
+      'still NO default DATE filter here, unlike /events/joined and ' +
+      '/events/group/:groupId — a past-dated event that is still `join` or ' +
+      '`playing` is returned unless narrowed with ?from=.',
   })
   @ApiQuery({
     name: 'region',

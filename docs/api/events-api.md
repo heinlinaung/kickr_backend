@@ -300,9 +300,23 @@ Group `country`/`city` are stored lowercase, and `region` is lowercased before m
 > a member of the owning group. Roster membership is the test, not group
 > membership. For a group's full schedule use §5.2.
 
-> ⚠️ **No default date or status filter.** Unlike §5.1b and §5.2, this route
-> does not hide past or `done` events — pass `?from=` or `?status=` to narrow
-> it. An unfiltered call returns archived events too.
+> **Changed 2026-09-03 — finished events are now hidden by default.**
+> `after_match` and `done` are excluded unless you ask for one explicitly.
+> A played fixture is history, not something to turn up to; `after_match` is
+> excluded on the same reasoning as `done` — the match has happened and only
+> the result is outstanding.
+>
+> **An explicit `?status=after_match` or `?status=done` still returns them**, so
+> a history screen has a query to run. Only the default changed.
+
+> ⚠️ **No default date filter.** Unlike §5.1b and §5.2, this route does not
+> hide **past-dated** events — pass `?from=` to narrow it. A fixture whose date
+> has passed but whose status is still `join` or `playing` is returned.
+
+> ⚠️ **The other lists still hide only `done`.** §5.1b, §5.2 and §5.3 continue
+> to show `after_match` by default: a player looking at their own fixtures, or
+> a group's schedule, has more reason to see a match awaiting its score. Only
+> this discovery route was narrowed.
 
 ### 5.1b `GET /events/joined` — events you joined
 
@@ -622,6 +636,7 @@ Do **not** design screens against these — the fields exist but nothing fills t
 - [ ] **`duration` is on the FIXTURE now, not the team.** `team.duration` is gone; read it from `GET /events/:id/matches`.
 - [ ] **A shuffle preserves the generated `duration`** — it no longer invents one from the event length.
 - [ ] **Send `colors` to name the teams** — one per team, count must equal `teamsCount`, must be distinct (case-insensitively). Spelling is not validated.
+- [ ] **`GET /events` hides `after_match` AND `done`** by default (changed 2026-09-03). Ask for either explicitly to get it back. The other lists still hide `done` only, so §5.1 and §5.1b/§5.2/§5.3 disagree on `after_match` — by design.
 - [ ] **`GET /events/joined` never shows a `done` event**, not even with `includeExpired=true`. Use `?status=done` for history.
 - [ ] `group.rules` is now a **string, not an array**. Render with `white-space: pre-line`.
 - [ ] `GET /events/group/:groupId` **hides expired and `done` events** by default. Pass `includeExpired=true` for history.

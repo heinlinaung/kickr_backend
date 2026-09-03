@@ -13,6 +13,16 @@ Integration guides written against the **live** API — every request/response s
 
 **Live reference while the server is running:** Swagger UI at `/api-docs`, OpenAPI JSON at `/api-docs-json`.
 
+## ⚠️ Changed — 2026-09-03 · `GET /events` hides finished events
+
+`after_match` and `done` are now excluded by **default** from the discovery
+list. An explicit `?status=after_match` or `?status=done` still returns them, so
+history screens keep working — only the default changed.
+
+The other event lists (`/events/joined`, `/events/group/:id`, `/events/search`)
+still hide `done` alone and continue to show `after_match`. That difference is
+deliberate; see [events §5.1](./events-api.md).
+
 ## New — 2026-09-02 · Push notifications
 
 **Two triggers only:** an event is created (→ the group's approved members,

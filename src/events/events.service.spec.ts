@@ -260,13 +260,71 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
     });
   });
 
+  describe('list → finished events', () => {
+    const statusOf = () =>
+      (eventModel.find.mock.calls.at(-1)[0] as any).status;
+
+    it('hides after_match and done by default', async () => {
+      // A played fixture is history, not something to turn up to. Both states
+      // mean the match happened; only the result is outstanding in after_match.
+      eventModel.find.mockReturnValue(q([]));
+
+      await service.list('u1');
+
+      expect(statusOf()).toEqual({ $nin: ['after_match', 'done'] });
+    });
+
+    it.each(['after_match', 'done'])(
+      'still returns %s when asked for explicitly',
+      async (status) => {
+        // Hiding by default must not make them unreachable — the history
+        // screen has no other query to run.
+        eventModel.find.mockReturnValue(q([]));
+
+        await service.list('u1', { status });
+
+        expect(statusOf()).toBe(status);
+      },
+    );
+
+    it('does not widen the exclusion to live states', async () => {
+      // Guards against someone adding a state to FINISHED_STATUSES that
+      // players can still act on.
+      eventModel.find.mockReturnValue(q([]));
+
+      await service.list('u1');
+
+      const excluded = statusOf().$nin;
+      for (const live of ['join', 'preparation', 'ready_to_play', 'playing']) {
+        expect(excluded).not.toContain(live);
+      }
+    });
+
+    it('keeps the exclusion when other filters narrow the query', async () => {
+      // The status default sits alongside the region/date narrowings rather
+      // than being replaced by them.
+      groupModel.find.mockReturnValue(q([{ _id: GROUP_ID }]));
+      eventModel.find.mockReturnValue(q([]));
+
+      await service.list('u1', { region: 'yangon' });
+
+      expect(statusOf()).toEqual({ $nin: ['after_match', 'done'] });
+      expect(eventModel.find.mock.calls.at(-1)[0]).toHaveProperty('groupId');
+    });
+  });
+
   describe('list → ?region=', () => {
     it('does not filter by group when region is absent', async () => {
       eventModel.find.mockReturnValue(q([]));
 
       await service.list('u1');
 
-      expect(eventModel.find).toHaveBeenCalledWith({ isPublic: true });
+      // A finished fixture is excluded by default, so the filter is the
+      // visibility clause AND the status exclusion.
+      expect(eventModel.find).toHaveBeenCalledWith({
+        isPublic: true,
+        status: { $nin: ['after_match', 'done'] },
+      });
       expect(groupModel.find).not.toHaveBeenCalled();
     });
 
@@ -305,7 +363,10 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
       await service.list('u1', { region: '   ' });
 
       expect(groupModel.find).not.toHaveBeenCalled();
-      expect(eventModel.find).toHaveBeenCalledWith({ isPublic: true });
+      expect(eventModel.find).toHaveBeenCalledWith({
+        isPublic: true,
+        status: { $nin: ['after_match', 'done'] },
+      });
     });
 
     it('normalises the caller\'s casing to the stored lowercase form', async () => {
