@@ -9,6 +9,7 @@ import {
   IsDateString,
   ValidateNested,
   IsBoolean,
+  IsMongoId,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import {
@@ -104,6 +105,18 @@ export class UpdateProfileDto {
   @IsOptional()
   @IsIn([...FOOTBALL_POSITIONS])
   footballPosition?: string;
+
+  @ApiProperty({
+    required: false,
+    example: '68b9c1aa22bb33cc44dd0003',
+    description:
+      'The _id of a club from GET /global-football-teams. Validated against ' +
+      'that collection, so an unknown id is a 400 rather than a silently ' +
+      'null `favouriteTeam` on every later read. Send null to clear it.',
+  })
+  @IsOptional()
+  @IsMongoId()
+  favouriteTeamId?: string | null;
 
   @ApiProperty({ required: false, type: PrivacyDto })
   @IsOptional()

@@ -1,5 +1,5 @@
 import { Prop, Schema, SchemaFactory, raw } from '@nestjs/mongoose';
-import { HydratedDocument } from 'mongoose';
+import { HydratedDocument, Types } from 'mongoose';
 import { FOOTBALL_POSITIONS, PROFILE_VISIBILITY } from '../profile.constants';
 
 export type UserDocument = HydratedDocument<User>;
@@ -65,6 +65,25 @@ export class User {
 
   @Prop({ enum: [...FOOTBALL_POSITIONS] })
   footballPosition: string;
+
+  /**
+   * The real-world club this user supports, referencing
+   * `globalfootballteams`.
+   *
+   * Stores the **id**, not the name: a club can be renamed (and the seed
+   * script updates rows in place), so a stored name would silently go stale
+   * while an id stays correct.
+   *
+   * `ref` is set so `GET /users/me` can `populate()` it into `favouriteTeam`
+   * rather than issuing a second query by hand. Optional — most users will
+   * never set one, and `null` is a valid answer.
+   *
+   * NOT validated against the collection by the schema: Mongoose `ref` does
+   * not enforce existence. The update path checks it, so a bad id is rejected
+   * at write time rather than discovered as a null join on read.
+   */
+  @Prop({ type: Types.ObjectId, ref: 'GlobalFootballTeam', default: null })
+  favouriteTeamId: Types.ObjectId | null;
 
   /**
    * Registered push targets — one row per device, not one token per user.

@@ -1,5 +1,6 @@
 import {
   Injectable,
+  BadRequestException,
   ConflictException,
   NotFoundException,
   Logger,
@@ -20,6 +21,10 @@ import {
   EventPlayerDocument,
 } from '../events/schemas/event-player.schema';
 import { Event, EventDocument } from '../events/schemas/event.schema';
+import {
+  GlobalFootballTeam,
+  GlobalFootballTeamDocument,
+} from '../global-football-teams/schemas/global-football-team.schema';
 import {
   clampLimit,
   decodeCursor,
@@ -71,15 +76,51 @@ export class UsersService {
     @InjectModel(EventPlayer.name)
     private playerModel: Model<EventPlayerDocument>,
     @InjectModel(Event.name) private eventModel: Model<EventDocument>,
+    @InjectModel(GlobalFootballTeam.name)
+    private globalTeamModel: Model<GlobalFootballTeamDocument>,
   ) {}
 
+  /**
+   * The caller's own user document — the `GET /users/me` payload.
+   *
+   * `favouriteTeamId` is resolved into a **`favouriteTeam`** object so a
+   * profile screen renders the club without a second call to
+   * `/global-football-teams`. The raw id stays on the response for clients
+   * that only need it, the same way `groupId` survives alongside `group` on
+   * event detail.
+   *
+   * `favouriteTeam` is `null` in two cases that a client cannot tell apart,
+   * and does not need to: no club set, or a club id pointing at a row that has
+   * since been removed. A dangling reference must not fail this endpoint —
+   * `/users/me` is on the critical path for every session.
+   */
   async findById(id: string): Promise<UserDocument> {
     const user = await this.userModel
       .findById(id)
       .select(USER_SENSITIVE_PROJECTION)
+      // Only name and sortOrder: the rest of the club document is timestamps
+      // and __v, and a profile header needs a label plus its id.
+      .populate('favouriteTeamId', 'name sortOrder')
       .lean();
     if (!user) throw new NotFoundException('User not found');
-    return user;
+
+    // Rename the populated field rather than leaving the client to read a club
+    // object out of something called `...Id`. Populate replaces the value IN
+    // PLACE, so without this the response would carry `favouriteTeamId` as an
+    // object — exactly the shape this is meant to avoid.
+    const populated = user.favouriteTeamId as unknown;
+    const isJoined =
+      !!populated && typeof populated === 'object' && '_id' in populated;
+    const team = isJoined
+      ? (populated as { _id: unknown; name?: string; sortOrder?: number })
+      : null;
+
+    return {
+      ...user,
+      // The id alone, so its meaning is the same whether or not the join hit.
+      favouriteTeamId: team ? team._id : (populated ?? null),
+      favouriteTeam: team,
+    } as unknown as UserDocument;
   }
 
   async updateProfile(
@@ -92,6 +133,23 @@ export class UsersService {
         _id: { $ne: userId },
       });
       if (existing) throw new ConflictException('Username already taken');
+    }
+
+    // Validate the club EXISTS, not merely that the id is well-formed.
+    // @IsMongoId only proves the shape; an unknown id would save fine and then
+    // read back as `favouriteTeam: null` on every request — indistinguishable
+    // from "not set", and awkward to trace back to the write that caused it.
+    // Failing here turns a silent data problem into an immediate 400.
+    //
+    // `!= null` deliberately, not `!== undefined`: an explicit null is how a
+    // client CLEARS the field, and there is nothing to look up for that.
+    if (dto.favouriteTeamId != null) {
+      const exists = await this.globalTeamModel.exists({
+        _id: dto.favouriteTeamId,
+      });
+      if (!exists) {
+        throw new BadRequestException('Unknown favouriteTeamId');
+      }
     }
     try {
       const user = await this.userModel

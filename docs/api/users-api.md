@@ -30,8 +30,8 @@ there is no anonymous people-search.
 | Method | Path | Auth | Notes |
 |---|---|---|---|
 | `GET` | `/users/search?q=` | any user | **NEW** — find people by name/username/displayName, or by an **exact** email. See §3. |
-| `GET` | `/users/me` | any user | The caller's own full profile. |
-| `PATCH` | `/users/me` | any user | Edit own profile. |
+| `GET` | `/users/me` | any user | The caller's own full profile, incl. the resolved **`favouriteTeam`** (§4). |
+| `PATCH` | `/users/me` | any user | Edit own profile, incl. **`favouriteTeamId`** (§4). |
 | `POST` | `/users/me/avatar` | any user | Avatar upload (multipart `file`). |
 | `GET` | `/users/me/qr` | any user | The caller's invite code / link. |
 | `GET` | `/users/:id/profile` | any user | Another user's public profile. `404` when `privacy.profileVisibility: "private"`. |
@@ -187,7 +187,80 @@ GET /users/search?q=hein&limit=20&cursor=eyJpIjoi…
 
 ---
 
-## 4. Not built yet
+## 4. Favourite team
+
+*(New 2026-09-05.)*
+
+A user can record the real-world club they support. The list to choose from is
+[`GET /global-football-teams`](./global-football-teams-api.md).
+
+### Reading it — `GET /users/me`
+
+The stored id is resolved into a **`favouriteTeam`** object, so a profile screen
+renders the club without a second request:
+
+```json
+{
+  "data": {
+    "_id": "507f191e810c19729de860e1",
+    "name": "Hein",
+    "favouriteTeamId": "68b9c1aa22bb33cc44dd0003",
+    "favouriteTeam": {
+      "_id": "68b9c1aa22bb33cc44dd0003",
+      "name": "Arsenal",
+      "sortOrder": 3
+    }
+  }
+}
+```
+
+- **`favouriteTeamId` stays a bare id**, not an object — same pattern as
+  `groupId` alongside `group` on event detail.
+- **`favouriteTeam` is `null`** when no club is set, when the field predates
+  this feature, or when the stored id points at a club that has since been
+  removed. A client cannot tell those apart and does not need to; a dangling
+  reference never fails the request.
+- Only `_id`, `name` and `sortOrder` are included — the rest of the club
+  document is timestamps.
+
+> ⚠️ **Not on the public profile.** `GET /users/:id/profile` does not include
+> this. It uses a strict field allowlist, so surfacing a club there is a
+> deliberate change, not something that happened automatically.
+
+### Setting it — `PATCH /users/me`
+
+```json
+{ "favouriteTeamId": "68b9c1aa22bb33cc44dd0003" }
+```
+
+**The club must exist.** An id that is well-formed but unknown is a **400**
+(`"Unknown favouriteTeamId"`), not a silent save — otherwise it would read
+back as `favouriteTeam: null` forever, indistinguishable from "not set" and
+hard to trace to the write that caused it.
+
+Send `null` to clear it:
+
+```json
+{ "favouriteTeamId": null }
+```
+
+```bash
+# set
+curl -s -X PATCH "$URL/users/me" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"favouriteTeamId":"68b9c1aa22bb33cc44dd0003"}'
+
+# clear
+curl -s -X PATCH "$URL/users/me" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"favouriteTeamId":null}'
+```
+
+**Store the id, never the name.** A club can be renamed — the seed script
+updates rows in place — and a stored name would silently go stale while an id
+stays correct.
+
+## 5. Not built yet
 
 Do **not** design screens against these.
 
@@ -201,8 +274,12 @@ Do **not** design screens against these.
 
 ---
 
-## 5. Gotchas checklist
+## 6. Gotchas checklist
 
+- [ ] **`favouriteTeam` is resolved on `GET /users/me` only** — not on the public profile (§4).
+- [ ] **Persist `favouriteTeamId`, never the club name.** Clubs get renamed; ids do not.
+- [ ] **`favouriteTeam: null` is ambiguous by design** — unset, legacy, or a deleted club. Do not treat it as an error.
+- [ ] **An unknown `favouriteTeamId` on PATCH is a 400**, not a silent save.
 - [ ] **Empty `q` returns an empty page, not every user.** There is no browse-all-people call.
 - [ ] **`?q=@gmail.com` finds nobody**, not every Gmail user — an `@` makes it an exact-address match.
 - [ ] **`email` is never in a result row.** Don't build a UI that expects to show it.

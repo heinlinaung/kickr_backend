@@ -14,6 +14,16 @@ Integration guides written against the **live** API — every request/response s
 
 **Live reference while the server is running:** Swagger UI at `/api-docs`, OpenAPI JSON at `/api-docs-json`.
 
+## New — 2026-09-05 · Favourite team on the user profile
+
+`GET /users/me` resolves the new `favouriteTeamId` into a **`favouriteTeam`**
+object (`_id`, `name`, `sortOrder`); `PATCH /users/me` accepts
+`favouriteTeamId`, validated against the club collection so an unknown id is a
+400 rather than a silently-null read. Send `null` to clear it.
+
+**Not** on the public profile — that uses a strict allowlist. See
+[users §4](./users-api.md).
+
 ## New — 2026-09-04 · `GET /global-football-teams`
 
 Reference list of real-world clubs, for a "supported team" picker. Read-only
