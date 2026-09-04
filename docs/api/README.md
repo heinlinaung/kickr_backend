@@ -13,6 +13,19 @@ Integration guides written against the **live** API — every request/response s
 
 **Live reference while the server is running:** Swagger UI at `/api-docs`, OpenAPI JSON at `/api-docs-json`.
 
+## New — 2026-09-04 · `GET /events/:id` returns the group's branding
+
+Adds `group: { _id, name, logo, wallpaper }` so a detail header renders without
+a second call to the groups API. **Additive** — `groupId` and `groupRules` are
+unchanged.
+
+`null` for a standalone event, and also null if the `groupId` points at a
+deleted group. `logo`/`wallpaper` are `null` when unset. Internal ImageKit
+handles are never exposed. Costs no extra query: the fields were added to the
+projection that already fetched the group's rules.
+
+See [events §2.0b](./events-api.md).
+
 ## ⚠️ Breaking — 2026-09-04 · `GET /notifications` is paginated
 
 `data` was a bare **array**; it is now `{ items, nextCursor, hasMore }`. A

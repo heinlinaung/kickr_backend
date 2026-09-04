@@ -130,6 +130,52 @@ Captured from the live API (`GET /events/group/:groupId`, 2026-08-09):
 }
 ```
 
+### 2.0b What `GET /events/:id` adds on top
+
+*(New 2026-09-04: `group`.)*
+
+Detail resolves the references a header would otherwise fetch separately:
+
+```json
+{
+  "data": {
+    "_id": "68b0aa11bb22cc33dd44ee55",
+    "title": "Friday night five",
+    "groupId": "6a6b2366f78b66d63a911a9e",
+
+    "group": {
+      "_id": "6a6b2366f78b66d63a911a9e",
+      "name": "Sunday Ballers",
+      "logo": "https://ik.imagekit.io/kickr/groups/logo_abc.png",
+      "wallpaper": "https://ik.imagekit.io/kickr/groups/wall_xyz.jpg"
+    },
+    "groupRules": "No smoking\nArrive 15 min early",
+
+    "location": { "name": "Thuwunna Stadium", "lat": 16.81, "lng": 96.19 },
+    "teams": [],
+    "matches": [],
+    "standings": [],
+    "userRole": "member",
+    "joinedByMe": true,
+    "likedByMe": false
+  }
+}
+```
+
+Notes on `group`:
+
+- **`null` for a standalone event** (no `groupId`), and null too if the
+  `groupId` points at a group that has since been deleted — a dangling
+  reference does not fail the request.
+- **`logo` and `wallpaper` are `null` when unset**, not `''`. A client checking
+  `if (logo)` behaves the same either way.
+- **`groupId` is unchanged** and still returned, so a client that only needs the
+  id does not have to reach into the object.
+- `groupRules` stays where it was, at the top level. Adding `group` was
+  additive — nothing moved.
+- Only these four fields. The group's members, rules and country/city have
+  their own endpoints, and the internal ImageKit handles are never exposed.
+
 ### 2.1 Fields that fill in later in the lifecycle
 
 The JSON above is a freshly created event, so most optional fields are empty. They populate as the event progresses:
@@ -139,6 +185,7 @@ The JSON above is a freshly created event, so most optional fields are empty. Th
 | `matches` | **Not on the event document** — fixtures are their own collection. `GET /events/:id` attaches them as `matches`; `GET /events/:id/matches` returns the same rows (§11). |
 | `teams` | Attached to `GET /events/:id` from the Team collection, players populated. Created by `POST /teams/generate` (§11). |
 | `location` | `GET /events/:id` resolves `locationId` into a **location object** (name, lat/lng, url, address). `locationId` is still returned for clients that only need the id. |
+| `group` | **NEW 2026-09-04.** `GET /events/:id` resolves `groupId` into `{ _id, name, logo, wallpaper }` — enough for a detail header without a second call to the groups API. **`null` for a standalone event**, and also null if the `groupId` points at a deleted group. `logo`/`wallpaper` are `null` when unset (not `''`). Internal ImageKit handles (`logoFileId`, `wallpaperFileId`) are **never** included. Read-only — edit via `PATCH /groups/:id`. |
 | `userRole` | On `GET /events/:id`: the caller's role in the owning group (`owner`/`admin`/`captain`/`vice-captain`/`referee`/`member`), or `null` for a non-member or a groupless event. **Not a join indicator** — see `joinedByMe`. |
 | `joinedByMe` | On `GET /events/:id`: `true` when the caller is on the roster. Use this for the Join/Leave button. `false` (never absent) when there is no caller, and `false` after leaving — a cancelled row is kept for reactivation but does not count. |
 | `result` | `POST /events/:id/result`, during `after_match` |
@@ -243,7 +290,7 @@ or `after_match`.
 | `GET` | `/events/group/:groupId` | any user | **NEW** — one group's events. Members see private ones too. Expired/`done` hidden unless `?includeExpired=true`. |
 | `GET` | `/events/search?q=` | any user | **NEW** — free-text on title/description. Public events only. **Cursor-paginated** — returns `{ items, nextCursor, hasMore }`. See §5.3. |
 | `POST` | `/events` | organizer | Create. Accepts `startTime`, `endTime`, `teamCount`, `templateId`. |
-| `GET` | `/events/:id` | any user | Detail + `groupRules`, `standings`, `likedByMe`, `joinedByMe`. |
+| `GET` | `/events/:id` | any user | Detail + `group` (name/logo/wallpaper), `groupRules`, `location`, `teams`, `matches`, `standings`, `likedByMe`, `joinedByMe`. |
 | `PATCH` | `/events/:id` | organizer | **NEW** — edit. Rejected when `done`. |
 | `DELETE` | `/events/:id` | organizer | **NEW** — hard delete. Rejected when `done`. |
 | `PATCH` | `/events/:id/status` | organizer | **NEW** — advance the lifecycle. |

@@ -251,6 +251,20 @@ export class EventsController {
   }
 
   @Get(':id')
+  @ApiOperation({
+    summary: 'Event detail, with everything a detail screen needs',
+    description:
+      'Beyond the event document, this resolves the things a detail screen ' +
+      'would otherwise fetch separately: `group` ({ _id, name, logo, ' +
+      'wallpaper }, null for a standalone event), `groupRules`, `location` ' +
+      '(resolved venue object), `teams` (players populated), `matches`, ' +
+      'derived `standings`, plus `userRole` (the caller\'s GROUP role), ' +
+      '`joinedByMe` (whether the caller is on the ROSTER — not the same ' +
+      'thing) and `likedByMe`. `group` and `groupRules` are read-only ' +
+      'projections; edit them via PATCH /groups/:id. An invalid or unknown ' +
+      'id is a 404, never a 500.',
+  })
+  @ApiResponse({ status: 404, description: 'No such event, or a malformed id' })
   findOne(@Param('id') id: string, @CurrentUser() user: any) {
     return this.eventsService.findById(id, user._id.toString());
   }

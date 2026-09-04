@@ -691,11 +691,18 @@ export class EventsService {
   }
 
   /**
-   * Event detail, with the owning group's rules attached.
+   * Event detail, with the owning group's rules and branding attached.
    *
    * `groupRules` is a read-only projection — the rules live on the Group and are
-   * edited via PATCH /groups/:id. Always an array (never null) so the
-   * client can render it unconditionally; `[]` for events with no group.
+   * edited via PATCH /groups/:id. Always a string (never null) so the client can
+   * render it unconditionally; `''` for events with no group.
+   *
+   * `group` carries the group's `_id`, `name`, `logo` and `wallpaper` so a
+   * detail header renders without a second call to the groups API. It is `null`
+   * for a standalone event, where the absence is the meaningful answer.
+   *
+   * Both are read-only projections, and both come from ONE group query — the
+   * branding fields were added to the projection that already fetched `rules`.
    */
   async findById(eventId: string, userId?: string) {
     // Validate before Mongoose casts: a malformed id otherwise throws a raw
@@ -716,13 +723,47 @@ export class EventsService {
     // show without a second call to the groups API. null for a non-member, and
     // for events with no group.
     let userRole: string | null = null;
+    // The owning group's identity and branding, so a detail screen renders the
+    // group's name and imagery without a second call to the groups API. `null`
+    // for a standalone event — the absence is meaningful, unlike `groupRules`
+    // which flattens to '' because it is always renderable.
+    //
+    // Deliberately NOT the whole group document: `logoFileId` and
+    // `wallpaperFileId` are internal ImageKit handles, and the members list and
+    // rules have their own endpoints. Only what a header needs.
+    let group: {
+      _id: unknown;
+      name: string;
+      logo: string | null;
+      wallpaper: string | null;
+    } | null = null;
 
     if (event.groupId) {
-      const group = await this.groupModel
+      // One query for both: the rules projection was already here, so the
+      // branding fields ride along rather than costing a second round trip.
+      const groupDoc = await this.groupModel
         .findById(event.groupId)
-        .select('rules')
+        .select('rules name logo wallpaper')
         .lean();
-      groupRules = (group as { rules?: string } | null)?.rules ?? '';
+      groupRules = (groupDoc as { rules?: string } | null)?.rules ?? '';
+
+      if (groupDoc) {
+        const g = groupDoc as {
+          _id: unknown;
+          name?: string;
+          logo?: string;
+          wallpaper?: string;
+        };
+        group = {
+          _id: g._id,
+          name: g.name ?? '',
+          // null rather than '' — an unset image is absent, not empty, and a
+          // client checking `if (logo)` behaves the same either way while
+          // `null` reads correctly in a typed model.
+          logo: g.logo ?? null,
+          wallpaper: g.wallpaper ?? null,
+        };
+      }
 
       if (userId) {
         // Query the member row directly rather than via getMemberRole: that
@@ -794,6 +835,9 @@ export class EventsService {
     return {
       ...withIsFull(event),
       groupRules,
+      // Resolved group identity + branding (name, logo, wallpaper); null for a
+      // standalone event. `groupId` stays for clients that only need the id.
+      group,
       // The caller's group role, so a detail screen can gate its own controls.
       userRole,
       // Resolved venue object; `locationId` stays for clients that only need it.
