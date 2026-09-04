@@ -6,6 +6,7 @@ import { UsersService } from './users.service';
 import { User } from './schemas/user.schema';
 import { EventPlayer } from '../events/schemas/event-player.schema';
 import { Event } from '../events/schemas/event.schema';
+import { GlobalFootballTeam } from '../global-football-teams/schemas/global-football-team.schema';
 import { ImageKitService } from '../common/upload/imagekit.service';
 
 describe('UsersService', () => {
@@ -21,6 +22,11 @@ describe('UsersService', () => {
   };
   const playerModel: any = {};
   const eventModel: any = {};
+  // Defaults to "the club exists" so the many tests that patch unrelated
+  // profile fields are unaffected; the favouriteTeamId cases override it.
+  const globalTeamModel: any = {
+    exists: jest.fn().mockResolvedValue({ _id: 'stub' }),
+  };
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -35,6 +41,10 @@ describe('UsersService', () => {
         },
         { provide: getModelToken(EventPlayer.name), useValue: playerModel },
         { provide: getModelToken(Event.name), useValue: eventModel },
+        {
+          provide: getModelToken(GlobalFootballTeam.name),
+          useValue: globalTeamModel,
+        },
       ],
     }).compile();
     service = m.get(UsersService);

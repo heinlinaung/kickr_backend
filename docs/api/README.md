@@ -8,10 +8,33 @@ Integration guides written against the **live** API — every request/response s
 | [groups-and-locations-api.md](./groups-and-locations-api.md) | Locations (venues) and Groups (fields, `country`/`city`, images, rules, members/roles, search, QR invites, joining). |
 | [events-api.md](./events-api.md) | Events — the 6-state lifecycle (incl. **`ready_to_play`**), derived `isFull`, listing a group's events, **free-text search**, create/edit/delete, join/leave. ⚠️ **breaking status change**. |
 | [users-api.md](./users-api.md) | Users — **people search** (name/username, exact-email only), and the profile routes. ⚠️ written from source, not captured live. |
+| [global-football-teams-api.md](./global-football-teams-api.md) | Reference data — real-world clubs for a "supported team" picker. Read-only, unpaginated. ⚠️ **not** KickR event teams. |
 | [notifications-api.md](./notifications-api.md) | Notifications — the in-app list, the socket.io `/notifications` namespace, and **FCM device registration**. Two triggers today: event created, and event → `ready_to_play`. ⚠️ written from source, not captured live. |
 | [admin-api.md](./admin-api.md) | **Back-office only**, behind the `x-admin-key` shared secret — force-add users to a group or event, and seed a throwaway test fixture (§9). Not for the mobile app. |
 
 **Live reference while the server is running:** Swagger UI at `/api-docs`, OpenAPI JSON at `/api-docs-json`.
+
+## New — 2026-09-05 · Favourite team on the user profile
+
+`GET /users/me` resolves the new `favouriteTeamId` into a **`favouriteTeam`**
+object (`_id`, `name`, `sortOrder`); `PATCH /users/me` accepts
+`favouriteTeamId`, validated against the club collection so an unknown id is a
+400 rather than a silently-null read. Send `null` to clear it.
+
+**Not** on the public profile — that uses a strict allowlist. See
+[users §4](./users-api.md).
+
+## New — 2026-09-04 · `GET /global-football-teams`
+
+Reference list of real-world clubs, for a "supported team" picker. Read-only
+and **not paginated** — `data` is a plain array, sorted by `sortOrder` (league
+standing, not alphabetical).
+
+Seeded by `scripts/seed-global-football-teams.ts`, so an empty array means
+unseeded rather than failed. **Not** KickR event teams — those are
+`GET /events/:id/teams`.
+
+See [global-football-teams-api.md](./global-football-teams-api.md).
 
 ## New — 2026-09-04 · `GET /events/:id` returns the group's branding
 

@@ -16,6 +16,7 @@ import { EventsModule } from './events/events.module';
 import { TournamentsModule } from './tournaments/tournaments.module';
 import { ShuffleModule } from './shuffle/shuffle.module';
 import { AdminModule } from './admin/admin.module';
+import { GlobalFootballTeamsModule } from './global-football-teams/global-football-teams.module';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { AdminModule } from './admin/admin.module';
     InvitationsModule,
     ChatModule,
     AdminModule,
+    GlobalFootballTeamsModule,
   ],
   providers: [
     {

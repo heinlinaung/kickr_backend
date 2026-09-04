@@ -7,6 +7,7 @@ import { UsersService } from './users.service';
 import { User } from './schemas/user.schema';
 import { EventPlayer } from '../events/schemas/event-player.schema';
 import { Event } from '../events/schemas/event.schema';
+import { GlobalFootballTeam } from '../global-football-teams/schemas/global-football-team.schema';
 import { ImageKitService } from '../common/upload/imagekit.service';
 import { ConfigService } from '@nestjs/config';
 
@@ -32,6 +33,8 @@ describe('UsersService.search', () => {
         { provide: getModelToken(User.name), useValue: userModel },
         { provide: getModelToken(EventPlayer.name), useValue: {} },
         { provide: getModelToken(Event.name), useValue: {} },
+        // Search never touches favouriteTeamId; present only to satisfy DI.
+        { provide: getModelToken(GlobalFootballTeam.name), useValue: {} },
         { provide: ImageKitService, useValue: {} },
         { provide: ConfigService, useValue: { get: jest.fn() } },
       ],
