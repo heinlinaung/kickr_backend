@@ -90,7 +90,179 @@ The old `{ userId: 1, isRead: 1, createdAt: -1 }` is **kept**: it no longer
 serves the list, but `markAllRead` and any unread count still filter on
 `isRead`.
 
-## 7. What is NOT verified
+## 7. Usage
+
+Set these once:
+
+```bash
+URL=http://localhost:3000
+TOKEN=<Cognito ACCESS token>   # the access token, never the id token
+```
+
+### First page
+
+No `cursor` — that is what makes it the first page.
+
+```bash
+curl -s "$URL/notifications" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "_id": "68b9f1aa22bb33cc44dd55e1",
+        "userId": "68a1c2d3e4f5a6b7c8d9e0f1",
+        "title": "Teams are ready",
+        "body": "Friday five — check your team and get ready to play.",
+        "type": "event",
+        "refId": "68b0aa11bb22cc33dd44ee55",
+        "isRead": false,
+        "createdAt": "2026-09-04T09:15:22.481Z"
+      }
+    ],
+    "nextCursor": "eyJkIjoiMjAyNi0wOS0wNFQwOToxNToyMi40ODFaIiwiaSI6IjY4YjlmMWFhMjJiYjMzY2M0NGRkNTVlMSJ9",
+    "hasMore": true
+  }
+}
+```
+
+### Next page
+
+Pass the previous `nextCursor` **verbatim**. It is base64url and contains `=`,
+`-` and `_`, so **quote it** — an unquoted `&` or `=` in a shell will truncate
+the URL.
+
+```bash
+curl -s "$URL/notifications?cursor=eyJkIjoiMjAyNi0wOS0wNFQwOToxNToyMi40ODFaIiwiaSI6IjY4YjlmMWFhMjJiYjMzY2M0NGRkNTVlMSJ9" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### A smaller page
+
+```bash
+curl -s "$URL/notifications?limit=5" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+`limit` is clamped to 1–50. Values outside that range are **silently clamped**,
+not rejected — `?limit=5000` returns 50 and `?limit=0` returns 1. A
+non-numeric `?limit=abc` falls back to 20 rather than erroring, so a buggy
+client gets a sane page instead of the whole collection.
+
+### Walk every page
+
+The loop shape any client should use: keep going until `nextCursor` is `null`.
+
+```bash
+CURSOR=""
+while :; do
+  RES=$(curl -s "$URL/notifications?limit=20&cursor=$CURSOR" \
+    -H "Authorization: Bearer $TOKEN")
+  echo "$RES" | jq -r '.data.items[] | "\(.createdAt)  \(.isRead)  \(.title)"'
+  CURSOR=$(echo "$RES" | jq -r '.data.nextCursor // empty')
+  [ -z "$CURSOR" ] && break
+done
+```
+
+`hasMore: false` and `nextCursor: null` always agree, so either is a valid stop
+condition. Prefer `nextCursor` — it is the value you would otherwise send.
+
+### Just the page metadata
+
+Handy for checking pagination without printing rows:
+
+```bash
+curl -s "$URL/notifications?limit=3" \
+  -H "Authorization: Bearer $TOKEN" \
+  | jq '{count: (.data.items | length), hasMore: .data.hasMore, nextCursor: .data.nextCursor}'
+```
+
+```json
+{
+  "count": 3,
+  "hasMore": true,
+  "nextCursor": "eyJkIjoi..."
+}
+```
+
+### Unread handling, now that they are not grouped
+
+There is no `?isRead=` filter and no `unreadCount`. Filter client-side:
+
+```bash
+# unread rows on this page
+curl -s "$URL/notifications" -H "Authorization: Bearer $TOKEN" \
+  | jq '[.data.items[] | select(.isRead == false)]'
+
+# unread count on this page — NOT the account total, which needs every page
+curl -s "$URL/notifications" -H "Authorization: Bearer $TOKEN" \
+  | jq '[.data.items[] | select(.isRead == false)] | length'
+```
+
+### Marking read does not disturb paging
+
+This is the payoff of dropping `isRead` from the sort — the same call under the
+old ordering would have shuffled the row into a different page.
+
+```bash
+curl -s -X PATCH "$URL/notifications/68b9f1aa22bb33cc44dd55e1/read" \
+  -H "Authorization: Bearer $TOKEN"
+
+curl -s -X PATCH "$URL/notifications/read-all" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+### A bad cursor is a 400, not an empty page
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' \
+  "$URL/notifications?cursor=garbage" \
+  -H "Authorization: Bearer $TOKEN"
+# 400
+```
+
+The body is flat — errors are **not** wrapped in `data`:
+
+```json
+{
+  "statusCode": 400,
+  "timestamp": "2026-09-04T09:20:11.004Z",
+  "path": "/notifications?cursor=garbage",
+  "message": "Invalid cursor"
+}
+```
+
+Every malformed-cursor case collapses to this one message: not base64, not
+JSON, a missing `i`, or an `i` that is not a valid ObjectId. A cursor is opaque,
+so there is nothing actionable to say beyond "start from the first page" —
+recover by retrying with no `cursor`.
+
+### Dart / Flutter
+
+```dart
+Future<({List<Map<String, dynamic>> items, String? next})> fetchPage(
+  String? cursor,
+) async {
+  final uri = Uri.parse('$baseUrl/notifications').replace(queryParameters: {
+    'limit': '20',
+    if (cursor != null) 'cursor': cursor,   // omit entirely on the first page
+  });
+  final res = await http.get(uri, headers: {'Authorization': 'Bearer $token'});
+  final data = jsonDecode(res.body)['data'];      // NOT a list any more
+  return (
+    items: List<Map<String, dynamic>>.from(data['items']),
+    next: data['nextCursor'] as String?,          // null == end of the list
+  );
+}
+```
+
+The one migration note: `jsonDecode(res.body)['data']` used to be the list
+itself. It is now the envelope, so the list is `['data']['items']`.
+
+## 8. What is NOT verified
 
 - **No live-database run.** Every test mocks Mongoose, so the two indexes have
   never been built and no query plan has been checked. In particular, that the
@@ -108,7 +280,7 @@ Worth checking against real data: page through a user with 60+ notifications and
 confirm no row is skipped or repeated across boundaries, particularly where many
 share a `createdAt` from one fan-out.
 
-## 8. Tests
+## 9. Tests
 
 18 new cases in `notifications.service.pagination.spec.ts` — the endpoint
 previously had **none**, which is how it stayed unpaginated and unnoticed:
