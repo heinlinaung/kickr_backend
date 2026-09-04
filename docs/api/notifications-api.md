@@ -4,7 +4,7 @@ Three delivery channels for the same notification:
 
 | Channel | Use it for |
 |---|---|
-| `GET /notifications` | The in-app list. **The source of truth** — always correct. |
+| `GET /notifications` | The in-app list, **paginated** (`{items, nextCursor, hasMore}`). **The source of truth** — always correct. |
 | socket.io `/notifications` | Live banner while the app is open. |
 | FCM push | Reaching the user when the app is closed. |
 
@@ -118,26 +118,65 @@ account receives it.
 
 ## 4. The in-app list
 
-### `GET /notifications`
+### `GET /notifications` — paginated, newest first
 
-Returns the caller's notifications, newest first:
+```
+GET /notifications?limit=20&cursor=eyJkIjoi...
+```
+
+| Query | Default | Notes |
+|---|---|---|
+| `limit` | `20` | Page size, clamped to **1–50**. A non-numeric value falls back to 20 rather than erroring. |
+| `cursor` | — | Opaque. Pass the previous response's `nextCursor` **verbatim**; omit for the first page. |
 
 ```json
 {
-  "data": [
-    {
-      "_id": "68b2...",
-      "userId": "68a1...",
-      "title": "Teams are ready",
-      "body": "Friday night five — check your team and get ready to play.",
-      "type": "event",
-      "refId": "68b0...",
-      "read": false,
-      "createdAt": "2026-09-02T14:31:07.221Z"
-    }
-  ]
+  "data": {
+    "items": [
+      {
+        "_id": "68b2...",
+        "userId": "68a1...",
+        "title": "Teams are ready",
+        "body": "Friday night five — check your team and get ready to play.",
+        "type": "event",
+        "refId": "68b0...",
+        "isRead": false,
+        "createdAt": "2026-09-02T14:31:07.221Z"
+      }
+    ],
+    "nextCursor": "eyJkIjoiMjAyNi0wOS0wMlQxNDozMTowNy4yMjFaIiwiaSI6IjY4YjIifQ",
+    "hasMore": true
+  }
 }
 ```
+
+> ⚠️ **BREAKING — changed 2026-09-04.** `data` was a bare **array**; it is now
+> an object with `items` / `nextCursor` / `hasMore`. A client doing
+> `response.data.map(...)` breaks — read `response.data.items` instead.
+
+**Paging:** keep calling with the previous `nextCursor` until it comes back
+`null`. `hasMore: false` and `nextCursor: null` always agree, so either is a
+valid stop condition. Treat the cursor as opaque — it is a position marker, not
+an API, and its encoding may change without notice. A malformed cursor gives
+**400**, not an empty page.
+
+> ⚠️ **The read field is `isRead`, not `read`.** An earlier version of this doc
+> said `read`; that was wrong and a client trusting it would see `undefined`
+> and render everything as unread.
+
+#### Unread items are no longer floated to the top
+
+The unpaginated version sorted by `isRead` first, so unread notifications
+appeared above read ones. **Now the sort is `createdAt` alone (newest first).**
+
+That is a deliberate consequence of paginating: `isRead` *changes*, and marking
+something read mid-pagination would move that row to a different page, making
+the cursor skip or duplicate rows. `createdAt` never changes, so every page
+boundary stays put.
+
+Every row still carries `isRead`, so group, badge or filter client-side. For an
+unread count, count what you have loaded, or track it locally from
+`PATCH .../read` calls — there is no `unreadCount` field.
 
 `refId` + `type` are the deep-link pair. For `type: "event"`, `refId` is an
 event id.
@@ -195,6 +234,13 @@ changes when the key is added.
 - [ ] **Guests never receive anything.** They have no account.
 - [ ] **iOS delivers nothing until an APNs key is uploaded** (§5b) — a
       successful `POST /notifications/devices` is not evidence push works.
+- [ ] **`GET /notifications` is paginated** (changed 2026-09-04) — `data` is now
+      `{ items, nextCursor, hasMore }`, not an array. `data.map(...)` breaks.
+- [ ] **Unread rows are no longer sorted to the top.** Newest-first only; badge
+      or filter on `isRead` yourself. A mutable sort key cannot be paginated.
+- [ ] **The read flag is `isRead`**, not `read`.
+- [ ] **Round-trip `nextCursor` untouched.** It is opaque, unsigned, and a
+      malformed value gives 400 rather than an empty page.
 - [ ] **`devices` is never readable.** Do not expect it on `GET /users/me`.
 - [ ] **A missing banner is not a missing action.** The list is authoritative;
       notification delivery is best-effort by design.

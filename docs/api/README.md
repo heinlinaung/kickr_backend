@@ -13,6 +13,21 @@ Integration guides written against the **live** API — every request/response s
 
 **Live reference while the server is running:** Swagger UI at `/api-docs`, OpenAPI JSON at `/api-docs-json`.
 
+## ⚠️ Breaking — 2026-09-04 · `GET /notifications` is paginated
+
+`data` was a bare **array**; it is now `{ items, nextCursor, hasMore }`. A
+client doing `response.data.map(...)` breaks — read `response.data.items`.
+
+Cursor-based, newest first, `?limit=` 1–50 (default 20). Round-trip
+`nextCursor` verbatim; `null` means the end.
+
+**Unread rows are no longer floated to the top.** The old sort led with
+`isRead`, which cannot be paginated safely — marking something read moves it
+between pages. Badge or filter on `isRead` client-side instead. Also note the
+field is `isRead`, not `read`, which this doc previously got wrong.
+
+See [notifications-api.md](./notifications-api.md).
+
 ## ⚠️ Changed — 2026-09-03 · `GET /events` hides finished events
 
 `after_match` and `done` are now excluded by **default** from the discovery

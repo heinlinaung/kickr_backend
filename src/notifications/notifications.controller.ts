@@ -6,9 +6,15 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiQuery,
+} from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { NotificationsService } from './notifications.service';
@@ -22,8 +28,41 @@ export class NotificationsController {
   constructor(private notificationsService: NotificationsService) {}
 
   @Get()
-  list(@CurrentUser() user: any) {
-    return this.notificationsService.findForUser(user._id.toString());
+  @ApiOperation({
+    summary: 'List your notifications (paginated)',
+    description:
+      'Returns a page: `{ items, nextCursor, hasMore }`. Newest first. ' +
+      '⚠️ CHANGED — this used to return a bare array, and used to float ' +
+      'unread rows to the top. It now sorts by `createdAt` alone, because ' +
+      '`isRead` changes: marking something read mid-pagination would move it ' +
+      'between pages and make the cursor skip or repeat a row. Every row ' +
+      'still carries `isRead`, so badge or filter on it client-side. Pass ' +
+      '`nextCursor` back verbatim for the next page; a null `nextCursor` ' +
+      'means the end.',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    example: 20,
+    description: 'Page size, 1-50. Defaults to 20.',
+  })
+  @ApiQuery({
+    name: 'cursor',
+    required: false,
+    description:
+      'Opaque pagination cursor. Pass `nextCursor` from the previous ' +
+      'response verbatim; omit for the first page. Invalid values give 400.',
+  })
+  list(
+    @CurrentUser() user: any,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.notificationsService.findForUser(
+      user._id.toString(),
+      limit === undefined ? undefined : Number(limit),
+      cursor,
+    );
   }
 
   @Post('devices')
