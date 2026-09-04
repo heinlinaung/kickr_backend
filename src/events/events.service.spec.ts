@@ -260,6 +260,102 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
     });
   });
 
+  describe('findById → group branding', () => {
+    const branding = {
+      _id: GROUP_ID,
+      name: 'Sunday Ballers',
+      logo: 'https://ik.imagekit.io/kickr/logo.png',
+      wallpaper: 'https://ik.imagekit.io/kickr/wall.jpg',
+      rules: 'Be on time',
+    };
+
+    it('attaches the group name, logo and wallpaper', async () => {
+      eventModel.findById.mockReturnValue(q({ _id: EVENT_ID, groupId: GROUP_ID }));
+      groupModel.findById.mockReturnValue(q(branding));
+
+      const res: any = await service.findById(EVENT_ID);
+
+      expect(res.group).toEqual({
+        _id: GROUP_ID,
+        name: 'Sunday Ballers',
+        logo: branding.logo,
+        wallpaper: branding.wallpaper,
+      });
+    });
+
+    it('fetches branding and rules in ONE group query', async () => {
+      // The rules projection was already here; the branding fields ride along
+      // rather than costing a second round trip on every detail request.
+      eventModel.findById.mockReturnValue(q({ _id: EVENT_ID, groupId: GROUP_ID }));
+      const chain = q(branding);
+      groupModel.findById.mockReturnValue(chain);
+
+      await service.findById(EVENT_ID);
+
+      expect(groupModel.findById).toHaveBeenCalledTimes(1);
+      expect(chain.select).toHaveBeenCalledWith('rules name logo wallpaper');
+    });
+
+    it('does NOT leak the internal ImageKit file ids', async () => {
+      // logoFileId/wallpaperFileId are storage handles used for deletion, not
+      // client data — the projection must not widen to the whole document.
+      eventModel.findById.mockReturnValue(q({ _id: EVENT_ID, groupId: GROUP_ID }));
+      groupModel.findById.mockReturnValue(
+        q({ ...branding, logoFileId: 'file_123', wallpaperFileId: 'file_456' }),
+      );
+
+      const res: any = await service.findById(EVENT_ID);
+
+      expect(res.group).not.toHaveProperty('logoFileId');
+      expect(res.group).not.toHaveProperty('wallpaperFileId');
+      expect(res.group).not.toHaveProperty('rules');
+    });
+
+    it('reports null for images the group has not set', async () => {
+      // null, not '': an unset image is absent rather than empty.
+      eventModel.findById.mockReturnValue(q({ _id: EVENT_ID, groupId: GROUP_ID }));
+      groupModel.findById.mockReturnValue(q({ _id: GROUP_ID, name: 'Bare' }));
+
+      const res: any = await service.findById(EVENT_ID);
+
+      expect(res.group.logo).toBeNull();
+      expect(res.group.wallpaper).toBeNull();
+      expect(res.group.name).toBe('Bare');
+    });
+
+    it('is null for a standalone event, and queries no group', async () => {
+      // The absence is the meaningful answer here, unlike groupRules which
+      // flattens to '' because it is always renderable.
+      eventModel.findById.mockReturnValue(q({ _id: EVENT_ID, groupId: null }));
+
+      const res: any = await service.findById(EVENT_ID);
+
+      expect(res.group).toBeNull();
+      expect(groupModel.findById).not.toHaveBeenCalled();
+    });
+
+    it('is null when the groupId points at a deleted group', async () => {
+      // A dangling groupId must not crash detail — the event still renders.
+      eventModel.findById.mockReturnValue(q({ _id: EVENT_ID, groupId: GROUP_ID }));
+      groupModel.findById.mockReturnValue(q(null));
+
+      const res: any = await service.findById(EVENT_ID);
+
+      expect(res.group).toBeNull();
+      expect(res.groupRules).toBe('');
+    });
+
+    it('keeps groupRules at the top level, unmoved', async () => {
+      // Additive change: an existing client reading groupRules must not break.
+      eventModel.findById.mockReturnValue(q({ _id: EVENT_ID, groupId: GROUP_ID }));
+      groupModel.findById.mockReturnValue(q(branding));
+
+      const res: any = await service.findById(EVENT_ID);
+
+      expect(res.groupRules).toBe('Be on time');
+    });
+  });
+
   describe('list → finished events', () => {
     const statusOf = () =>
       (eventModel.find.mock.calls.at(-1)[0] as any).status;
