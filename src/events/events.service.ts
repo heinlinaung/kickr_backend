@@ -49,7 +49,9 @@ import { CreateEventTemplateDto } from './dto/create-event-template.dto';
 import { LocationsService } from '../locations/locations.service';
 import { ImageKitService } from '../common/upload/imagekit.service';
 import {
+  clampLimit,
   decodeCursor,
+  DEFAULT_PAGE_LIMIT,
   keysetFilter,
   toPage,
 } from '../common/pagination/cursor';
@@ -324,7 +326,7 @@ export class EventsService {
   async search(
     q: string,
     includeExpired = false,
-    limit = DEFAULT_SEARCH_LIMIT,
+    limit = DEFAULT_PAGE_LIMIT,
     cursor?: string,
   ) {
     const term = (q ?? '').trim();
@@ -2546,7 +2548,6 @@ function escapeRegex(input: string): string {
 }
 
 /** Default page size for `search`, when the caller supplies none. */
-const DEFAULT_SEARCH_LIMIT = 20;
 
 /**
  * Clamps a caller-supplied page size into 1-50, falling back to `fallback`.
@@ -2555,7 +2556,4 @@ const DEFAULT_SEARCH_LIMIT = 20;
  * reject it — every comparison against NaN is false, so the NaN flows straight
  * through to Mongoose's .limit(). Hence the explicit isFinite check.
  */
-function clampLimit(limit: number, fallback = DEFAULT_SEARCH_LIMIT): number {
-  if (!Number.isFinite(limit)) return fallback;
-  return Math.min(Math.max(Math.trunc(limit), 1), 50);
-}
+

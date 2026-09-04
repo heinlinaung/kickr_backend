@@ -19,6 +19,29 @@ import { Types } from 'mongoose';
  * below, which stops a hand-crafted value reaching Mongoose's caster.
  */
 
+/** Page size used when the caller passes none. */
+export const DEFAULT_PAGE_LIMIT = 20;
+
+/** Largest page a caller may request, however large a `?limit=` they send. */
+export const MAX_PAGE_LIMIT = 50;
+
+/**
+ * Coerces a client-supplied `?limit=` into a sane page size.
+ *
+ * The `Number.isFinite` guard is load-bearing, not defensive: `?limit=abc`
+ * parses to `NaN`, and every NaN comparison is false, so
+ * `Math.min(Math.max(NaN, 1), 50)` is `NaN` — which reaches `.limit(NaN)` and
+ * returns the whole collection. `Math.trunc` stops `?limit=1.9` becoming a
+ * fractional limit.
+ */
+export function clampLimit(
+  limit: number,
+  fallback = DEFAULT_PAGE_LIMIT,
+): number {
+  if (!Number.isFinite(limit)) return fallback;
+  return Math.min(Math.max(Math.trunc(limit), 1), MAX_PAGE_LIMIT);
+}
+
 /** The sort key of the last row on a page: an optional date plus its _id. */
 export interface CursorPayload {
   /** ISO date of the last row, when the sort leads with a date. */
@@ -66,22 +89,34 @@ export function decodeCursor(cursor: string): CursorPayload {
 }
 
 /**
- * The `$or` keyset predicate for a `{ <dateField>: 1, _id: 1 }` sort.
+ * The `$or` keyset predicate for a `{ <dateField>: dir, _id: dir }` sort.
  *
  * "Strictly after (date, _id)" is two cases, not one: a later date, or the same
  * date with a greater `_id`. Comparing the date alone would drop every other
  * row sharing that timestamp — the bug this exists to prevent.
+ *
+ * `direction` must match the sort the caller actually issues. Ascending pages
+ * forward with `$gt`; a **descending** sort (newest-first feeds) pages forward
+ * with `$lt`, because "the next page" there means *older* rows. Passing the
+ * wrong one does not error — it silently returns the page you already had, or
+ * nothing at all — so the sort and the filter are kept in one place at each
+ * call site.
  */
 export function keysetFilter(
   payload: CursorPayload,
   dateField: string,
+  direction: 1 | -1 = 1,
 ): Record<string, unknown> {
   const id = new Types.ObjectId(payload.i);
-  if (payload.d === undefined) return { _id: { $gt: id } };
+  const op = direction === 1 ? '$gt' : '$lt';
+  if (payload.d === undefined) return { _id: { [op]: id } };
 
   const date = new Date(payload.d);
   return {
-    $or: [{ [dateField]: { $gt: date } }, { [dateField]: date, _id: { $gt: id } }],
+    $or: [
+      { [dateField]: { [op]: date } },
+      { [dateField]: date, _id: { [op]: id } },
+    ],
   };
 }
 

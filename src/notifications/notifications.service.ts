@@ -8,6 +8,13 @@ import {
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { PushService } from './push.service';
 import { NotificationsGateway } from './notifications.gateway';
+import {
+  clampLimit,
+  decodeCursor,
+  DEFAULT_PAGE_LIMIT,
+  keysetFilter,
+  toPage,
+} from '../common/pagination/cursor';
 
 /** One notification, addressed to many users. */
 export interface NotifyPayload {
@@ -177,11 +184,49 @@ export class NotificationsService {
     });
   }
 
-  async findForUser(userId: string) {
-    return this.notifModel
-      .find({ userId: new Types.ObjectId(userId) })
-      .sort({ isRead: 1, createdAt: -1 })
+  /**
+   * One page of the caller's notifications, newest first.
+   *
+   * **Sorted by `createdAt` alone**, unlike the unpaginated version this
+   * replaced, which led with `isRead: 1` to float unread rows to the top. That
+   * ordering cannot be paginated safely: `isRead` *changes*, so marking a
+   * notification read while the client is paging moves it between pages, and a
+   * keyset cursor then skips or repeats a row. `createdAt` never changes, so
+   * every page boundary stays where it was.
+   *
+   * Unread rows are therefore no longer grouped — `isRead` is on every row, so
+   * a client badges or filters on it directly.
+   *
+   * `_id` is the tiebreaker: two notifications from the same fan-out share a
+   * `createdAt` to the millisecond, and without it the sort is not total, so a
+   * page boundary landing mid-timestamp would drop the rest of that group.
+   */
+  async findForUser(
+    userId: string,
+    limit = DEFAULT_PAGE_LIMIT,
+    cursor?: string,
+  ) {
+    const filter: Record<string, unknown> = {
+      userId: new Types.ObjectId(userId),
+    };
+
+    // -1: the feed is newest-first, so paging forward means going OLDER, which
+    // is `$lt`. Passing 1 here would silently re-serve the first page.
+    if (cursor) {
+      Object.assign(filter, keysetFilter(decodeCursor(cursor), 'createdAt', -1));
+    }
+
+    const size = clampLimit(limit);
+    const rows = await this.notifModel
+      .find(filter)
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(size + 1)
       .lean();
+
+    return toPage(rows, size, (row) => ({
+      d: new Date(row.createdAt).toISOString(),
+      i: String(row._id),
+    }));
   }
 
   async markRead(notifId: string, userId: string) {

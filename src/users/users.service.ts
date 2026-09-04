@@ -21,7 +21,9 @@ import {
 } from '../events/schemas/event-player.schema';
 import { Event, EventDocument } from '../events/schemas/event.schema';
 import {
+  clampLimit,
   decodeCursor,
+  DEFAULT_PAGE_LIMIT,
   keysetFilter,
   toPage,
 } from '../common/pagination/cursor';
@@ -56,11 +58,7 @@ function escapeRegex(input: string): string {
  * reject it — every comparison against NaN is false, so the NaN flows straight
  * through to Mongoose's .limit(). Hence the explicit isFinite check.
  */
-const DEFAULT_SEARCH_LIMIT = 20;
-function clampLimit(limit: number, fallback = DEFAULT_SEARCH_LIMIT): number {
-  if (!Number.isFinite(limit)) return fallback;
-  return Math.min(Math.max(Math.trunc(limit), 1), 50);
-}
+
 
 @Injectable()
 export class UsersService {
@@ -242,7 +240,7 @@ export class UsersService {
    * already 404s them, so listing them here would advertise accounts that
    * cannot be opened.
    */
-  async search(q: string, limit = DEFAULT_SEARCH_LIMIT, cursor?: string) {
+  async search(q: string, limit = DEFAULT_PAGE_LIMIT, cursor?: string) {
     const term = (q ?? '').trim();
     // An empty query would otherwise match every user via an empty regex.
     if (!term) return { items: [], nextCursor: null, hasMore: false };
