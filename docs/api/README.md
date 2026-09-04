@@ -14,6 +14,20 @@ Integration guides written against the **live** API — every request/response s
 
 **Live reference while the server is running:** Swagger UI at `/api-docs`, OpenAPI JSON at `/api-docs-json`.
 
+## ⚠️ Changed — 2026-09-05 · Rate limiting is OFF
+
+The global throttler (10 requests/minute across every route) has been
+**removed**. There is currently **no request limit** on any endpoint, so a
+client will not see `429 Too Many Requests` from this API.
+
+Cognito's own limits still apply to the auth routes and surface as `503 Too
+many attempts` — those are unchanged and unrelated.
+
+Temporary. Two things to fix before it comes back, or it will behave worse than
+having none: `trust proxy` must be set (keying is per-IP, so behind a reverse
+proxy every user shares one bucket), and the limits should be scoped to the
+routes that need them rather than one global bucket over reads.
+
 ## New — 2026-09-05 · Favourite team on the user profile
 
 `GET /users/me` resolves the new `favouriteTeamId` into a **`favouriteTeam`**

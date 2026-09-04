@@ -2,8 +2,9 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ServeStaticModule } from '@nestjs/serve-static';
-import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
-import { APP_GUARD } from '@nestjs/core';
+// Rate limiting is off — see the note in `imports` below.
+// import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
+// import { APP_GUARD } from '@nestjs/core';
 import { join } from 'path';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
@@ -31,7 +32,28 @@ import { GlobalFootballTeamsModule } from './global-football-teams/global-footba
       rootPath: join(process.cwd(), 'uploads'),
       serveRoot: '/uploads',
     }),
-    ThrottlerModule.forRoot([{ ttl: 60000, limit: 10 }]),
+    // RATE LIMITING IS OFF (2026-09-05, deliberate).
+    //
+    // Was: ThrottlerModule.forRoot([{ ttl: 60000, limit: 10 }]) — 10 requests
+    // per minute, globally, enforced by ThrottlerGuard as an APP_GUARD.
+    //
+    // Turned off because 10/min is below what a normal client session needs: a
+    // cold start that reads /users/me, /global-football-teams and
+    // /notifications has already spent three, and paging notifications spends
+    // one per page.
+    //
+    // Two things to fix BEFORE re-enabling, or it will behave worse than
+    // having none:
+    //   1. `app.set('trust proxy', 1)` in main.ts. Keying is per-IP, so
+    //      behind nginx/Caddy every request appears to come from the proxy and
+    //      ALL users share one bucket — global limiting disguised as per-IP.
+    //   2. Scope it. One global bucket over every route is the wrong shape;
+    //      tight limits belong on auth/signup, not on reading a notification
+    //      list.
+    // Also note the in-memory store is per-process: two containers means two
+    // independent counters, so the effective limit doubles.
+    //
+    // ThrottlerModule.forRoot([{ ttl: 60000, limit: 10 }]),
     AuthModule,
     UsersModule,
     NotificationsModule,
@@ -46,10 +68,14 @@ import { GlobalFootballTeamsModule } from './global-football-teams/global-footba
     GlobalFootballTeamsModule,
   ],
   providers: [
-    {
-      provide: APP_GUARD,
-      useClass: ThrottlerGuard,
-    },
+    // Removed with ThrottlerModule above. It CANNOT be left registered on its
+    // own: ThrottlerGuard injects the module's options and storage, so keeping
+    // it here without the module fails dependency resolution at boot.
+    //
+    // {
+    //   provide: APP_GUARD,
+    //   useClass: ThrottlerGuard,
+    // },
   ],
 })
 export class AppModule {}

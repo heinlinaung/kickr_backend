@@ -412,7 +412,7 @@ curl -X DELETE http://localhost:3000/admin/test-data/<testId> \
 |---|---|
 | Admin **remove** member/player | Not implemented — use `DELETE /groups/:id/members/:userId` as an owner/admin |
 | Per-admin identity or audit trail | Not implemented — one shared key, and **actions are not attributed or logged** |
-| Rate limiting on admin routes | Inherits the global throttler only |
+| Rate limiting on admin routes | **None.** The global throttler was turned off on 2026-09-05, so these routes — guarded only by one shared `x-admin-key` — have no request limit at all. |
 | Capacity override (`force: true`) | Not implemented — capacity is always enforced |
 | Admin endpoints for tournaments/challenges | Not implemented |
 | Test data for tournaments | §9 covers groups, locations and events only |
