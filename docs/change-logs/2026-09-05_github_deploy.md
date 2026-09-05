@@ -2,9 +2,9 @@
 
 **Branch:** `events-feature-spec`
 **Tests:** 946 passing across 46 suites · build clean
-**Verified:** `Test` ✅ and `Build & push image` ✅ in CI — the image builds and
-reaches GHCR. **`Deploy` fails at the SSH handshake**, which is droplet key
-setup rather than the workflow; see §3c.
+**Verified:** ✅ **The full pipeline is green.** Test → build → push to GHCR →
+pull on the droplet → container running → API responding. Took six runs; §3b–3f
+record each failure and why.
 
 `.github/workflows/deploy.yml`: build a GHCR image on push to `main`, then
 redeploy the droplet over SSH. First workflow in this repo.
@@ -254,6 +254,37 @@ restore it. That needs `loginctl enable-linger deploy` plus a
 `podman generate systemd` unit. Out of scope here, and noted in the workflow so
 a reboot is not a mystery outage.
 
+## 3g. Green — and one thing the log proves
+
+Run #6 succeeded end to end:
+
+```
+Waiting for the API to respond...
+curl: (56) Recv failure: Connection reset by peer
+API responding after 2 checks.
+✅ Successfully executed commands to all hosts.
+```
+
+That first failed curl is the loop doing its job: the container was up but
+still bootstrapping — Mongoose connecting to Atlas — so nothing was listening
+yet. The retry caught it five seconds later.
+
+It also proves the **entrypoint fix from the 2026-09-03 Dockerfile changelog**.
+`CMD ["node", "dist/src/main"]` had never executed in a container anywhere; the
+original `dist/main` would have crash-looped, and the loop's container-exited
+check would have failed the job with logs attached. Instead it served.
+
+### Rootless podman keeps per-user stores
+
+`docker ps` as **root** shows nothing, and `docker images` lists only a stale
+`localhost/kickr_backend` from a manual build. That is expected, not a broken
+deployment: **rootless podman gives each user their own container and image
+store**, so root cannot see what `deploy` is running. Check as `deploy`.
+
+A practical consequence: the `docker image prune -f` at the end of the deploy
+runs as `deploy` and will **never** clean root's store. Those leftovers (~1 GB
+of a 23 GB disk here) need clearing by hand once.
+
 ## 4. Required secrets
 
 | Secret | Used by | Notes |
@@ -294,9 +325,9 @@ Specifically unverified:
 - ~~that the droplet can pull from GHCR with `GHCR_TOKEN`~~ — **`Login
   Succeeded!` in run #4**, so SSH as `deploy`, the secret, and registry auth all
   work. The pull itself then failed on the tag mismatch in §3e.
-- **that the entrypoint runs.** `CMD ["node", "dist/src/main"]` — the fix for
-  the path bug — has still never been executed in a container, because no
-  deploy has reached `docker run`.
+- ~~that the entrypoint runs~~ — **confirmed in run #6.** The container starts
+  and serves, so `dist/src/main` is correct and the original `dist/main` would
+  indeed have crash-looped.
 - that the SSH action authenticates
 - ~~that `-p 80:3000` binds~~ — **it does not**, under rootless podman. Now
   published on `127.0.0.1:3000` behind nginx (§3f).
