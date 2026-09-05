@@ -195,6 +195,34 @@ to isolate it: **the key was installed for `root` but never for `deploy`**.
 successful local test used `root@`. Testing `deploy@` specifically is what
 found it — one command that should have come before a CI run, not after two.
 
+## 3e. Tag mismatch: short SHA built, long SHA pulled
+
+With SSH and GHCR login both working, run #4 reached the pull and failed:
+
+```
+Trying to pull ghcr.io/heinlinaung/kickr_backend:9f1d24ce1f0dae28e9ea5a7379815f2f172387e4...
+Error: reading manifest 9f1d24ce... manifest unknown
+```
+
+My bug, and a self-inflicted one: the build tagged with `type=sha,prefix=`,
+whose default is a **7-character short** SHA, while §1's "deploy the exact
+commit" change pulls the **full 40-character** `${{ github.sha }}`. Those never
+match.
+
+Visible in run #1's own log — `ghcr.io/heinlinaung/kickr_backend:a8da21f` —
+which I had read past. Nothing catches it earlier because the tag is only
+resolved at deploy time, so the build happily publishes a tag nobody pulls.
+
+Fixed with `format=long` on the tag directive rather than shortening the pull:
+the point of §1 was an unambiguous, rollback-able reference, and the full SHA
+keeps that.
+
+**A trap worth recording:** the fix was first written with an explanatory
+comment *inside* the `tags: |` block. YAML block scalars have no comments —
+those lines are literal content, so `metadata-action` would have received four
+`#`-prefixed strings as tag inputs. Confirmed by parsing the file and printing
+what the action would actually receive, then moved the comment above the block.
+
 ## 4. Required secrets
 
 | Secret | Used by | Notes |
@@ -232,8 +260,9 @@ Specifically unverified:
 - ~~that `docker build` succeeds in Actions~~ — **confirmed in run #2.** The
   image builds on `node:22-alpine` and pushes to GHCR, so `npm ci` on Alpine
   works and the Dockerfile is sound as far as packaging goes.
-- that the droplet can pull from GHCR with `GHCR_TOKEN` — **the secret does not
-  exist yet** (§3c)
+- ~~that the droplet can pull from GHCR with `GHCR_TOKEN`~~ — **`Login
+  Succeeded!` in run #4**, so SSH as `deploy`, the secret, and registry auth all
+  work. The pull itself then failed on the tag mismatch in §3e.
 - **that the entrypoint runs.** `CMD ["node", "dist/src/main"]` — the fix for
   the path bug — has still never been executed in a container, because no
   deploy has reached `docker run`.
