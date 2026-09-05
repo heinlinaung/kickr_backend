@@ -71,8 +71,12 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # `format=long` so the SHA tag matches the FULL ${{ github.sha }} the
+          # deploy job pulls. The default is a 7-char SHORT sha, which does not
+          # match and fails the pull with "manifest unknown" — and nothing
+          # catches it earlier, because the tag is only resolved at deploy time.
           tags: |
-            type=sha,prefix=
+            type=sha,prefix=,format=long
             type=raw,value=latest
 
       - name: Build and push
