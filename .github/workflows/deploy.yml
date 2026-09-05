@@ -155,23 +155,37 @@ jobs:
             # `starting` is expected for up to a minute. Waiting here means a
             # green workflow means "serving", not merely "started" — otherwise
             # a container that crash-loops on bad config reports success.
-            echo "Waiting for the container to report healthy..."
+            # Probes the API directly rather than reading the container's
+            # health status. The droplet runs PODMAN behind a `docker` alias,
+            # and podman does not populate .State.Health the way Docker does —
+            # it generally ignores an image's HEALTHCHECK unless one is given
+            # at run time, so an inspect-based wait would time out on a
+            # perfectly healthy container.
+            #
+            # Curling the published port tests the thing that actually matters
+            # anyway: that the API answers. /api-docs-json only responds once
+            # Nest has finished bootstrapping, which for this app means Mongo
+            # connected — it binds no port at all until then.
+            echo "Waiting for the API to respond..."
+            ready=""
             for i in $(seq 1 40); do
-              status=$(docker inspect -f '{{.State.Health.Status}}' kickr-api 2>/dev/null || echo unknown)
-              if [ "$status" = "healthy" ]; then
-                echo "Healthy after ${i} checks."
+              if curl -fsS -o /dev/null --max-time 5 http://127.0.0.1:80/api-docs-json; then
+                echo "API responding after ${i} checks."
+                ready=1
                 break
               fi
-              if [ "$status" = "unhealthy" ]; then
-                echo "Container reported UNHEALTHY. Recent logs:"
+              # A container that exited is a hard failure — no point waiting
+              # out the full timeout for something that is not running.
+              if [ -z "$(docker ps -q -f name=kickr-api)" ]; then
+                echo "Container is no longer running. Recent logs:"
                 docker logs --tail 50 kickr-api || true
                 exit 1
               fi
               sleep 5
             done
 
-            if [ "$(docker inspect -f '{{.State.Health.Status}}' kickr-api)" != "healthy" ]; then
-              echo "Timed out waiting for health. Recent logs:"
+            if [ -z "$ready" ]; then
+              echo "Timed out waiting for the API. Recent logs:"
               docker logs --tail 50 kickr-api || true
               exit 1
             fi

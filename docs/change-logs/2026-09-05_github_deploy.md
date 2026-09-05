@@ -158,6 +158,43 @@ error**, so `docker login` would have failed with a registry authentication
 message that points nowhere near the real cause. The script now checks for it
 explicitly and says what to add.
 
+## 3d. The droplet runs podman, not Docker
+
+Verifying the deploy user surfaced this:
+
+```
+$ ssh deploy@... "docker ps"
+Emulate Docker CLI using podman. Create /etc/containers/nodocker to quiet msg.
+```
+
+`docker` is an alias for **podman**. Mostly compatible — `pull`, `run`, `stop`,
+`rm`, `logs` and `image prune` all behave — but **podman does not populate
+`.State.Health` the way Docker does**: it generally ignores an image's
+`HEALTHCHECK` unless one is supplied at run time.
+
+So the health wait added in §1 would have polled `docker inspect -f
+'{{.State.Health.Status}}'`, never seen `healthy`, and failed the job after
+200 seconds on a container that was serving correctly — a false negative that
+looks exactly like a broken deploy.
+
+Replaced with a direct **`curl` against the published port**. That tests the
+thing that actually matters — the API answers — and works identically under
+both runtimes. `/api-docs-json` only responds once Nest has bootstrapped, which
+for this app means Mongo connected, since it binds no port until then. The loop
+also bails early if the container has exited, rather than waiting out the full
+timeout for something that is not running.
+
+The image's `HEALTHCHECK` is left in place: it is still correct under Docker,
+and harmless under podman.
+
+### The SSH failure, finally
+
+Runs #2 and #3 both failed the handshake. The cause was simple and I was slow
+to isolate it: **the key was installed for `root` but never for `deploy`**.
+`id deploy` proved the *user* existed, which is not the same thing, and the
+successful local test used `root@`. Testing `deploy@` specifically is what
+found it — one command that should have come before a CI run, not after two.
+
 ## 4. Required secrets
 
 | Secret | Used by | Notes |
