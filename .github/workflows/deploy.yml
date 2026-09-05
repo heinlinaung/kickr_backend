@@ -203,13 +203,36 @@ jobs:
               exit 1
             fi
 
+            # Rootless podman runs containers inside the user's systemd slice.
+            # Without lingering, that slice — and every container in it — is
+            # torn down when the last session for this user closes. This deploy
+            # IS an SSH session, so the container would be reaped minutes after
+            # the job reports success. That happened: a green run left
+            # `docker ps -a` completely empty (destroyed, not merely exited).
+            #
+            # Checked rather than assumed, because the failure is invisible at
+            # deploy time — everything responds correctly right up until the
+            # session ends.
+            if command -v loginctl >/dev/null 2>&1; then
+              if ! loginctl show-user "$(id -un)" 2>/dev/null | grep -q '^Linger=yes'; then
+                echo "WARNING: lingering is NOT enabled for $(id -un)."
+                echo "Rootless podman will destroy this container when the"
+                echo "deploy's SSH session closes. Fix on the droplet as root:"
+                echo "  loginctl enable-linger $(id -un)"
+                exit 1
+              fi
+              echo "Lingering enabled — the container will outlive this session."
+            fi
+
             # Frees disk on the droplet — untagged layers from previous builds
             # accumulate and a full disk is a hard-to-diagnose outage.
+            #
+            # Note this runs as the DEPLOY user. Rootless podman keeps a
+            # per-user store, so it never touches root's images — those need
+            # clearing by hand.
             docker image prune -f
 
-            # NOTE: `--restart unless-stopped` restarts the container if it
-            # crashes, but under ROOTLESS podman it does NOT survive a droplet
-            # reboot — there is no root-level daemon to restore it. Surviving a
-            # reboot needs either `loginctl enable-linger deploy` plus a
-            # `podman generate systemd` unit, or podman's restart service.
-            # Out of scope here; flagged so a reboot is not a mystery outage.
+            # NOTE: even with lingering, `--restart unless-stopped` does not
+            # restore the container after a droplet REBOOT under rootless
+            # podman — that additionally needs a `podman generate systemd`
+            # unit. Flagged so a reboot is not a mystery outage.

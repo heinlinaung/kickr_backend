@@ -2,9 +2,10 @@
 
 **Branch:** `events-feature-spec`
 **Tests:** 946 passing across 46 suites · build clean
-**Verified:** ✅ **The full pipeline is green.** Test → build → push to GHCR →
-pull on the droplet → container running → API responding. Took six runs; §3b–3f
-record each failure and why.
+**Verified:** the full pipeline runs green — test → build → push → pull →
+container running → API responding. **But the container was then reaped**
+minutes later; see §3h, which requires `loginctl enable-linger deploy` on the
+droplet. §3b–3h record each failure and why.
 
 `.github/workflows/deploy.yml`: build a GHCR image on push to `main`, then
 redeploy the droplet over SSH. First workflow in this repo.
@@ -284,6 +285,37 @@ store**, so root cannot see what `deploy` is running. Check as `deploy`.
 A practical consequence: the `docker image prune -f` at the end of the deploy
 runs as `deploy` and will **never** clean root's store. Those leftovers (~1 GB
 of a 23 GB disk here) need clearing by hand once.
+
+## 3h. Green, then gone — the container was reaped
+
+Ten minutes after the successful run, `docker ps` as `deploy` was **empty** —
+and so was `docker ps -a`. Not exited: **destroyed**.
+
+Cause: rootless podman runs containers inside the invoking user's systemd
+slice. Without **lingering**, systemd tears that slice down when the user's last
+session closes — and the deploy *is* an SSH session. So the container died
+minutes after the job reported success.
+
+Fix on the droplet, once:
+
+```bash
+loginctl enable-linger deploy
+```
+
+### The workflow was reporting success too early
+
+This is the more important lesson. The wait loop proved the API answered *at
+that instant*, which is not the same as the deployment surviving. A green run
+left nothing running, and nothing in the pipeline noticed.
+
+The deploy now **checks lingering explicitly and fails if it is off**, rather
+than trusting that a responding API means a durable one. Checked rather than
+assumed precisely because the failure is invisible at deploy time — everything
+behaves correctly right up until the session ends, so no amount of probing
+during the job would catch it.
+
+This also supersedes part of §3f: the reboot caveat recorded there was real but
+understated. It does not take a reboot — just the SSH session closing.
 
 ## 4. Required secrets
 
