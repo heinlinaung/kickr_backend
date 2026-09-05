@@ -28,7 +28,7 @@ Built with **NestJS**, **MongoDB** (Mongoose), **Socket.io**, and **AWS Cognito*
 | Database | MongoDB via Mongoose ^9 |
 | Auth | AWS Cognito (RS256 JWKS verification via passport-jwt) |
 | Real-time | Socket.io (@nestjs/websockets) |
-| File uploads | Multer (local disk) |
+| File uploads | Multer (memory) → **ImageKit** CDN |
 | Validation | class-validator + class-transformer |
 | API Docs | Swagger (@nestjs/swagger) |
 
@@ -99,7 +99,6 @@ docker build -t kickr-backend .
 docker run -d --name kickr-api \
   -p 3000:3000 \
   --env-file .env \
-  -v kickr_uploads:/app/uploads \
   --restart unless-stopped \
   kickr-backend
 ```
@@ -109,8 +108,10 @@ Notes:
 - **`--env-file` is required.** `.env` is excluded from the image on purpose, so
   a container started without it has no `MONGODB_URI`, no Cognito config and no
   Firebase credentials.
-- **Mount `uploads` as a named volume.** Profile and group images are written to
-  `/app/uploads`; without a volume they vanish with the container.
+- **No volume is needed.** The container is stateless: uploads go to ImageKit's
+  CDN and data to MongoDB Atlas, so nothing on the container filesystem has to
+  survive a redeploy. (The `uploads/` directory in the image is vestigial —
+  every upload route uses ImageKit, and `multerDiskOptions` has no callers.)
 - The container **binds no port until MongoDB connects** — Mongoose blocks
   bootstrap. A container that looks slow to start is usually a connectivity or
   credentials problem, not a slow image.

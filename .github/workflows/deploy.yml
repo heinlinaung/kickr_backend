@@ -1,0 +1,162 @@
+name: Build & Deploy to Droplet
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }} # becomes username/repo
+
+# A second push while a deploy is running would race: two `docker run` calls
+# against one container name, and whichever finishes last wins regardless of
+# which commit is newer. Queue them instead.
+concurrency:
+  group: deploy-droplet
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22 # matches the Dockerfile's base image
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+  build-and-push:
+    name: Build & push image
+    needs: test # a commit that fails the suite must never reach the droplet
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # needed to push to ghcr.io
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Without a cache every build reinstalls node_modules from scratch.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy
+    needs: build-and-push
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to DigitalOcean Droplet
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          # Everything the remote script needs is passed as an ENV VAR rather
+          # than interpolated into the script body. `${{ }}` is substituted as
+          # raw text before the shell ever sees it, so a value containing shell
+          # metacharacters would execute rather than be read as data. None of
+          # these are attacker-controlled today — but the safe form costs
+          # nothing and does not depend on that staying true.
+          IMAGE: ghcr.io/${{ github.repository }}:${{ github.sha }}
+          GHCR_USER: ${{ github.actor }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+        with:
+          host: ${{ secrets.DROPLET_HOST }}
+          username: ${{ secrets.DROPLET_USERNAME }}
+          key: ${{ secrets.DROPLET_SSH_KEY }}
+          port: ${{ secrets.DROPLET_PORT || 22 }}
+          envs: IMAGE,GHCR_USER,GHCR_TOKEN
+          script: |
+            set -euo pipefail
+
+            echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+
+            # Deploy the exact commit, not :latest. `latest` is a moving
+            # target — a concurrent build could retag it between this pull and
+            # the run below, deploying a different commit than the one that
+            # triggered this workflow. It also makes a rollback possible:
+            # re-run this job on an older SHA.
+            docker pull "$IMAGE"
+
+            docker stop kickr-api || true
+            docker rm kickr-api || true
+
+            # No volume mount: the container is stateless. Uploads go to
+            # ImageKit and data to Mongo Atlas, so nothing on the container
+            # filesystem needs to survive a redeploy.
+            #
+            # /home/deploy/.env must contain MONGODB_URI, the COGNITO_* and
+            # IMAGEKIT_* keys, and (for push) the FIREBASE_* ones. It is NOT in
+            # the image — a container started without it never opens its port,
+            # because Mongoose blocks bootstrap until it connects.
+            docker run -d \
+              --name kickr-api \
+              --restart unless-stopped \
+              -p 80:3000 \
+              --env-file /home/deploy/.env \
+              "$IMAGE"
+
+            # The image declares a HEALTHCHECK with a 60s start period, so
+            # `starting` is expected for up to a minute. Waiting here means a
+            # green workflow means "serving", not merely "started" — otherwise
+            # a container that crash-loops on bad config reports success.
+            echo "Waiting for the container to report healthy..."
+            for i in $(seq 1 40); do
+              status=$(docker inspect -f '{{.State.Health.Status}}' kickr-api 2>/dev/null || echo unknown)
+              if [ "$status" = "healthy" ]; then
+                echo "Healthy after ${i} checks."
+                break
+              fi
+              if [ "$status" = "unhealthy" ]; then
+                echo "Container reported UNHEALTHY. Recent logs:"
+                docker logs --tail 50 kickr-api || true
+                exit 1
+              fi
+              sleep 5
+            done
+
+            if [ "$(docker inspect -f '{{.State.Health.Status}}' kickr-api)" != "healthy" ]; then
+              echo "Timed out waiting for health. Recent logs:"
+              docker logs --tail 50 kickr-api || true
+              exit 1
+            fi
+
+            # Frees disk on the droplet — untagged layers from previous builds
+            # accumulate and a full disk is a hard-to-diagnose outage.
+            docker image prune -f
