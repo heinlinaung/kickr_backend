@@ -1,5 +1,6 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { RequestLoggerMiddleware } from './common/middleware/request-logger.middleware';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ServeStaticModule } from '@nestjs/serve-static';
 // Rate limiting is off — see the note in `imports` below.
@@ -78,4 +79,11 @@ import { GlobalFootballTeamsModule } from './global-football-teams/global-footba
     // },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer) {
+    // '*' covers every route including the static /uploads mount and the
+    // Swagger UI, which is what you want from an access log — a 404 on a
+    // mistyped path is exactly the kind of thing worth seeing.
+    consumer.apply(RequestLoggerMiddleware).forRoutes('*');
+  }
+}
