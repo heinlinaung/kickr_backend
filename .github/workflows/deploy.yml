@@ -51,6 +51,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Required by the `cache-from/cache-to: type=gha` below. Without this
+      # step build-push-action uses the plain `docker` driver, which cannot
+      # export a cache — the build fails with "Cache export is not supported
+      # for the docker driver". This sets up the `docker-container` driver,
+      # which can.
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:

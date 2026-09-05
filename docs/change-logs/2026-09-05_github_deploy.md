@@ -2,8 +2,9 @@
 
 **Branch:** `events-feature-spec`
 **Tests:** 946 passing across 46 suites · build clean
-**Verified:** YAML parses, job graph checked, CI steps run locally. **The
-workflow has never executed** — see §6.
+**Verified:** YAML parses, job graph checked. **First CI run: `Test` passed,
+`Build & push` failed on the GHA cache driver — fixed in §3b, not yet
+re-run.** See §6.
 
 `.github/workflows/deploy.yml`: build a GHCR image on push to `main`, then
 redeploy the droplet over SSH. First workflow in this repo.
@@ -92,6 +93,33 @@ Three stale claims were corrected as a result:
 The `uploads/` directory in the image and the `ServeStaticModule` serving it are
 both vestigial — left alone, since removing them is unrelated to this change.
 
+## 3b. First run failed on the build cache — fixed
+
+The first CI run (PR #63 merge) got through **Test** and failed in
+**Build & push image**:
+
+```
+ERROR: failed to build: Cache export is not supported for the docker driver.
+Switch to a different image store, or turn on the containerd image store
+```
+
+My mistake: `cache-from/cache-to: type=gha` needs the **`docker-container`**
+buildx driver, but `docker/build-push-action` uses the plain `docker` driver
+unless buildx is set up first — and that driver cannot export a cache.
+
+Fixed by adding `docker/setup-buildx-action@v3` before the login step, which is
+the standard companion to GHA caching. Keeps the cache rather than dropping it:
+without one, every build reinstalls `node_modules` from scratch.
+
+The run also logged a **Node 20 deprecation** notice. That is about the
+runner's default Node for JavaScript actions, not about any version pinned
+here — every action in this file is on a current major (`checkout@v4`,
+`setup-node@v4`, `setup-buildx-action@v3`, `login-action@v3`,
+`metadata-action@v5`, `build-push-action@v6`). Informational.
+
+Worth noting the failure order was useful: **Test passed first**, so the gate
+in §1 did its job — the failure was in packaging, not in the code.
+
 ## 4. Required secrets
 
 | Secret | Used by | Notes |
@@ -122,11 +150,13 @@ fails, and there is no local-disk fallback.
 
 ## 6. What is NOT verified
 
-**The workflow has never run.** No image has been built by CI, nothing has been
-pushed to GHCR, and no deploy has happened. Specifically unverified:
+**The workflow has run once and failed at packaging** (see §3b). `Test` passed;
+the image was never built, so nothing reached GHCR and no deploy happened.
+Specifically unverified:
 
-- that `docker build` succeeds in Actions — the image has never been built
-  anywhere, here or locally (the sandbox has no Docker daemon and no network)
+- that `docker build` now succeeds in Actions. The buildx fix addresses the
+  reported error, but the build itself has still never completed anywhere —
+  here or in CI — so `npm ci` on `node:22-alpine` remains unproven.
 - that the droplet can pull from GHCR with `GHCR_TOKEN`
 - that the SSH action authenticates
 - that `-p 80:3000` binds — the container runs as the unprivileged `node` user,
