@@ -113,6 +113,17 @@ jobs:
           script: |
             set -euo pipefail
 
+            # An unset secret arrives as an empty string, not an error, so
+            # `docker login` would fail with an authentication message that
+            # points at the registry rather than at the missing secret.
+            if [ -z "${GHCR_TOKEN:-}" ]; then
+              echo "GHCR_TOKEN secret is empty or unset."
+              echo "Add a PAT with read:packages under Settings > Secrets and"
+              echo "variables > Actions. The automatic GITHUB_TOKEN is not"
+              echo "available on the droplet, so this is a separate secret."
+              exit 1
+            fi
+
             echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
 
             # Deploy the exact commit, not :latest. `latest` is a moving

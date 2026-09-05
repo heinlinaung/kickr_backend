@@ -2,9 +2,9 @@
 
 **Branch:** `events-feature-spec`
 **Tests:** 946 passing across 46 suites · build clean
-**Verified:** YAML parses, job graph checked. **First CI run: `Test` passed,
-`Build & push` failed on the GHA cache driver — fixed in §3b, not yet
-re-run.** See §6.
+**Verified:** `Test` ✅ and `Build & push image` ✅ in CI — the image builds and
+reaches GHCR. **`Deploy` fails at the SSH handshake**, which is droplet key
+setup rather than the workflow; see §3c.
 
 `.github/workflows/deploy.yml`: build a GHCR image on push to `main`, then
 redeploy the droplet over SSH. First workflow in this repo.
@@ -120,6 +120,44 @@ here — every action in this file is on a current major (`checkout@v4`,
 Worth noting the failure order was useful: **Test passed first**, so the gate
 in §1 did its job — the failure was in packaging, not in the code.
 
+## 3c. Second run: build succeeded, SSH handshake failed
+
+Run #2 (PR #64 merge) got **Test ✅ and Build & push image ✅** — so the buildx
+fix in §3b worked and the image reached GHCR. `Deploy` failed:
+
+```
+ssh: handshake failed: ssh: unable to authenticate,
+attempted methods [none publickey], no supported methods remain
+```
+
+This is **not a workflow problem** — it fails before any line of the deploy
+script runs. `[none publickey]` means the droplet rejected the key offered by
+the action. In likelihood order:
+
+1. **`DROPLET_SSH_KEY` holds the wrong thing.** It must be the *entire private*
+   key including the `-----BEGIN/END OPENSSH PRIVATE KEY-----` lines. Pasting
+   the `.pub` file, or a copy that lost its footer, produces exactly this error.
+2. The matching **public** key is not in that user's `~/.ssh/authorized_keys`
+   on the droplet.
+3. **`DROPLET_USERNAME` names a different account** than the one holding the
+   key (e.g. the key is under `/root` but the secret says `deploy`).
+
+Fastest way to tell 1 from 2/3: `ssh -i <key> user@host "echo OK"` from a local
+machine. If that fails the droplet setup is wrong; if it works, the secret's
+contents are.
+
+### A secret is also missing
+
+The repo has `DROPLET_HOST`, `DROPLET_PORT`, `DROPLET_SSH_KEY` and
+`DROPLET_USERNAME` — but **not `GHCR_TOKEN`**, which the deploy script needs to
+pull the image on the droplet.
+
+That is a *later* failure than the handshake, so it has not surfaced yet. Under
+`set -euo pipefail` an unset secret arrives as an **empty string rather than an
+error**, so `docker login` would have failed with a registry authentication
+message that points nowhere near the real cause. The script now checks for it
+explicitly and says what to add.
+
 ## 4. Required secrets
 
 | Secret | Used by | Notes |
@@ -154,10 +192,14 @@ fails, and there is no local-disk fallback.
 the image was never built, so nothing reached GHCR and no deploy happened.
 Specifically unverified:
 
-- that `docker build` now succeeds in Actions. The buildx fix addresses the
-  reported error, but the build itself has still never completed anywhere —
-  here or in CI — so `npm ci` on `node:22-alpine` remains unproven.
-- that the droplet can pull from GHCR with `GHCR_TOKEN`
+- ~~that `docker build` succeeds in Actions~~ — **confirmed in run #2.** The
+  image builds on `node:22-alpine` and pushes to GHCR, so `npm ci` on Alpine
+  works and the Dockerfile is sound as far as packaging goes.
+- that the droplet can pull from GHCR with `GHCR_TOKEN` — **the secret does not
+  exist yet** (§3c)
+- **that the entrypoint runs.** `CMD ["node", "dist/src/main"]` — the fix for
+  the path bug — has still never been executed in a container, because no
+  deploy has reached `docker run`.
 - that the SSH action authenticates
 - that `-p 80:3000` binds — the container runs as the unprivileged `node` user,
   though Docker's port publishing is handled by the daemon as root, so this
