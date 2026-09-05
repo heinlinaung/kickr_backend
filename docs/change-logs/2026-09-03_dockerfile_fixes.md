@@ -111,9 +111,11 @@ running container. Specifically unverified:
 - that `npm ci` succeeds inside `node:22-alpine` (native modules, if any, need
   build tools that Alpine lacks by default)
 - that the healthcheck command passes against a live container
-- that the `USER node` + `chown` combination actually permits writes to the
-  mounted `uploads` volume — a mounted volume can arrive root-owned and
-  override the image's ownership
+- ~~that the `USER node` + `chown` permits writes to the mounted `uploads`
+  volume~~ — **not applicable.** Every upload route uses ImageKit
+  (`multerMemoryImageOptions` + `imagekit.upload`); `multerDiskOptions` has no
+  callers. Nothing writes to `uploads/`, so no volume is needed and the
+  container is stateless.
 - that Node 22 changes nothing at runtime
 
 ### How to test it
