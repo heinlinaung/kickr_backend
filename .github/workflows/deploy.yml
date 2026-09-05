@@ -148,10 +148,19 @@ jobs:
             # IMAGEKIT_* keys, and (for push) the FIREBASE_* ones. It is NOT in
             # the image — a container started without it never opens its port,
             # because Mongoose blocks bootstrap until it connects.
+            # Published on 3000, NOT 80: the deploy user runs ROOTLESS podman,
+            # which cannot bind a privileged port ("rootlessport cannot expose
+            # privileged port 80"). nginx holds 80/443 and proxies here, which
+            # is also what terminates TLS.
+            #
+            # Bound to 127.0.0.1 specifically. nginx reaches it over loopback,
+            # so there is no reason to expose the app port on the public
+            # interface — that would let anyone bypass nginx (and its TLS) by
+            # hitting :3000 directly.
             docker run -d \
               --name kickr-api \
               --restart unless-stopped \
-              -p 80:3000 \
+              -p 127.0.0.1:3000:3000 \
               --env-file /home/deploy/.env \
               "$IMAGE"
 
@@ -173,7 +182,7 @@ jobs:
             echo "Waiting for the API to respond..."
             ready=""
             for i in $(seq 1 40); do
-              if curl -fsS -o /dev/null --max-time 5 http://127.0.0.1:80/api-docs-json; then
+              if curl -fsS -o /dev/null --max-time 5 http://127.0.0.1:3000/api-docs-json; then
                 echo "API responding after ${i} checks."
                 ready=1
                 break
@@ -197,3 +206,10 @@ jobs:
             # Frees disk on the droplet — untagged layers from previous builds
             # accumulate and a full disk is a hard-to-diagnose outage.
             docker image prune -f
+
+            # NOTE: `--restart unless-stopped` restarts the container if it
+            # crashes, but under ROOTLESS podman it does NOT survive a droplet
+            # reboot — there is no root-level daemon to restore it. Surviving a
+            # reboot needs either `loginctl enable-linger deploy` plus a
+            # `podman generate systemd` unit, or podman's restart service.
+            # Out of scope here; flagged so a reboot is not a mystery outage.

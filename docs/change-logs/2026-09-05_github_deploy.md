@@ -223,6 +223,37 @@ those lines are literal content, so `metadata-action` would have received four
 `#`-prefixed strings as tag inputs. Confirmed by parsing the file and printing
 what the action would actually receive, then moved the comment above the block.
 
+## 3f. Rootless podman cannot bind port 80
+
+Run #5 pulled the image successfully — the §3e tag fix worked, every blob
+copied — then failed at `docker run`:
+
+```
+Error: rootlessport cannot expose privileged port 80 ...
+(currently 1024), or choose a larger port number (>= 1024)
+```
+
+The `deploy` user runs **rootless** podman, which cannot bind below 1024. Root
+Docker could; a non-root user with podman cannot. This is a direct consequence
+of choosing `deploy` over `root` — a tradeoff recommended as better practice
+without knowing podman was in play.
+
+nginx was already installed and configured on the droplet, so the container now
+publishes **3000** and nginx proxies to it. That also retires the TLS concern
+raised in §6: nginx terminates it.
+
+Bound to **`127.0.0.1:3000`**, not `0.0.0.0:3000`. nginx reaches it over
+loopback, so exposing the app port publicly would only let someone bypass nginx
+— and its TLS — by hitting the port directly.
+
+### A reboot caveat, recorded not fixed
+
+`--restart unless-stopped` restarts a crashed container, but under rootless
+podman it does **not** survive a droplet reboot: there is no root daemon to
+restore it. That needs `loginctl enable-linger deploy` plus a
+`podman generate systemd` unit. Out of scope here, and noted in the workflow so
+a reboot is not a mystery outage.
+
 ## 4. Required secrets
 
 | Secret | Used by | Notes |
@@ -267,12 +298,10 @@ Specifically unverified:
   the path bug — has still never been executed in a container, because no
   deploy has reached `docker run`.
 - that the SSH action authenticates
-- that `-p 80:3000` binds — the container runs as the unprivileged `node` user,
-  though Docker's port publishing is handled by the daemon as root, so this
-  should be fine
-- **that the app serves over plain HTTP only.** Nothing terminates TLS. Port 80
-  is unencrypted, and Cognito access tokens would cross the wire in the clear.
-  That needs a reverse proxy with a certificate before any real use.
+- ~~that `-p 80:3000` binds~~ — **it does not**, under rootless podman. Now
+  published on `127.0.0.1:3000` behind nginx (§3f).
+- ~~that nothing terminates TLS~~ — nginx is installed and configured on the
+  droplet, so it holds 80/443 and proxies to the container.
 
 What *was* verified: the YAML parses, the job graph is `test → build-and-push →
 deploy`, `npm test` maps to the suite and passes in under 7 seconds, Node 22
