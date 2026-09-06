@@ -979,11 +979,25 @@ patch a truncated list.
 ```
 POST /events/6a7055f42e55b9cdbe427eb4/matches
 { "teamA": "Blue", "teamB": "Red" }
+
+# or, for a one-off longer game
+{ "teamA": "Blue", "teamB": "Red", "duration": 30 }
 ```
 
 Organizer only. Both names must belong to this event (case-insensitive; the
 stored casing is used). Created **unplayed** — score it with `PATCH` like any
 other fixture.
+
+**`duration` is optional** (minutes, integer ≥ 1). Omit it and the fixture
+inherits whatever the existing fixtures are scheduled at, so a hand-added match
+matches the rest of the schedule. Pass it for a one-off longer or shorter game —
+a final, say. It is **not** budget-checked against `event.duration`, the same as
+everything else on this route.
+
+> ⚠️ **Fixed 2026-09-06.** This route returned **500** on every call — a
+> regression from moving `duration` from the team to the fixture, which made it
+> required while this route set none. If you saw `Internal server error` here,
+> that was it, and it was unrelated to the event's status.
 
 `matchNumber` is **not** accepted: it is uniquely indexed per event, so the
 server appends after the current highest rather than letting a caller pick a

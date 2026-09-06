@@ -1691,6 +1691,26 @@ export class EventsService {
       .lean();
     const matchNumber = (last?.matchNumber ?? 0) + 1;
 
+    // `duration` is REQUIRED on EventMatch. This route previously set none, so
+    // Mongoose threw a ValidationError and the endpoint 500'd on EVERY call —
+    // a regression from moving duration off Team onto EventMatch.
+    //
+    // Precedence, most specific first:
+    //   1. an explicit `duration` in the body — a one-off longer final is the
+    //      reason the field is per-fixture rather than per-event;
+    //   2. whatever the existing fixtures are scheduled at, so a hand-added
+    //      match matches the rest of the schedule (the rule shuffle follows);
+    //   3. the derived default, reachable only when no fixture exists yet.
+    const duration =
+      dto.duration ??
+      (await this.scheduledMatchDuration(eventId)) ??
+      Math.max(
+        1,
+        Math.floor(
+          (event.duration - MATCH_BUFFER_MINUTES) / DEFAULT_SHUFFLE_MATCHES,
+        ),
+      );
+
     const created = await this.matchModel.create({
       eventId: eventObjectId,
       matchNumber,
@@ -1698,6 +1718,7 @@ export class EventsService {
       // always agree on the name even if the caller typed 'blue'.
       teamA: byName.get(teamA.toLowerCase()),
       teamB: byName.get(teamB.toLowerCase()),
+      duration,
       scoreA: null,
       scoreB: null,
       playedAt: null,
