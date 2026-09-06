@@ -14,7 +14,7 @@ reading, **socket.io** for receiving live.
 | `POST /groups/:id/messages` | Sending. Persists, then broadcasts. |
 | socket.io `sendMessage` | Sending, when a socket is already open. |
 | socket.io `newMessage` | **Receiving** — the only way to get messages live. |
-| `GET /groups/:id/messages` | History, and recovering anything a dropped socket missed. |
+| `GET /groups/:id/messages` | History (**paginated**), and recovering anything a dropped socket missed. |
 
 **Both send paths emit the same `newMessage` event to the same room**, so a
 client cannot tell which door a message came through — and should not care.
@@ -97,25 +97,60 @@ being joined.
 
 ## 4. History — `GET /groups/:id/messages`
 
+Cursor-paginated, newest first.
+
 ```bash
-curl -s "$URL/groups/6a6b2366f78b66d63a911a9e/messages?limit=50" \
+# newest page
+curl -s "$URL/groups/6a6b2366f78b66d63a911a9e/messages?limit=20" \
+  -H "Authorization: Bearer $TOKEN"
+
+# scroll further back
+curl -s "$URL/groups/6a6b2366f78b66d63a911a9e/messages?limit=20&cursor=eyJkIjoi..." \
   -H "Authorization: Bearer $TOKEN"
 ```
 
-Returns an array, **newest first**, sender populated. `limit` defaults to 50 and
-is capped at 200.
+```json
+{
+  "data": {
+    "items": [
+      {
+        "_id": "68b9f1aa22bb33cc44dd0001",
+        "senderId": { "_id": "507f...", "name": "Hein", "profileImage": null },
+        "text": "See everyone at 7pm",
+        "createdAt": "2026-09-06T10:00:00.000Z"
+      }
+    ],
+    "nextCursor": "eyJkIjoiMjAyNi0wOS0wNlQxMDowMDowMC4wMDBaIiwiaSI6IjY4YjkifQ",
+    "hasMore": true
+  }
+}
+```
 
-> ⚠️ **Not cursor-paginated**, unlike `/notifications` and the search endpoints.
-> `limit` is a simple cap with no `nextCursor`, so there is currently no way to
-> page back beyond the most recent 200 messages. Worth knowing before building
-> infinite scroll.
+> ⚠️ **BREAKING — changed 2026-09-06.** `data` was a bare **array**; it is now
+> `{ items, nextCursor, hasMore }`. A client doing `response.data.map(...)`
+> breaks — read `response.data.items`.
+
+| Query | Default | Notes |
+|---|---|---|
+| `limit` | `20` | Page size, clamped to **1–50**. Was 50, capped at 200. |
+| `cursor` | — | Opaque. Pass the previous `nextCursor` **verbatim**; omit for the newest page. |
+
+**Infinite scroll:** keep calling with the previous `nextCursor` until it comes
+back `null`, which means you have reached the start of the conversation. Each
+page goes further **back** in time.
+
+A malformed cursor is a **400**, not an empty page. Treat the cursor as opaque —
+its encoding may change without notice.
 
 ## 5. Ordering
 
-Messages carry `createdAt` and history sorts on it, newest first. Two messages
-sent in the same millisecond have no defined order between them — there is no
-tiebreaker on this route, unlike the notification feed. In practice human typing
-makes that vanishingly rare.
+Sorted by `createdAt` descending, with **`_id` as a tiebreaker** so the ordering
+is total. That matters for paging: two messages sharing a `createdAt`
+millisecond would otherwise have no defined order between them, and a page
+boundary landing inside such a pair could silently drop one.
+
+*(The tiebreaker was added with pagination on 2026-09-06; before that this route
+sorted on `createdAt` alone.)*
 
 ## 6. Gotchas checklist
 
@@ -127,6 +162,9 @@ makes that vanishingly rare.
 - [ ] **`joinRoom` first**, or the socket receives nothing — joining the room is
       what subscribes you.
 - [ ] **The socket needs the access token**, not the id token.
-- [ ] **History is capped at 200 and has no cursor.** No deep paging yet.
+- [ ] **History is a PAGE, not an array** (changed 2026-09-06) — read
+      `data.items`, not `data`.
+- [ ] **Round-trip `nextCursor` untouched** for infinite scroll; `null` means
+      the start of the conversation.
 - [ ] **A delivered HTTP 201 means STORED**, even if no socket saw it. Trust the
       response, not the broadcast.

@@ -12,6 +12,7 @@ import {
   ApiTags,
   ApiBearerAuth,
   ApiOperation,
+  ApiQuery,
   ApiResponse,
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -33,15 +34,46 @@ export class ChatController {
   ) {}
 
   @Get()
+  @ApiOperation({
+    summary: 'Message history, newest first (paginated)',
+    description:
+      'Returns a page: `{ items, nextCursor, hasMore }`. ' +
+      '⚠️ CHANGED — this used to return a bare array with a `limit` capped at ' +
+      '200 and no way past it, so a group chat was unreachable beyond its ' +
+      'most recent 200 messages. Pass `nextCursor` back verbatim to scroll ' +
+      'further back; a null `nextCursor` means the start of the conversation. ' +
+      'Members only — a pending join request counts as a non-member.',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    example: 20,
+    description: 'Page size, 1-50. Defaults to 20 (was 50, capped at 200).',
+  })
+  @ApiQuery({
+    name: 'cursor',
+    required: false,
+    description:
+      'Opaque pagination cursor. Pass `nextCursor` from the previous ' +
+      'response verbatim; omit for the newest page. Invalid values give 400.',
+  })
+  @ApiResponse({ status: 403, description: 'Caller is not a group member' })
   async getHistory(
     @Param('id') groupId: string,
     @Query('limit') limit: string | undefined,
     @CurrentUser() user: any,
+    @Query('cursor') cursor?: string,
   ) {
     const role = await this.groupsService.getMemberRole(groupId, user._id.toString());
     if (!role) throw new ForbiddenException('Not a member of this group');
-    const parsedLimit = limit ? Math.min(parseInt(limit, 10), 200) : 50;
-    return this.chatService.getHistory(groupId, parsedLimit);
+    // Number() rather than parseInt, and no local clamp: clampLimit in the
+    // service owns the 1-50 bounds and the NaN guard, so `?limit=abc` cannot
+    // reach `.limit(NaN)` and return the whole collection.
+    return this.chatService.getHistory(
+      groupId,
+      limit === undefined ? undefined : Number(limit),
+      cursor,
+    );
   }
 
   @Post()

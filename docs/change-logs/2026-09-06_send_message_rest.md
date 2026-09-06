@@ -115,11 +115,12 @@ client can render the bubble without a second lookup, and identical to what
 ### Read it back
 
 ```bash
-curl -s "$URL/groups/$GROUP/messages?limit=50" \
-  -H "Authorization: Bearer $TOKEN" | jq '.data[0]'
+curl -s "$URL/groups/$GROUP/messages?limit=20" \
+  -H "Authorization: Bearer $TOKEN" | jq '.data.items[0]'
 ```
 
-Newest first. `limit` defaults to 50, capped at 200.
+Newest first, and **paginated** — `data.items`, not `data`. See
+`2026-09-06_message_pagination.md`.
 
 ### Multi-line text
 
@@ -253,10 +254,8 @@ fails **4 of the 9** controller tests. Restored, all pass.
 
 ## 9. Not done
 
-- **No pagination on history.** `GET` still takes a `limit` capped at 200 with
-  no cursor, so there is no way to page back beyond the most recent 200
-  messages. Out of scope here, but it blocks infinite scroll and is the obvious
-  next change.
+- ~~No pagination on history.~~ **Done same day** — see
+  `2026-09-06_message_pagination.md`. It was indeed the obvious next change.
 - **No edit or delete.** A sent message is permanent.
 - **No read receipts, typing indicators or attachments.**
 - **No notification on a new message.** Chat is not one of the two push
