@@ -7,6 +7,7 @@ import {
   OnGatewayConnection,
   OnGatewayDisconnect,
 } from '@nestjs/websockets';
+import { Logger } from '@nestjs/common';
 import { Server, Socket } from 'socket.io';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
@@ -17,6 +18,8 @@ import { User, UserDocument } from '../users/schemas/user.schema';
 
 @WebSocketGateway({ cors: true, namespace: '/chat' })
 export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
+  private readonly logger = new Logger(ChatGateway.name);
+
   @WebSocketServer()
   server: Server;
 
@@ -66,6 +69,30 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
       return;
     }
     client.join(data.groupId);
+  }
+
+  /**
+   * Broadcasts an already-persisted message to a group's room.
+   *
+   * Exists so the REST route can reach socket clients without reaching into
+   * `server` itself: the room name and the event name are decided here, in one
+   * place, so a REST-sent message is indistinguishable from a socket-sent one.
+   * A client listening for `newMessage` must not care which door the message
+   * came through.
+   *
+   * Never throws. A message that is saved but not broadcast is a missing live
+   * update, recoverable by re-reading history; letting a socket failure bubble
+   * would fail the HTTP request for a message that WAS stored, which is worse
+   * and misleading.
+   */
+  broadcastMessage(groupId: string, message: unknown): void {
+    try {
+      // `server` is undefined if no adapter has attached yet — e.g. a request
+      // arriving in the window before the gateway initialises.
+      this.server?.to(groupId).emit('newMessage', message);
+    } catch (err) {
+      this.logger.warn(`Failed to broadcast to group ${groupId}: ${err}`);
+    }
   }
 
   @SubscribeMessage('sendMessage')
