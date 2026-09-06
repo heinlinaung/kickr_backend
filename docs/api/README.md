@@ -9,10 +9,24 @@ Integration guides written against the **live** API — every request/response s
 | [events-api.md](./events-api.md) | Events — the 6-state lifecycle (incl. **`ready_to_play`**), derived `isFull`, listing a group's events, **free-text search**, create/edit/delete, join/leave. ⚠️ **breaking status change**. |
 | [users-api.md](./users-api.md) | Users — **people search** (name/username, exact-email only), and the profile routes. ⚠️ written from source, not captured live. |
 | [global-football-teams-api.md](./global-football-teams-api.md) | Reference data — real-world clubs for a "supported team" picker. Read-only, unpaginated. ⚠️ **not** KickR event teams. |
+| [chat-api.md](./chat-api.md) | Group chat — **send over REST**, receive live over socket.io. Both doors emit the same `newMessage`. |
 | [notifications-api.md](./notifications-api.md) | Notifications — the in-app list, the socket.io `/notifications` namespace, and **FCM device registration**. Two triggers today: event created, and event → `ready_to_play`. ⚠️ written from source, not captured live. |
 | [admin-api.md](./admin-api.md) | **Back-office only**, behind the `x-admin-key` shared secret — force-add users to a group or event, and seed a throwaway test fixture (§9). Not for the mobile app. |
 
 **Live reference while the server is running:** Swagger UI at `/api-docs`, OpenAPI JSON at `/api-docs-json`.
+
+## New — 2026-09-06 · `POST /groups/:id/messages`
+
+Send a group message over REST. Persists, then broadcasts to the group's
+socket.io room as **`newMessage`** — the same event the socket `sendMessage`
+path emits, so a client cannot tell which door a message came through.
+
+Members only (a pending join request counts as a non-member, matching the
+history read). The response carries the sender populated, identical to what
+`GET` returns. A socket failure never fails the send: the message is stored
+either way.
+
+See [chat-api.md](./chat-api.md).
 
 ## ⚠️ Changed — 2026-09-05 · Rate limiting is OFF
 

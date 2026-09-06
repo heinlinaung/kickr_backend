@@ -15,6 +15,31 @@ export class ChatService {
     });
   }
 
+  /**
+   * Persists a message and returns it with the sender resolved.
+   *
+   * Separate from `saveMessage` because the REST route needs the sender's name
+   * and avatar: a client rendering the response — or receiving the broadcast —
+   * must not have to look up who sent it. The socket handler keeps using the
+   * lighter `saveMessage`, since a socket client already knows its own name.
+   *
+   * The populated shape matches `getHistory`, so a message rendered from a
+   * send looks identical to the same message rendered from history.
+   */
+  async createMessage(groupId: string, senderId: string, text: string) {
+    const created = await this.saveMessage(groupId, senderId, text);
+
+    const populated = await this.messageModel
+      .findById(created._id)
+      .populate('senderId', 'name profileImage')
+      .lean();
+
+    // findById cannot miss here — the document was just written — but the type
+    // is nullable, and returning the unpopulated document beats throwing on a
+    // message that was in fact saved.
+    return populated ?? created.toJSON();
+  }
+
   async getHistory(groupId: string, limit = 50) {
     return this.messageModel
       .find({ groupId: new Types.ObjectId(groupId) })
