@@ -15,6 +15,20 @@ Integration guides written against the **live** API — every request/response s
 
 **Live reference while the server is running:** Swagger UI at `/api-docs`, OpenAPI JSON at `/api-docs-json`.
 
+## ⚠️ Breaking — 2026-09-06 · Message history is paginated
+
+`GET /groups/:id/messages` `data` was a bare **array**; it is now
+`{ items, nextCursor, hasMore }`. `response.data.map(...)` breaks — read
+`response.data.items`.
+
+Cursor-based, newest first, `?limit=` 1–50 (default 20, was 50 capped at 200).
+The old cap made a chat unreachable beyond its most recent 200 messages, so
+infinite scroll now works. `_id` was added as a sort tiebreaker, closing a
+documented gap where messages sharing a `createdAt` millisecond could be
+dropped at a page boundary.
+
+See [chat-api.md §4](./chat-api.md).
+
 ## New — 2026-09-06 · `POST /groups/:id/messages`
 
 Send a group message over REST. Persists, then broadcasts to the group's

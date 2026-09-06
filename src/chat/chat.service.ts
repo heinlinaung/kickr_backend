@@ -2,6 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Message, MessageDocument } from './schemas/message.schema';
+import {
+  clampLimit,
+  decodeCursor,
+  DEFAULT_PAGE_LIMIT,
+  keysetFilter,
+  toPage,
+} from '../common/pagination/cursor';
 
 @Injectable()
 export class ChatService {
@@ -40,12 +47,41 @@ export class ChatService {
     return populated ?? created.toJSON();
   }
 
-  async getHistory(groupId: string, limit = 50) {
-    return this.messageModel
-      .find({ groupId: new Types.ObjectId(groupId) })
-      .sort({ createdAt: -1 })
-      .limit(limit)
+  /**
+   * One page of a group's messages, newest first.
+   *
+   * Keyset-paginated rather than capped: the previous version took a `limit`
+   * (default 50, max 200) and offered no way past it, so a group's chat became
+   * unreachable beyond its most recent 200 messages. Scrolling back is the
+   * normal thing to do in a chat, so a hard ceiling was the wrong shape.
+   *
+   * `_id` is the tiebreaker, not decoration: two messages can share a
+   * `createdAt` millisecond, and on `createdAt` alone the ordering is not
+   * total — a page boundary landing inside such a pair would drop the other
+   * one. That was a documented gap on this route and is now closed.
+   */
+  async getHistory(groupId: string, limit = DEFAULT_PAGE_LIMIT, cursor?: string) {
+    const filter: Record<string, unknown> = {
+      groupId: new Types.ObjectId(groupId),
+    };
+
+    // -1: history is newest-first, so paging forward means going OLDER, which
+    // is `$lt`. Passing 1 would silently re-serve the page just fetched.
+    if (cursor) {
+      Object.assign(filter, keysetFilter(decodeCursor(cursor), 'createdAt', -1));
+    }
+
+    const size = clampLimit(limit);
+    const rows = await this.messageModel
+      .find(filter)
+      .sort({ createdAt: -1, _id: -1 })
+      .limit(size + 1)
       .populate('senderId', 'name profileImage')
       .lean();
+
+    return toPage(rows, size, (row) => ({
+      d: new Date(row.createdAt).toISOString(),
+      i: String(row._id),
+    }));
   }
 }
