@@ -1131,6 +1131,55 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       expect(res.playedAt).toBeNull();
     });
 
+    describe('duration — required on EventMatch', () => {
+      // The endpoint 500'd on EVERY call: `duration` became required when it
+      // moved off Team onto EventMatch, and this route set none, so Mongoose
+      // threw a ValidationError. The pre-existing tests here missed it because
+      // `matchModel.create` is a stub that accepts anything and never runs
+      // schema validation — so they assert on the WRITTEN DOCUMENT now, which
+      // is the thing that was wrong.
+      const written = () => matchModel.create.mock.calls[0][0];
+
+      it('always writes a duration', async () => {
+        await add('Blue', 'Red');
+
+        expect(written().duration).toBeGreaterThanOrEqual(1);
+      });
+
+      it('inherits the scheduled duration when the body omits one', async () => {
+        // A hand-added match belongs to the same schedule as the generated
+        // ones, so inventing a different length would be wrong.
+        matchModel.findOne.mockReturnValue({
+          sort: jest.fn().mockReturnThis(),
+          select: jest.fn().mockReturnThis(),
+          lean: jest.fn().mockResolvedValue({ matchNumber: 2, duration: 15 }),
+        });
+
+        await add('Blue', 'Red');
+
+        expect(written().duration).toBe(15);
+      });
+
+      it('prefers an explicit duration from the body', async () => {
+        // Per-fixture is the whole point: a one-off longer final.
+        await service.addMatch(EVENT_ID, CREATOR, {
+          teamA: 'Blue',
+          teamB: 'Red',
+          duration: 30,
+        } as any);
+
+        expect(written().duration).toBe(30);
+      });
+
+      it('falls back to a derived value when no fixture exists yet', async () => {
+        matchModel.findOne.mockReturnValue(highest(null));
+
+        await add('Blue', 'Red');
+
+        expect(written().duration).toBeGreaterThanOrEqual(1);
+      });
+    });
+
     it('rejects a team name that is not on the event', async () => {
       await expect(add('Green', 'Red')).rejects.toThrow(/not a team on this event/);
     });

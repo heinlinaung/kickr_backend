@@ -1,6 +1,13 @@
 // src/events/dto/add-match.dto.ts
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, MaxLength, MinLength } from 'class-validator';
+import {
+  IsInt,
+  IsOptional,
+  IsString,
+  MaxLength,
+  Min,
+  MinLength,
+} from 'class-validator';
 
 /**
  * Body for `POST /events/:id/matches` — add one fixture by hand.
@@ -30,4 +37,19 @@ export class AddMatchDto {
   @MinLength(1)
   @MaxLength(40)
   teamB: string;
+
+  @ApiProperty({
+    required: false,
+    example: 30,
+    description:
+      'Minutes for THIS fixture. Optional — omit it and the match inherits ' +
+      'the duration the existing fixtures are scheduled at, so a hand-added ' +
+      'match matches the rest of the schedule. Pass it to make a one-off ' +
+      'longer or shorter game, e.g. a final. Not budget-checked against the ' +
+      "event's length, the same as everything else on this route.",
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  duration?: number;
 }

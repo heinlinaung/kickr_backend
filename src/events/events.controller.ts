@@ -613,6 +613,9 @@ export class EventsController {
       'fixture. Appends a single match; does NOT renumber, check the double ' +
       'round-robin, or check the duration budget. Both team names must belong ' +
       'to this event. Created unplayed — score it via PATCH as usual. ' +
+      'OPTIONAL `duration` (minutes): omit it and the fixture inherits the ' +
+      'duration the existing ones are scheduled at; pass it for a one-off ' +
+      'longer or shorter game. ' +
       'NOTE: a later /teams/generate or /shuffle replaces the whole fixture ' +
       'list, so add after generating, not before.',
   })
