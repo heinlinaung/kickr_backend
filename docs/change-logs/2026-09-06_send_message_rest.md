@@ -3,7 +3,7 @@
 **Branch:** `events-feature-spec`
 **Tests:** 991 passing across 49 suites · build clean
 **Verified:** unit only — mocked Mongoose, and **no socket client has ever
-received a REST-sent broadcast**. §6.
+received a REST-sent broadcast**. §7. Usage examples in §6.
 
 Send a group message over REST. Persists to MongoDB, then broadcasts to the
 group's socket.io room.
@@ -73,7 +73,138 @@ Capped at 2000 characters so one client cannot write an unbounded document.
 Newlines inside the message survive — only the ends are trimmed, and a
 multi-line message is legitimate.
 
-## 6. What is NOT verified
+## 6. Usage
+
+Set these once:
+
+```bash
+URL=http://localhost:3000
+TOKEN=<Cognito ACCESS token>          # the access token, never the id token
+GROUP=6a6b2366f78b66d63a911a9e
+```
+
+### Send a message
+
+```bash
+curl -s -X POST "$URL/groups/$GROUP/messages" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"See everyone at 7pm"}'
+```
+
+```json
+{
+  "data": {
+    "_id": "68b9f1aa22bb33cc44dd0001",
+    "groupId": "6a6b2366f78b66d63a911a9e",
+    "senderId": {
+      "_id": "507f191e810c19729de860e1",
+      "name": "Hein",
+      "profileImage": "https://ik.imagekit.io/kickr/profiles/abc.png"
+    },
+    "text": "See everyone at 7pm",
+    "createdAt": "2026-09-06T10:00:00.000Z"
+  }
+}
+```
+
+`201 Created`. **`senderId` is an object, not a string** — populated so the
+client can render the bubble without a second lookup, and identical to what
+`GET` returns.
+
+### Read it back
+
+```bash
+curl -s "$URL/groups/$GROUP/messages?limit=50" \
+  -H "Authorization: Bearer $TOKEN" | jq '.data[0]'
+```
+
+Newest first. `limit` defaults to 50, capped at 200.
+
+### Multi-line text
+
+Only the ends are trimmed, so newlines inside survive:
+
+```bash
+curl -s -X POST "$URL/groups/$GROUP/messages" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"text":"Kick-off 7pm\nBring both kits"}'
+```
+
+### The failure cases
+
+Every message below was captured from the real validator, not written from
+memory.
+
+**Blank text** — trimming happens *before* validation, so whitespace-only fails
+rather than storing an empty bubble:
+
+```bash
+curl -s -X POST "$URL/groups/$GROUP/messages" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"text":"   "}'
+```
+
+```json
+{
+  "statusCode": 400,
+  "message": ["text must be longer than or equal to 1 characters"],
+  "error": "Bad Request"
+}
+```
+
+**Over 2000 characters:**
+
+```json
+{ "message": ["text must be shorter than or equal to 2000 characters"] }
+```
+
+**Trying to forge a sender** — `senderId` comes from the token, so supplying one
+is refused outright:
+
+```bash
+curl -s -X POST "$URL/groups/$GROUP/messages" \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"text":"hi","senderId":"507f191e810c19729de860e2"}'
+```
+
+```json
+{ "message": ["property senderId should not exist"] }
+```
+
+**Not a member** (or a pending join request, which counts the same):
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -X POST \
+  "$URL/groups/$GROUP/messages" \
+  -H "Authorization: Bearer $OTHER_USERS_TOKEN" \
+  -H 'Content-Type: application/json' -d '{"text":"let me in"}'
+# 403
+```
+
+Note errors are **flat** — `{statusCode, message, error}` — while success
+responses are wrapped in `data`.
+
+### Watching the broadcast
+
+The REST send is only half the story; a listening client should receive it too.
+Quickest check without writing an app:
+
+```bash
+npx -y wscat -c "ws://localhost:3000/chat?token=$TOKEN"
+```
+
+Then in the socket session, join the room and wait:
+
+```json
+{"event":"joinRoom","data":{"groupId":"6a6b2366f78b66d63a911a9e"}}
+```
+
+POST from another terminal and a `newMessage` event should arrive — carrying
+the same populated shape as the HTTP response. That is the check §7 calls out
+as unverified.
+
+## 7. What is NOT verified
 
 - **No socket client has received a REST-sent broadcast.** The gateway is
   mocked in every test, so `broadcastMessage` is asserted to be *called* with
@@ -102,7 +233,7 @@ curl -s -X POST "$URL/groups/<id>/messages" \
 Step 3 failing while the HTTP call returns 201 would mean the broadcast is not
 reaching the room — the one failure mode the unit tests cannot see.
 
-## 7. Tests
+## 8. Tests
 
 19 new cases across two specs.
 
@@ -120,7 +251,7 @@ properties rejected — `senderId` specifically; newlines preserved.
 **Verified by reverting:** removing the membership gate from the POST handler
 fails **4 of the 9** controller tests. Restored, all pass.
 
-## 8. Not done
+## 9. Not done
 
 - **No pagination on history.** `GET` still takes a `limit` capped at 200 with
   no cursor, so there is no way to page back beyond the most recent 200
