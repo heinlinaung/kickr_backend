@@ -245,7 +245,11 @@ describe('GroupsService', () => {
     it('escapes regex special characters instead of throwing', async () => {
       groupModel.find.mockReturnValue(q([]));
 
-      await expect(service.search('a+b')).resolves.toEqual([]);
+      await expect(service.search('a+b')).resolves.toEqual({
+        items: [],
+        nextCursor: null,
+        hasMore: false,
+      });
 
       const filter = groupModel.find.mock.calls[0][0];
       const rx = Object.values(filter.$or[0])[0] as RegExp;
@@ -254,11 +258,13 @@ describe('GroupsService', () => {
       expect(rx.test('aab')).toBe(false);
     });
 
-    it('limits the result set', async () => {
+    it('over-fetches by one for the lookahead', async () => {
+      // limit + 1: the extra row is what proves another page exists, without a
+      // second countDocuments on a regex query.
       const query = q([]);
       groupModel.find.mockReturnValue(query);
       await service.search('x');
-      expect(query.limit).toHaveBeenCalledWith(20);
+      expect(query.limit).toHaveBeenCalledWith(21);
     });
 
     it('never returns the invite code', async () => {
@@ -294,8 +300,16 @@ describe('GroupsService', () => {
     it('returns [] for an empty query without touching the database', async () => {
       // An empty regex matches every group. Harmless when only public groups
       // were returned; with private ones included it is an enumeration tool.
-      await expect(service.search('')).resolves.toEqual([]);
-      await expect(service.search('   ')).resolves.toEqual([]);
+      await expect(service.search('')).resolves.toEqual({
+        items: [],
+        nextCursor: null,
+        hasMore: false,
+      });
+      await expect(service.search('   ')).resolves.toEqual({
+        items: [],
+        nextCursor: null,
+        hasMore: false,
+      });
       expect(groupModel.find).not.toHaveBeenCalled();
     });
   });
@@ -574,6 +588,123 @@ describe('GroupsService', () => {
       await service.getMyGroups(USER_ID);
 
       expect(memberModel.find.mock.calls[0][0].status).toBe('approved');
+    });
+  });
+
+  describe('findById — private group narrowing', () => {
+    /** A full group document, including the fields a stranger must not see. */
+    const privateGroup = {
+      _id: GROUP_ID,
+      name: 'FC Secret',
+      handle: 'fcsecret',
+      description: 'invite only',
+      logo: 'logo.png',
+      sportType: 'football',
+      country: 'mm',
+      city: 'yangon',
+      isPrivate: true,
+      maxPlayers: 22,
+      rules: 'No smoking',
+      wallpaper: 'wall.jpg',
+      ownerId: 'owner-1',
+      locations: ['loc-1', 'loc-2'],
+      inviteCode: 'SECRET-CODE',
+      inviteCodeExpiry: new Date(),
+    };
+
+    const asNonMember = async (group: any = privateGroup) => {
+      groupModel.findById.mockReturnValue(q(group));
+      memberModel.findOne.mockReturnValue(q(null));
+      return (await service.findById(GROUP_ID, USER_ID)) as any;
+    };
+
+    it('NEVER returns the invite code to a non-member', async () => {
+      // The whole reason this narrowing exists: inviteCode is a bearer
+      // credential — whoever holds it can present it to
+      // POST /groups/join-by-code, so returning it to a stranger hands out the
+      // very thing membership is meant to gate.
+      const res = await asNonMember();
+
+      expect(res).not.toHaveProperty('inviteCode');
+      expect(res).not.toHaveProperty('inviteCodeExpiry');
+      expect(JSON.stringify(res)).not.toContain('SECRET-CODE');
+    });
+
+    it('hides the venues a private group plays at', async () => {
+      // The event gate already hides the schedule; leaking the locations
+      // would undo half of that.
+      const res = await asNonMember();
+
+      expect(res).not.toHaveProperty('locations');
+    });
+
+    it('still returns the rules', async () => {
+      // A stranger deciding whether to ask to join needs to read them.
+      const res = await asNonMember();
+
+      expect(res.rules).toBe('No smoking');
+    });
+
+    it('returns the same card fields search does', async () => {
+      const res = await asNonMember();
+
+      expect(res.name).toBe('FC Secret');
+      expect(res.handle).toBe('fcsecret');
+      expect(res.description).toBe('invite only');
+      expect(res.isPrivate).toBe(true);
+    });
+
+    it('narrows for a PENDING requester too', async () => {
+      // Approval is the gate everywhere else on this branch; a pending
+      // requester is a stranger until someone accepts them.
+      groupModel.findById.mockReturnValue(q(privateGroup));
+      memberModel.findOne.mockReturnValue(
+        q({ role: 'member', status: 'pending' }),
+      );
+
+      const res: any = await service.findById(GROUP_ID, USER_ID);
+
+      expect(res).not.toHaveProperty('inviteCode');
+      expect(res.memberStatus).toBe('pending');
+    });
+
+    it('returns EVERYTHING to an approved member', async () => {
+      groupModel.findById.mockReturnValue(q(privateGroup));
+      memberModel.findOne.mockReturnValue(
+        q({ role: 'member', status: 'approved' }),
+      );
+
+      const res: any = await service.findById(GROUP_ID, USER_ID);
+
+      expect(res.inviteCode).toBe('SECRET-CODE');
+      expect(res.locations).toHaveLength(2);
+    });
+
+    it('does NOT narrow a PUBLIC group', async () => {
+      // Only private groups are gated. A public group returns whole; just its
+      // event listing is restricted, and that happens elsewhere.
+      const res = await asNonMember({ ...privateGroup, isPrivate: false });
+
+      expect(res.inviteCode).toBe('SECRET-CODE');
+      expect(res.locations).toHaveLength(2);
+    });
+
+    it('narrows an anonymous caller as well', async () => {
+      groupModel.findById.mockReturnValue(q(privateGroup));
+
+      const res: any = await service.findById(GROUP_ID);
+
+      expect(res).not.toHaveProperty('inviteCode');
+      expect(memberModel.findOne).not.toHaveBeenCalled();
+    });
+
+    it('still reports membership fields alongside the narrowed view', async () => {
+      // The client needs memberStatus to render a join prompt; narrowing must
+      // not strip the very field that explains WHY the view is narrow.
+      const res = await asNonMember();
+
+      expect(res).toHaveProperty('userRole', null);
+      expect(res).toHaveProperty('memberStatus', null);
     });
   });
 

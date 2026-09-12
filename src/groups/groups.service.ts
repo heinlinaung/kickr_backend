@@ -22,6 +22,13 @@ import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import { ImageKitService } from '../common/upload/imagekit.service';
 import { LocationsService } from '../locations/locations.service';
 import { EventsService } from '../events/events.service';
+import {
+  clampLimit,
+  decodeCursor,
+  DEFAULT_PAGE_LIMIT,
+  keysetFilter,
+  toPage,
+} from '../common/pagination/cursor';
 import { Message, MessageDocument } from '../chat/schemas/message.schema';
 import {
   Tournament,
@@ -144,9 +151,51 @@ export class GroupsService {
   }
 
   /**
+   * Narrows a group document for a caller who is not an approved member.
+   *
+   * A **private** group is discoverable — it shows up in `/groups/search` — so
+   * a stranger is expected to reach its detail page and decide whether to ask
+   * to join. What they get is the same card search returns, plus `rules`:
+   * enough to make that decision, and nothing more.
+   *
+   * Withheld until they join, and why each one matters:
+   *
+   * - **`inviteCode` / `inviteCodeExpiry`** — a bearer credential. Anyone
+   *   holding it can present it to `POST /groups/join-by-code`, so returning it
+   *   to a non-member hands out the very thing membership is supposed to gate.
+   *   This is the reason this method exists.
+   * - **`locations`** — where the group plays. The event gate already hides the
+   *   schedule; leaking the venues undoes half of that.
+   * - **`wallpaper`, `ownerId`, `maxPlayers`** and anything added later — not
+   *   individually sensitive, but an allowlist that grows by default is how a
+   *   future field leaks silently. New fields are hidden until someone decides
+   *   otherwise.
+   *
+   * A **public** group is returned whole, unchanged. Only its event listing is
+   * gated, which happens in `EventsService.listByGroup`.
+   */
+  private publicView<T extends { isPrivate?: boolean; rules?: string }>(
+    group: T,
+    memberStatus: string | null,
+  ) {
+    // Approved members see everything. A PENDING request does not — approval is
+    // the gate everywhere else on this branch, and a pending requester is a
+    // stranger until someone accepts them.
+    if (!group.isPrivate || memberStatus === 'approved') return group;
+
+    const source = group as Record<string, unknown>;
+    const visible: Record<string, unknown> = { rules: group.rules ?? '' };
+    for (const field of GROUP_CARD_FIELDS) visible[field] = source[field];
+    return visible as unknown as T;
+  }
+
+  /**
    * Group detail. When `userId` is supplied the response carries the caller's
    * own membership so the client can render role-gated UI without a second
    * request.
+   *
+   * A private group is NARROWED for a non-member — see `publicView`. The group
+   * stays discoverable; its contents do not.
    *
    * `memberStatus` is returned alongside `userRole` because the role alone is
    * ambiguous: a pending join request already stores `role: 'member'`, so
@@ -156,7 +205,7 @@ export class GroupsService {
     const group = await this.groupModel.findById(groupId).lean();
     if (!group) throw new NotFoundException('Group not found');
 
-    if (!userId) return group;
+    if (!userId) return this.publicView(group, null);
 
     // Queried directly rather than via getMemberRole(), which filters to
     // approved rows and so cannot report a pending membership.
@@ -169,7 +218,7 @@ export class GroupsService {
       .lean();
 
     return {
-      ...group,
+      ...this.publicView(group, member?.status ?? null),
       userRole: member?.role ?? null,
       memberStatus: member?.status ?? null,
     };
@@ -303,16 +352,37 @@ export class GroupsService {
    * "request to join" action rather than navigating into a group whose
    * contents will refuse it.
    */
-  async search(q: string) {
+  async search(q: string, limit = DEFAULT_PAGE_LIMIT, cursor?: string) {
     const term = (q ?? '').trim();
-    if (!term) return [];
+    if (!term) return { items: [], nextCursor: null, hasMore: false };
 
     const rx = new RegExp(escapeRegex(term), 'i');
-    return this.groupModel
-      .find({ $or: [{ name: rx }, { handle: rx }] })
+    const filter: Record<string, unknown> = {
+      $or: [{ name: rx }, { handle: rx }],
+    };
+
+    // PRIVATE GROUPS ARE INCLUDED, deliberately. A private group is
+    // discoverable — someone has to be able to find it to ask to join — and
+    // the projection below is a card, not its contents. Its events, members and
+    // full detail stay gated elsewhere.
+    //
+    // The keyset goes in $and because the query already uses a top-level $or
+    // for the name/handle match, and a second $or key would overwrite it.
+    if (cursor) {
+      filter.$and = [keysetFilter(decodeCursor(cursor), '_id')];
+    }
+
+    const size = clampLimit(limit);
+    const rows = await this.groupModel
+      .find(filter)
+      // Sorted by _id, matching /users/search: there is no relevance ranking
+      // here, and _id gives a stable total order for paging.
+      .sort({ _id: 1 })
       .select(GROUP_CARD_FIELDS.join(' '))
-      .limit(20)
+      .limit(size + 1)
       .lean();
+
+    return toPage(rows, size, (row) => ({ i: String(row._id) }));
   }
 
   /**

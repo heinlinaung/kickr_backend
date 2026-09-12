@@ -254,7 +254,7 @@ The same adoption happens on `POST /groups/:id/locations` when you attach one of
 | `GET` | `/groups` | member | Caller's groups; each item includes **`userRole`**. Only approved memberships, so no `memberStatus`. |
 | `POST` | `/groups` | any | Creator becomes `owner`. Accepts `rules`, `country`, `city`. |
 | `DELETE` | `/groups/:id` | **owner only** | **NEW** — delete the group and everything it owns. Irreversible full cascade. See §3.11. |
-| `GET` | `/groups/search?q=` | any | **CHANGED** — now includes **private** groups. Matches name **or** handle, max 20, returns a reduced card (no `inviteCode`). Empty `q` → `[]`. See §3.4b. |
+| `GET` | `/groups/search?q=` | any | **CHANGED 2026-09-08** — now **cursor-paginated** (`{items, nextCursor, hasMore}`), was a bare array capped at 20. Includes **private** groups; matches name **or** handle; returns a reduced card (no `inviteCode`). See §3.4b. |
 | `GET` | `/groups/:id` | any | Group detail **+ `userRole` / `memberStatus`** for the caller. |
 | `PATCH` | `/groups/:id` | owner/admin | Update name, description, maxPlayers, sportType, handle, rules, isPrivate, **country, city**. |
 | `POST` | `/groups/:id/logo` | owner/admin | multipart → ImageKit. |
@@ -379,12 +379,21 @@ Group detail includes the caller's membership, so you don't need a second call t
 | | Public group | Private group |
 |---|---|---|
 | Appears in `GET /groups/search` | ✅ | ✅ **(new)** |
-| `GET /groups/:id` (detail) | ✅ anyone | ✅ anyone |
+| `GET /groups/:id` (detail) | ✅ anyone, whole document | ⚠️ **narrowed** — card fields + `rules` only |
 | `GET /groups/:id/members` | ✅ anyone | 🔒 **403** unless approved member |
 | `GET /events/group/:groupId` | public events to non-members | 🔒 **403** unless approved member |
 
 The intent: a non-member can **find** a private group and see that it exists,
 then has to join before seeing who is in it or when it plays.
+
+> **Changed 2026-09-08.** `GET /groups/:id` used to return the **whole group
+> document** to anyone, private or not — including `inviteCode`, which is a
+> bearer credential: whoever holds it can present it to
+> `POST /groups/join-by-code`. A private group now returns only the search-card
+> fields plus `rules` to a non-member, which is what a stranger needs to decide
+> whether to ask to join. `locations`, `wallpaper`, `ownerId`, `inviteCode` and
+> `inviteCodeExpiry` are withheld until approval. **A pending request is still a
+> non-member.** Public groups are unaffected and still return everything.
 
 **Three breaking changes for clients:**
 
@@ -398,6 +407,19 @@ then has to join before seeing who is in it or when it plays.
    would let anyone mass-request to join. Use `GET /groups/:id/qr` for a code.
 3. **`GET /groups/:id/members` and `GET /events/group/:groupId` can now
    `403`.** They previously never did for a readable group id.
+
+   Note **403, not 401**. The caller *is* authenticated — they are simply not a
+   member — so a token refresh will not help. A client treating this as 401 and
+   entering a refresh-and-retry loop will spin pointlessly; render a "request to
+   join" prompt instead.
+
+4. **`GET /groups/:id` is narrowed for a private group** (2026-09-08). A
+   non-member gets the card fields plus `rules`. Do not expect `inviteCode`,
+   `locations`, `wallpaper` or `ownerId` on a private group you have not
+   joined — read `memberStatus` to tell why the response is thin.
+
+5. **`GET /groups/search` is paginated** (2026-09-08) — `data` is
+   `{ items, nextCursor, hasMore }`, not an array. `data.map(...)` breaks.
 
 **`403`, not an empty list.** A private group's existence is not secret — you
 just found it in search — so the honest answer is "join to see this". It also
