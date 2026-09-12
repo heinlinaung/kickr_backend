@@ -15,6 +15,24 @@ Integration guides written against the **live** API — every request/response s
 
 **Live reference while the server is running:** Swagger UI at `/api-docs`, OpenAPI JSON at `/api-docs-json`.
 
+## ⚠️ Breaking — 2026-09-08 · Group search paginated, private detail narrowed
+
+**`GET /groups/search`** `data` was a bare array capped at 20; it is now
+`{ items, nextCursor, hasMore }`, matching `/users/search` and `/events/search`.
+`data.map(...)` breaks.
+
+**`GET /groups/:id` is narrowed for a private group.** It used to return the
+whole document to anyone — including **`inviteCode`, a bearer credential**
+whoever holds it can use to request to join. A non-member now gets the
+search-card fields plus `rules`; a *pending* request still counts as a
+non-member. Public groups are unchanged.
+
+Also verified and NOT changed: private-group events and members return **403,
+not 401** — the caller is authenticated, just not a member, so a token refresh
+will not help.
+
+See [groups §3.4b](./groups-and-locations-api.md).
+
 ## ⚠️ Breaking — 2026-09-06 · Message history is paginated
 
 `GET /groups/:id/messages` `data` was a bare **array**; it is now

@@ -40,12 +40,29 @@ describe('GroupsController', () => {
   describe('search', () => {
     it('GET /groups/search delegates the query', async () => {
       await controller.search('lumpini');
-      expect(svc.search).toHaveBeenCalledWith('lumpini');
+      // limit/cursor pass through as undefined when absent, so the service's
+      // own defaults apply rather than the controller inventing them.
+      expect(svc.search).toHaveBeenCalledWith('lumpini', undefined, undefined);
     });
 
     it('coerces a missing query to an empty string', async () => {
       await controller.search(undefined as any);
-      expect(svc.search).toHaveBeenCalledWith('');
+      expect(svc.search).toHaveBeenCalledWith('', undefined, undefined);
+    });
+
+    it('passes limit and cursor through', async () => {
+      await controller.search('lumpini', '5', 'eyJpIjoiYWJjIn0');
+
+      expect(svc.search).toHaveBeenCalledWith('lumpini', 5, 'eyJpIjoiYWJjIn0');
+    });
+
+    it('hands a non-numeric limit to the service as NaN', async () => {
+      // clampLimit owns the NaN guard; the controller must not pre-empt it with
+      // a second, divergent clamp.
+      await controller.search('x', 'abc');
+
+      const limit = svc.search.mock.calls[0][1];
+      expect(Number.isNaN(limit)).toBe(true);
     });
   });
 

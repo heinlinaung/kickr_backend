@@ -16,6 +16,7 @@ import {
   ApiTags,
   ApiBearerAuth,
   ApiOperation,
+  ApiQuery,
   ApiResponse,
 } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -48,8 +49,41 @@ export class GroupsController {
   // NOTE: must stay above the ":id" wildcard route below, otherwise Nest
   // resolves "search" as an id and this route becomes unreachable.
   @Get('search')
-  search(@Query('q') q: string) {
-    return this.groupsService.search(q ?? '');
+  @ApiOperation({
+    summary: 'Find groups by name or handle',
+    description:
+      'Case-insensitive substring match on name and handle. ' +
+      '⚠️ CHANGED — this used to return a bare array capped at 20 with no way ' +
+      'past it; it now returns a page: `{ items, nextCursor, hasMore }`, ' +
+      'matching /users/search and /events/search. ' +
+      'PRIVATE groups ARE included: a private group has to be discoverable ' +
+      'for anyone to ask to join. Each row is a card — its events, members and ' +
+      'full detail stay gated. Sorted by _id; there is no relevance ranking.',
+  })
+  @ApiQuery({ name: 'q', required: true, example: 'sunday' })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    example: 20,
+    description: 'Page size, 1-50. Defaults to 20 (was a hardcoded 20).',
+  })
+  @ApiQuery({
+    name: 'cursor',
+    required: false,
+    description:
+      'Opaque pagination cursor. Pass `nextCursor` from the previous ' +
+      'response verbatim; omit for the first page. Invalid values give 400.',
+  })
+  search(
+    @Query('q') q: string,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.groupsService.search(
+      q ?? '',
+      limit === undefined ? undefined : Number(limit),
+      cursor,
+    );
   }
 
   @Get(':id')
