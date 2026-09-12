@@ -2,8 +2,9 @@
 
 **Branch:** `events-feature-spec`
 **Tests:** 1029 passing across 50 suites · build clean
-**Verified:** unit only. The reported bug needs a **live database** to confirm —
-§2 has the script.
+**Verified:** unit, plus **the index diagnosis confirmed against the live
+database** — it was the stale plain unique index, and the repair script fixed
+it. §2.
 
 Two separate things: a reported bug that is **not** in the application code, and
 a feature that genuinely did not exist.
@@ -20,7 +21,7 @@ allowed, **second allowed**, third refused — and they pass.
 
 So the cap is not what blocks the second guest.
 
-## 2. It is almost certainly the database index
+## 2. It WAS the database index — confirmed and fixed
 
 The schema declares:
 
@@ -47,6 +48,10 @@ This was flagged when guests were built, in
 > highest-consequence unverified item in this change."*
 
 It was never checked against a real database. It should have been.
+
+**Confirmed 2026-09-08:** the owner ran the script against the live database,
+it found the stale plain unique index, and `--apply` repaired it. A second guest
+now inserts. The reasoning below held exactly.
 
 ### Diagnose and repair
 
@@ -130,9 +135,9 @@ tests. Restored, all 53 in the spec pass.
 
 ## 6. What is NOT verified
 
-- **The index diagnosis.** Reasoned from how Mongoose builds indexes, not
-  observed — the sandbox cannot reach the database. The script will confirm or
-  refute it in one command, and its report-only mode is safe to run.
+- ~~**The index diagnosis.**~~ **Confirmed on the live database 2026-09-08.**
+  The stale plain unique index was present; the script dropped it and built the
+  partial one, and a second guest now inserts.
 - **The raised allowance against real data.** `memberModel.exists` is mocked, so
   no owner/admin has actually added a third guest.
 - **Whether uncapped guests break anything downstream.** Shuffle and team

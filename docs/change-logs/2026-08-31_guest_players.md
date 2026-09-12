@@ -312,11 +312,20 @@ listing, and the cascade from both exits.
 
 **Not proven — and one of these needs a real database:**
 
-- **The `partialFilterExpression` index.** Unit tests mock Mongoose, so nothing
-  here exercises the index. Inserting two guests on one event is the check, and
-  it needs a live MongoDB. **If that index is wrong, the second guest on any
-  event fails to insert** — the highest-consequence unverified item in this
-  change.
+- ~~**The `partialFilterExpression` index.**~~ **CONFIRMED BROKEN and fixed
+  2026-09-08.** The prediction was exactly right: the second guest on any event
+  failed to insert. The declared partial filter never took effect because
+  **Mongoose only creates an index it does not already find** — the database
+  still held the older plain unique `{eventId, userId}` from before guests
+  existed, so every guest collided on `(eventId, null)`.
+  `scripts/fix-event-player-index.ts` diagnoses and repairs it; see
+  `2026-09-08_guest_allowance.md`.
+
+  The lesson is not that the risk was unnoticed — it was written down here as
+  the highest-consequence item — but that **flagging a risk is not the same as
+  retiring it.** It sat unverified for eight days and surfaced as a user-facing
+  bug report. A declared index change needs a one-command check against a real
+  database, not a note.
 - **The legacy-row reasoning.** `PLAYABLE_APPROVAL` is argued from how Mongoose
   defaults work, not demonstrated against rows written before today. Worth one
   query against a real event that predates this deploy.
