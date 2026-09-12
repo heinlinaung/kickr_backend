@@ -297,7 +297,7 @@ or `after_match`.
 | `POST` | `/events/:id/join` | any user | Gated to `join` + capacity. |
 | `DELETE` | `/events/:id/join` | any user | Gated to `join`. |
 | `GET` | `/events/:id/players` | any user | Joined players. |
-| `POST` | `/events/:id/guests` | joined member | **NEW** — add a `+1`/`+2` guest. Pending until approved. See §13. |
+| `POST` | `/events/:id/guests` | joined member | Add a `+1`/`+2` guest — **uncapped for group owner/admin** (2026-09-08). Pending until approved. See §13. |
 | `GET` | `/events/:id/guests` | any user | **NEW** — guests on the event. Role-aware. See §13. |
 | `PATCH` | `/events/:id/guests/:guestId/approval` | organizer | **NEW** — approve or reject a guest. See §13. |
 | `DELETE` | `/events/:id/guests/:guestId` | sponsor or organizer | **NEW** — withdraw a guest. See §13. |
@@ -1164,6 +1164,18 @@ than "join first", since joining would not help them.
 - **`join` state only**, like every other roster change.
 - **Two guests per member**, counting pending and approved but **not rejected** —
   a rejection does not burn the allowance.
+- **Group owners and admins have NO cap** *(2026-09-08)*. They organise the
+  event and add guests on its behalf, so the member allowance does not apply.
+  The membership must be **approved** — a pending request confers nothing.
+
+  > Deliberately narrower than "organizer" elsewhere in this API: the **event
+  > creator does not qualify** unless they also hold `owner` or `admin` in the
+  > group. Creating an event is not a position of trust in the group, so anyone
+  > able to create one would otherwise self-grant an unlimited allowance.
+  >
+  > There is no `maxPlayers` bound on the raised allowance either — capacity is
+  > a soft limit for guests everywhere else (an approved guest may push the
+  > roster past it), so binding it only here would be inconsistent.
 - A guest has **no account**: `guestName` is everything the system knows. There
   is no email, phone or profile, and **no placeholder user is created**.
 

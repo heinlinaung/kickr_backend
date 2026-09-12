@@ -127,6 +127,140 @@ describe('EventsService — guests (+1 / +2)', () => {
       expect(playerModel.create.mock.calls[0][0].guestName).toBe('John');
     });
 
+    describe('the per-member cap', () => {
+      // Reported as "the system only allows one guest player". The cap is
+      // MAX_GUESTS_PER_MEMBER = 2, and these pin the boundary directly rather
+      // than leaving it inferred from the guestName sequence tests.
+      const add = () => service.addGuest(EVENT_ID, SPONSOR, {} as any);
+
+      it('allows the FIRST guest', async () => {
+        playerModel.countDocuments.mockResolvedValue(0);
+
+        await expect(add()).resolves.toBeDefined();
+        expect(playerModel.create).toHaveBeenCalled();
+      });
+
+      it('allows the SECOND guest', async () => {
+        // The reported failure. If this passes, a "+2 is refused" report is
+        // NOT the application cap — look at the database index instead: a
+        // legacy plain unique {eventId, userId} makes every guest collide on
+        // (eventId, null), so only the first can ever insert.
+        playerModel.countDocuments.mockResolvedValue(1);
+
+        await expect(add()).resolves.toBeDefined();
+        expect(playerModel.create).toHaveBeenCalled();
+      });
+
+      it('refuses the THIRD', async () => {
+        playerModel.countDocuments.mockResolvedValue(2);
+
+        await expect(add()).rejects.toThrow(/at most 2 guests/);
+        expect(playerModel.create).not.toHaveBeenCalled();
+      });
+
+      it('counts only guests this sponsor brought', async () => {
+        // Another member's guests must not eat into this member's allowance.
+        playerModel.countDocuments.mockResolvedValue(0);
+
+        await add();
+
+        const filter = playerModel.countDocuments.mock.calls[0][0];
+        expect(String(filter.addedByUserId)).toBe(SPONSOR);
+      });
+
+      it('does not count REJECTED guests against the allowance', async () => {
+        // A refused guest never plays, so holding a slot would silently cost
+        // the sponsor part of their allowance.
+        playerModel.countDocuments.mockResolvedValue(0);
+
+        await add();
+
+        const filter = playerModel.countDocuments.mock.calls[0][0];
+        expect(filter.approval).toEqual({ $ne: 'rejected' });
+      });
+    });
+
+    describe('owner/admin have no allowance cap', () => {
+      // NOTE: the shared event double has groupId: null, which short-circuits
+      // the manager lookup entirely — so these build their own group event.
+      // Without that, every test here would pass while exercising nothing.
+      const GROUP = '6a6b2366f78b66d63a911a9e';
+
+      const groupEvent = () => {
+        eventModel.findById = jest.fn().mockResolvedValue({
+          _id: EVENT_ID,
+          status: 'join',
+          isAllowExtraPlayer: true,
+          groupId: new Types.ObjectId(GROUP),
+          maxPlayers: 22,
+        });
+      };
+
+      const asManager = (is: boolean) => {
+        memberModel.exists = jest.fn().mockResolvedValue(is ? { _id: 'm' } : null);
+      };
+
+      const add = () => service.addGuest(EVENT_ID, SPONSOR, {} as any);
+
+      it('lets an owner/admin past the +2 limit', async () => {
+        groupEvent();
+        asManager(true);
+        // Already at the member cap; a manager is not bound by it.
+        playerModel.countDocuments.mockResolvedValue(5);
+
+        await expect(add()).resolves.toBeDefined();
+        expect(playerModel.create).toHaveBeenCalled();
+      });
+
+      it('does not even count a manager\'s existing guests', async () => {
+        // The allowance query is skipped, not merely ignored — one fewer round
+        // trip on the path that will add the most guests.
+        groupEvent();
+        asManager(true);
+        playerModel.countDocuments.mockClear();
+
+        await add();
+
+        // The ALLOWANCE query has no `type` — the remaining call that does is
+        // the guestName sequence lookup, which a manager still needs.
+        const allowanceCalls = playerModel.countDocuments.mock.calls.filter(
+          (c: any[]) =>
+            c[0]?.addedByUserId !== undefined && c[0]?.type === undefined,
+        );
+        expect(allowanceCalls).toHaveLength(0);
+      });
+
+      it('still caps an ordinary member of the same group', async () => {
+        groupEvent();
+        asManager(false);
+        playerModel.countDocuments.mockResolvedValue(2);
+
+        await expect(add()).rejects.toThrow(/at most 2 guests/);
+      });
+
+      it('checks for an APPROVED owner/admin membership', async () => {
+        // A pending request must not confer the raised allowance.
+        groupEvent();
+        asManager(true);
+
+        await add();
+
+        const filter = memberModel.exists.mock.calls[0][0];
+        expect(filter.status).toBe('approved');
+        expect(filter.role.$in).toEqual(['owner', 'admin']);
+      });
+
+      it('caps the creator of a GROUPLESS event', async () => {
+        // Deliberately narrower than assertOrganizer, which also accepts the
+        // creator: creating an event is not a position of trust in the group,
+        // so anyone able to create one would otherwise self-grant an unlimited
+        // allowance.
+        playerModel.countDocuments.mockResolvedValue(2);
+
+        await expect(add()).rejects.toThrow(/at most 2 guests/);
+      });
+    });
+
     describe('default guestName', () => {
       const addWithout = (sponsor = SPONSOR) =>
         service.addGuest(EVENT_ID, sponsor, {} as any);

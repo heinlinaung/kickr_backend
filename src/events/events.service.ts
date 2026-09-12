@@ -2041,16 +2041,40 @@ export class EventsService {
       throw new ForbiddenException('Join the event before adding a guest');
     }
 
-    const alreadyBrought = await this.playerModel.countDocuments({
-      eventId: new Types.ObjectId(eventId),
-      addedByUserId: new Types.ObjectId(sponsorId),
-      status: 'joined',
-      approval: { $ne: 'rejected' },
-    });
-    if (alreadyBrought >= MAX_GUESTS_PER_MEMBER) {
-      throw new BadRequestException(
-        `You can add at most ${MAX_GUESTS_PER_MEMBER} guests`,
-      );
+    // The +2 allowance is for ordinary members. A group OWNER or ADMIN is
+    // organising the event, so they add guests on the event's behalf rather
+    // than bringing their own — filling a short-handed side is exactly their
+    // job — and the allowance does not apply to them.
+    //
+    // Deliberately NARROWER than `assertOrganizer`, which also accepts the
+    // event's creator. Creating an event is not a position of trust in the
+    // group: anyone who can create one would otherwise grant themselves an
+    // unlimited allowance. The two checks differ on purpose.
+    //
+    // No maxPlayers bound either: capacity is a SOFT limit for guests
+    // everywhere else on this branch — an approved guest may push the roster
+    // past it — so binding it only here would be inconsistent.
+    const isGroupManager = event.groupId
+      ? !!(await this.memberModel.exists({
+          groupId: event.groupId,
+          userId: new Types.ObjectId(sponsorId),
+          status: 'approved',
+          role: { $in: [...ORGANIZER_ROLES] },
+        }))
+      : false;
+
+    if (!isGroupManager) {
+      const alreadyBrought = await this.playerModel.countDocuments({
+        eventId: new Types.ObjectId(eventId),
+        addedByUserId: new Types.ObjectId(sponsorId),
+        status: 'joined',
+        approval: { $ne: 'rejected' },
+      });
+      if (alreadyBrought >= MAX_GUESTS_PER_MEMBER) {
+        throw new BadRequestException(
+          `You can add at most ${MAX_GUESTS_PER_MEMBER} guests`,
+        );
+      }
     }
 
     const guest = await this.playerModel.create({
