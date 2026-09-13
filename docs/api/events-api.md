@@ -356,9 +356,24 @@ Group `country`/`city` are stored lowercase, and `region` is lowercased before m
 > **An explicit `?status=after_match` or `?status=done` still returns them**, so
 > a history screen has a query to run. Only the default changed.
 
-> ⚠️ **No default date filter.** Unlike §5.1b and §5.2, this route does not
-> hide **past-dated** events — pass `?from=` to narrow it. A fixture whose date
-> has passed but whose status is still `join` or `playing` is returned.
+> **`?includeExpired=` — added 2026-09-13.** Pass `includeExpired=false` to hide
+> **past-dated** events (`date` before today).
+>
+> ⚠️ **It defaults to `true` here**, unlike §5.1b and §5.2 where the same flag
+> defaults to `false`. Deliberate: flipping the default would silently drop rows
+> from every existing client's discovery list. So by default a fixture whose
+> date has passed but whose status is still `join` or `playing` is **still
+> returned**.
+>
+> **This is a DATE rule, independent of the status exclusion above.** The two
+> answer different questions — status says the match was *played*, date says the
+> *day* has passed. An event can be past-dated while still `join`, because
+> nobody advanced it, and that is exactly the case `includeExpired=false`
+> catches.
+>
+> An explicit **`?from=` overrides** the expiry floor: you have named your own
+> window. `?to=` combines with it, so `includeExpired=false&to=2026-12-31` gives
+> "from today until year end".
 
 > ⚠️ **The other lists still hide only `done`.** §5.1b, §5.2 and §5.3 continue
 > to show `after_match` by default: a player looking at their own fixtures, or
@@ -518,19 +533,54 @@ re-see a row.
   "locationId": "6a6e223e419acf83c69c01a9",
   "maxPlayers": 22,
   "sportType": "football",
+  "subType": "stadium",
   "skillLevel": "beginner",
-  "price": 0
+  "price": 0,
+  "registrationClosingDuration": 120
 }
 ```
 
 Only `title` and `date` are required. New events always start at `status: "join"` — you cannot set the status on create.
+
+#### New fields (2026-09-13)
+
+**`registrationClosingDuration`** — how long before kick-off registration
+closes, in **MINUTES**. `120` closes it two hours before the start; `0` (the
+default) keeps it open right up to kick-off, which is how every event created
+before this field existed behaves.
+
+> ⚠️ **Not the same as `duration`.** `duration` is how long the event RUNS;
+> this counts *backward* from the start. Same unit, opposite direction — the
+> pairing most likely to be confused. It is stored as an **offset**, so
+> rescheduling the event moves the deadline with it rather than leaving a stale
+> absolute time behind.
+>
+> Range 0–10080 (one week). A larger value is rejected: it is far more likely a
+> unit mix-up — hours or days entered as minutes — than a real intention.
+
+**`subType`** — the format of a **football** event: `futsal` or `stadium`.
+
+> ⚠️ **Only valid when `sportType` is `"football"`.** Sending it with any other
+> sportType is a **400**, not a silent drop — a caller who sends it believes it
+> took effect. `sportType` defaults to `football`, so `subType` alone is fine.
+>
+> Omitting it means **unspecified**, which is what every pre-existing event
+> reads as. It is **not** a synonym for `stadium`.
+>
+> ⚠️ **`futsal` is also a top-level `sportType`** — here, on groups and on user
+> profiles. So an event can be `sportType: "futsal"` **or** `sportType:
+> "football"` + `subType: "futsal"`, and nothing reconciles the two. A client
+> filtering for futsal must check both. This was accepted deliberately; the
+> alternative was a breaking migration of existing futsal events.
 
 - **`groupId`** — you must be an approved **owner/admin** of that group, else `403`.
 - **`locationId`** — you must be able to edit that location: its creator, **or** an owner/admin/captain/vice-captain of the group that owns it. (This changed: previously only the personal creator could attach one, which blocked group admins from using their own group's ground.)
 
 ### 6.2 `PATCH /events/:id`
 
-Organizer only. Send only the fields you are changing: `title`, `description`, `date`, `isPublic`, `locationId`, `maxPlayers`, `teamCount` (2–6), `sportType`, `skillLevel`, `price`, `startTime`, `endTime`.
+Organizer only. Send only the fields you are changing: `title`, `description`, `date`, `isPublic`, `locationId`, `maxPlayers`, `teamCount` (2–6), `sportType`, `subType`, `skillLevel`, `price`, `startTime`, `endTime`, `registrationClosingDuration`.
+
+`subType` is validated against the **resulting** sportType, not the patch alone: switching a football event to futsal while leaving an old `subType` behind is a 400, rather than stranding a meaningless value on the document.
 
 **`status` is not editable here** — it is ignored/rejected. Use §7. `groupId` cannot be changed either.
 
@@ -697,7 +747,8 @@ Do **not** design screens against these — the fields exist but nothing fills t
 - [ ] Search with an empty `q` returns an **empty page, not everything**. Don't use it as the browse/listing call.
 - [ ] **`GET /events/search` returns `data` as an OBJECT** (`{items, nextCursor, hasMore}`), unlike the other listing routes which return arrays. Read `data.items`.
 - [ ] Treat `nextCursor` as **opaque** — round-trip it, never parse or build one. A forged cursor is a `400`.
-- [ ] `includeExpired` only accepts the exact string `"true"` — `1`/`yes` are read as false and silently hide past events.
+- [ ] **`includeExpired` parses differently per route.** On §5.1b/§5.2/§5.3 it defaults to **false** and only the exact string `"true"` opts in — `1`/`yes` read as false and silently hide past events. On **§5.1 `GET /events` it defaults to `true`** and only the exact string `"false"` opts out, so a typo there shows more rather than fewer rows. Same name, opposite default; check which route you are calling.
+- [ ] **`GET /events` `includeExpired` is a DATE rule**, separate from the `after_match`/`done` status exclusion. Hiding finished events and hiding past-dated events are two different filters on that route.
 
 ---
 

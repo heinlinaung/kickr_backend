@@ -50,6 +50,58 @@ describe('EventsService — location handling on create', () => {
     date: '2026-08-01T10:00:00.000Z',
   } as any;
 
+  describe('subType must match sportType', () => {
+    // The DTO constrains the VALUE; only the service can judge the
+    // COMBINATION, so these cover what the DTO tests cannot.
+    it('accepts a football subType', async () => {
+      await expect(
+        service.create(USER_ID, {
+          ...baseDto,
+          sportType: 'football',
+          subType: 'stadium',
+        }),
+      ).resolves.toBeDefined();
+    });
+
+    it('accepts subType with sportType omitted, since it defaults to football', async () => {
+      await expect(
+        service.create(USER_ID, { ...baseDto, subType: 'futsal' }),
+      ).resolves.toBeDefined();
+    });
+
+    it('REJECTS a subType on a non-football event', async () => {
+      // Rejected rather than silently dropped: a caller who sent it believes it
+      // took effect, and a stored-but-meaningless value is worse than an error.
+      await expect(
+        service.create(USER_ID, {
+          ...baseDto,
+          sportType: 'futsal',
+          subType: 'stadium',
+        }),
+      ).rejects.toThrow(/only valid when sportType is 'football'/);
+    });
+
+    it('does not write the event when the pair is rejected', async () => {
+      eventModel.create.mockClear();
+
+      await expect(
+        service.create(USER_ID, {
+          ...baseDto,
+          sportType: 'futsal',
+          subType: 'futsal',
+        }),
+      ).rejects.toThrow();
+
+      expect(eventModel.create).not.toHaveBeenCalled();
+    });
+
+    it('allows a non-football event with no subType', async () => {
+      await expect(
+        service.create(USER_ID, { ...baseDto, sportType: 'futsal' }),
+      ).resolves.toBeDefined();
+    });
+  });
+
   it('verifies ownership and stores locationId as an ObjectId', async () => {
     await service.create(USER_ID, { ...baseDto, locationId: OWNED_LOCATION });
 
@@ -353,6 +405,81 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
       const res: any = await service.findById(EVENT_ID);
 
       expect(res.groupRules).toBe('Be on time');
+    });
+  });
+
+  describe('list → includeExpired', () => {
+    const filterOf = () => eventModel.find.mock.calls.at(-1)[0] as any;
+    const startOfToday = () => {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      return d;
+    };
+
+    it('includes expired events by DEFAULT', async () => {
+      // Unlike /events/joined and /events/group/:id. Flipping the default here
+      // would silently drop rows from every existing client's discovery list.
+      eventModel.find.mockReturnValue(q([]));
+
+      await service.list('u1');
+
+      expect(filterOf().date).toBeUndefined();
+    });
+
+    it('hides past-dated events when includeExpired is false', async () => {
+      eventModel.find.mockReturnValue(q([]));
+
+      await service.list('u1', { includeExpired: false });
+
+      expect(filterOf().date.$gte).toEqual(startOfToday());
+    });
+
+    it('is a DATE rule, independent of the status exclusion', async () => {
+      // The two answer different questions: status says the match was played,
+      // date says the day has passed. An event can be past-dated but still
+      // `join` because nobody advanced it — the common real case.
+      eventModel.find.mockReturnValue(q([]));
+
+      await service.list('u1', { includeExpired: false });
+
+      const filter = filterOf();
+      expect(filter.date.$gte).toBeDefined();
+      expect(filter.status).toEqual({ $nin: ['after_match', 'done'] });
+    });
+
+    it('lets an explicit ?from= override the expiry floor', async () => {
+      // The caller has named their own window. Keeping the later of the two
+      // would be surprising: asking for last month and getting nothing.
+      eventModel.find.mockReturnValue(q([]));
+
+      await service.list('u1', {
+        includeExpired: false,
+        from: '2020-01-01',
+      });
+
+      expect(filterOf().date.$gte).toEqual(new Date('2020-01-01'));
+    });
+
+    it('keeps ?to= alongside the expiry floor', async () => {
+      // Both bounds must survive — `to` used to ASSIGN filter.date, so an
+      // expiry bound written separately would have been silently discarded.
+      eventModel.find.mockReturnValue(q([]));
+
+      await service.list('u1', { includeExpired: false, to: '2030-01-01' });
+
+      const date = filterOf().date;
+      expect(date.$gte).toEqual(startOfToday());
+      expect(date.$lte).toEqual(new Date('2030-01-01'));
+    });
+
+    it('sets no date bound at all when nothing asks for one', async () => {
+      // An empty {} would match every document rather than being a no-op; the
+      // key must be absent so the index is used.
+      eventModel.find.mockReturnValue(q([]));
+
+      await service.list('u1');
+
+      expect('date' in filterOf()).toBe(false);
     });
   });
 

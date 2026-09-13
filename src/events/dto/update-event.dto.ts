@@ -4,6 +4,8 @@ import {
   IsOptional,
   IsBoolean,
   IsNumber,
+  IsIn,
+  IsInt,
   IsEnum,
   IsDateString,
   IsMongoId,
@@ -11,6 +13,7 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import { FOOTBALL_SUB_TYPES } from '../events.lifecycle';
 import { Type } from 'class-transformer';
 
 /**
@@ -87,6 +90,23 @@ export class UpdateEventDto {
   duration?: number;
 
   @ApiProperty({
+    example: 120,
+    required: false,
+    minimum: 0,
+    description:
+      'How long before kick-off registration closes, in MINUTES. NOT the ' +
+      'same as `duration`, which is how long the event RUNS. 0 keeps ' +
+      'registration open until kick-off. Stored as an offset from the start, ' +
+      'so rescheduling the event moves the deadline with it.',
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(10080)
+  registrationClosingDuration?: number;
+
+  @ApiProperty({
     enum: ['football', 'futsal'],
     example: 'football',
     required: false,
@@ -94,6 +114,22 @@ export class UpdateEventDto {
   @IsOptional()
   @IsEnum(['football', 'futsal'])
   sportType?: string;
+
+  @ApiProperty({
+    enum: [...FOOTBALL_SUB_TYPES],
+    example: 'stadium',
+    required: false,
+    description:
+      'Format of a FOOTBALL event. Only valid when `sportType` is ' +
+      "'football' — sending it with any other sportType is a 400, since it " +
+      'would mean nothing there. Omit it for "unspecified"; that is what ' +
+      'every event created before this field existed reads as, and it is NOT ' +
+      'a synonym for stadium.',
+  })
+  @IsOptional()
+  @IsIn([...FOOTBALL_SUB_TYPES])
+  subType?: string;
+
 
   @ApiProperty({
     enum: ['beginner', 'intermediate', 'advanced'],

@@ -10,6 +10,20 @@
  * status — a full event stays in `join` and `isFull` is derived on read.
  */
 
+/**
+ * Formats a FOOTBALL event can take.
+ *
+ * Lives here beside `EVENT_STATUSES` so the enum has one definition shared by
+ * the schema, both DTOs and the service guard — four copies of a string list
+ * is how they drift.
+ *
+ * Only meaningful when `sportType` is `'football'`. Note `futsal` is also a
+ * top-level sportType; see the note on `Event.subType`.
+ */
+export const FOOTBALL_SUB_TYPES = ['futsal', 'stadium'] as const;
+
+export type FootballSubType = (typeof FOOTBALL_SUB_TYPES)[number];
+
 export const EVENT_STATUSES = [
   'join',
   'preparation',
