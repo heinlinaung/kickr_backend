@@ -144,6 +144,12 @@ export interface ListEventsQuery {
   from?: string;
   to?: string;
   status?: string;
+  /**
+   * Include events whose DATE has passed. Defaults to `true` here, unlike
+   * `/events/joined` and `/events/group/:id` which default to hiding them —
+   * flipping it would silently drop rows from every existing client.
+   */
+  includeExpired?: boolean;
 }
 
 @Injectable()
@@ -241,6 +247,7 @@ export class EventsService {
    */
   async list(userId: string, query: ListEventsQuery = {}) {
     const { region, near, radius, from, to, status } = query;
+    const includeExpired = query.includeExpired ?? true;
 
     // Visibility: anything public, PLUS anything the caller is on the roster
     // of. The second half is what lets a private group's event appear in the
@@ -295,12 +302,32 @@ export class EventsService {
       filter.status = { $nin: FINISHED_STATUSES };
     }
 
-    if (from || to) {
-      const range: Record<string, Date> = {};
-      if (from) range.$gte = new Date(from);
-      if (to) range.$lte = new Date(to);
-      filter.date = range;
+    // Date bounds, built in ONE place so they cannot overwrite each other.
+    //
+    // `filter.date` was previously ASSIGNED by the from/to block, so an expiry
+    // bound written separately would be silently discarded the moment a caller
+    // passed ?from= — the two rules would look independent and quietly fight.
+    const range: Record<string, Date> = {};
+
+    // Expiry is a DATE rule, deliberately separate from the status exclusion
+    // above: an event can be past-dated but still `join` because nobody
+    // advanced it, which is the common real case this catches.
+    //
+    // Defaults to INCLUDING expired events, unlike /events/joined and
+    // /events/group/:id which hide them. Not an oversight — flipping the
+    // default here would silently drop rows from every existing client's
+    // discovery list.
+    if (!includeExpired) {
+      range.$gte = startOfToday();
     }
+
+    // An explicit ?from= wins over the expiry floor: the caller has named their
+    // own window, and Math.max would be surprising in the other direction —
+    // asking for last month's events and getting none.
+    if (from) range.$gte = new Date(from);
+    if (to) range.$lte = new Date(to);
+
+    if (Object.keys(range).length) filter.date = range;
 
     // Geo narrowing runs as a separate lookup rather than a stage on the event
     // pipeline: $geoNear must be the FIRST stage of its aggregation (spec

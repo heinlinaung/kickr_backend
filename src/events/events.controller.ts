@@ -60,9 +60,10 @@ export class EventsController {
       'and `done` are excluded unless asked for explicitly, since a played ' +
       'fixture is history rather than something to turn up to. An explicit ' +
       '?status=done or ?status=after_match still returns them. NOTE: there is ' +
-      'still NO default DATE filter here, unlike /events/joined and ' +
+      'still no default DATE filter here, unlike /events/joined and ' +
       '/events/group/:groupId — a past-dated event that is still `join` or ' +
-      '`playing` is returned unless narrowed with ?from=.',
+      '`playing` is returned by default. Pass includeExpired=false to hide ' +
+      'those, or ?from= to set your own floor.',
   })
   @ApiQuery({
     name: 'region',
@@ -89,6 +90,20 @@ export class EventsController {
   @ApiQuery({ name: 'from', required: false, example: '2026-08-01' })
   @ApiQuery({ name: 'to', required: false, example: '2026-08-31' })
   @ApiQuery({ name: 'status', required: false, example: 'join' })
+  @ApiQuery({
+    name: 'includeExpired',
+    required: false,
+    example: false,
+    description:
+      'Include events whose DATE has passed. Defaults to TRUE here — unlike ' +
+      '/events/joined and /events/group/:id, which default to false — because ' +
+      'flipping it would silently drop rows from existing clients. Pass ' +
+      'includeExpired=false to hide past-dated events. ' +
+      'This is a DATE rule and is independent of the status exclusion: ' +
+      '`after_match` and `done` are already hidden unless asked for by name, ' +
+      'and an event can be past-dated while still `join` because nobody ' +
+      'advanced it. An explicit ?from= overrides this floor.',
+  })
   list(
     @CurrentUser() user: any,
     @Query('region') region?: string,
@@ -97,6 +112,7 @@ export class EventsController {
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('status') status?: string,
+    @Query('includeExpired') includeExpired?: string,
   ) {
     return this.eventsService.list(user._id.toString(), {
       region,
@@ -105,6 +121,12 @@ export class EventsController {
       from,
       to,
       status,
+      // Explicitly compared to 'false' rather than reusing the
+      // `=== 'true'` idiom from the other routes: those default to FALSE, so
+      // an absent param correctly reads as false there. Here the default is
+      // TRUE, and `undefined === 'true'` would be false — silently inverting
+      // the default and hiding expired events for every caller.
+      includeExpired: includeExpired === undefined ? true : includeExpired !== 'false',
     });
   }
 

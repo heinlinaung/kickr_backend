@@ -356,9 +356,24 @@ Group `country`/`city` are stored lowercase, and `region` is lowercased before m
 > **An explicit `?status=after_match` or `?status=done` still returns them**, so
 > a history screen has a query to run. Only the default changed.
 
-> ⚠️ **No default date filter.** Unlike §5.1b and §5.2, this route does not
-> hide **past-dated** events — pass `?from=` to narrow it. A fixture whose date
-> has passed but whose status is still `join` or `playing` is returned.
+> **`?includeExpired=` — added 2026-09-13.** Pass `includeExpired=false` to hide
+> **past-dated** events (`date` before today).
+>
+> ⚠️ **It defaults to `true` here**, unlike §5.1b and §5.2 where the same flag
+> defaults to `false`. Deliberate: flipping the default would silently drop rows
+> from every existing client's discovery list. So by default a fixture whose
+> date has passed but whose status is still `join` or `playing` is **still
+> returned**.
+>
+> **This is a DATE rule, independent of the status exclusion above.** The two
+> answer different questions — status says the match was *played*, date says the
+> *day* has passed. An event can be past-dated while still `join`, because
+> nobody advanced it, and that is exactly the case `includeExpired=false`
+> catches.
+>
+> An explicit **`?from=` overrides** the expiry floor: you have named your own
+> window. `?to=` combines with it, so `includeExpired=false&to=2026-12-31` gives
+> "from today until year end".
 
 > ⚠️ **The other lists still hide only `done`.** §5.1b, §5.2 and §5.3 continue
 > to show `after_match` by default: a player looking at their own fixtures, or
@@ -732,7 +747,8 @@ Do **not** design screens against these — the fields exist but nothing fills t
 - [ ] Search with an empty `q` returns an **empty page, not everything**. Don't use it as the browse/listing call.
 - [ ] **`GET /events/search` returns `data` as an OBJECT** (`{items, nextCursor, hasMore}`), unlike the other listing routes which return arrays. Read `data.items`.
 - [ ] Treat `nextCursor` as **opaque** — round-trip it, never parse or build one. A forged cursor is a `400`.
-- [ ] `includeExpired` only accepts the exact string `"true"` — `1`/`yes` are read as false and silently hide past events.
+- [ ] **`includeExpired` parses differently per route.** On §5.1b/§5.2/§5.3 it defaults to **false** and only the exact string `"true"` opts in — `1`/`yes` read as false and silently hide past events. On **§5.1 `GET /events` it defaults to `true`** and only the exact string `"false"` opts out, so a typo there shows more rather than fewer rows. Same name, opposite default; check which route you are calling.
+- [ ] **`GET /events` `includeExpired` is a DATE rule**, separate from the `after_match`/`done` status exclusion. Hiding finished events and hiding past-dated events are two different filters on that route.
 
 ---
 

@@ -15,6 +15,18 @@ Integration guides written against the **live** API — every request/response s
 
 **Live reference while the server is running:** Swagger UI at `/api-docs`, OpenAPI JSON at `/api-docs-json`.
 
+## New — 2026-09-13 · `GET /events?includeExpired=`
+
+Pass `includeExpired=false` to hide past-dated events from the discovery list.
+
+⚠️ **It defaults to `true` here**, unlike `/events/joined` and
+`/events/group/:id` where the same flag defaults to `false` — flipping it would
+silently drop rows from existing clients. It is also a **date** rule, separate
+from the existing `after_match`/`done` status exclusion: an event can be
+past-dated while still `join` because nobody advanced it.
+
+See [events §5.1](./events-api.md).
+
 ## New — 2026-09-13 · Two event fields
 
 **`registrationClosingDuration`** — minutes before kick-off that registration
