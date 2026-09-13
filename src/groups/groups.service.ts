@@ -22,6 +22,7 @@ import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import { ImageKitService } from '../common/upload/imagekit.service';
 import { LocationsService } from '../locations/locations.service';
 import { EventsService } from '../events/events.service';
+import { PhotosService } from '../photos/photos.service';
 import {
   clampLimit,
   decodeCursor,
@@ -86,6 +87,7 @@ export class GroupsService {
     private readonly imagekit: ImageKitService,
     private readonly locationsService: LocationsService,
     private readonly eventsService: EventsService,
+    private readonly photosService: PhotosService,
     private config: ConfigService,
   ) {}
 
@@ -547,10 +549,15 @@ export class GroupsService {
       groupId: groupObjectId,
     });
 
-    const [members, messages, locations] = await Promise.all([
+    const [members, messages, locations, photos] = await Promise.all([
       this.memberModel.deleteMany({ groupId: groupObjectId }),
       this.messageModel.deleteMany({ groupId: groupObjectId }),
       this.locationModel.deleteMany({ groupId: groupObjectId }),
+      // The group's OWN photos. An event's photos went with the event above,
+      // via removeAllForGroup — deleting by groupId here would race that and
+      // double-count. Remote files are best-effort inside the service, so a
+      // slow ImageKit cannot fail the whole delete.
+      this.photosService.removeAllForTarget('group', groupId),
     ]);
 
     await this.groupModel.deleteOne({ _id: groupObjectId });
@@ -563,6 +570,7 @@ export class GroupsService {
         events,
         members: members.deletedCount ?? 0,
         messages: messages.deletedCount ?? 0,
+        photos: photos.photos,
         locations: locations.deletedCount ?? 0,
       },
       // NOT deleted, and reported so the caller knows they are stranded rather

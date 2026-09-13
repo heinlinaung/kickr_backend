@@ -14,6 +14,7 @@ import { GroupMember } from './schemas/group-member.schema';
 import { ImageKitService } from '../common/upload/imagekit.service';
 import { LocationsService } from '../locations/locations.service';
 import { EventsService } from '../events/events.service';
+import { PhotosService } from '../photos/photos.service';
 import { Message } from '../chat/schemas/message.schema';
 import { Tournament } from '../tournaments/schemas/tournament.schema';
 import { Location } from '../locations/schemas/location.schema';
@@ -38,6 +39,10 @@ describe('GroupsService', () => {
   const tournamentModel: any = {};
   const locationModel: any = {};
   const eventsService: any = {};
+  // The group delete cascade removes the group's own photos.
+  const photosService: any = {
+    removeAllForTarget: jest.fn().mockResolvedValue({ photos: 0 }),
+  };
 
   const GROUP_ID = new Types.ObjectId().toString();
   const USER_ID = new Types.ObjectId().toString();
@@ -97,6 +102,7 @@ describe('GroupsService', () => {
         { provide: getModelToken(Tournament.name), useValue: tournamentModel },
         { provide: getModelToken(Location.name), useValue: locationModel },
         { provide: EventsService, useValue: eventsService },
+        { provide: PhotosService, useValue: photosService },
         {
           provide: ConfigService,
           useValue: { get: jest.fn().mockReturnValue('http://localhost:3000') },
@@ -381,7 +387,21 @@ describe('GroupsService', () => {
         members: 27,
         messages: 412,
         locations: 2,
+        // The group's OWN photos. An event's photos go with the event, via
+        // removeAllForGroup, so they are not double-counted here.
+        photos: 0,
       });
+    });
+
+    it("cascades the group's own photos", async () => {
+      // Without this they would be orphaned rows pointing at a deleted group,
+      // and their ImageKit files would leak with nothing left referencing them.
+      await service.remove(GROUP_ID, OWNER);
+
+      expect(photosService.removeAllForTarget).toHaveBeenCalledWith(
+        'group',
+        GROUP_ID,
+      );
     });
 
     describe('tournaments are left alone', () => {

@@ -19,6 +19,7 @@ import { TournamentsModule } from './tournaments/tournaments.module';
 import { ShuffleModule } from './shuffle/shuffle.module';
 import { AdminModule } from './admin/admin.module';
 import { GlobalFootballTeamsModule } from './global-football-teams/global-football-teams.module';
+import { PhotosModule } from './photos/photos.module';
 
 @Module({
   imports: [
@@ -67,6 +68,7 @@ import { GlobalFootballTeamsModule } from './global-football-teams/global-footba
     ChatModule,
     AdminModule,
     GlobalFootballTeamsModule,
+    PhotosModule,
   ],
   providers: [
     // Removed with ThrottlerModule above. It CANNOT be left registered on its

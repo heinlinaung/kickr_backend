@@ -23,6 +23,7 @@ import { Group } from '../groups/schemas/group.schema';
 import { Location } from '../locations/schemas/location.schema';
 import { LocationsService } from '../locations/locations.service';
 import { ImageKitService } from '../common/upload/imagekit.service';
+import { PhotosService } from '../photos/photos.service';
 import { NotificationsService } from '../notifications/notifications.service';
 
 export interface EventsTestDoubles {
@@ -39,6 +40,7 @@ export interface EventsTestDoubles {
   locationModel?: any;
   locations?: any;
   imagekit?: any;
+  photosService?: any;
   notifications?: any;
 }
 
@@ -79,6 +81,15 @@ export function eventsProviders(doubles: EventsTestDoubles = {}) {
     locationModel = {},
     locations = { assertOwnedBy: jest.fn(), assertCanEdit: jest.fn() },
     imagekit = { upload: jest.fn(), deleteFile: jest.fn() },
+    // Event photos now live in the shared `photos` collection, so the service
+    // delegates instead of mutating event.photos. Defaults resolve to an empty
+    // gallery, which is what the add/remove callers assert against.
+    photosService = {
+      add: jest.fn().mockResolvedValue({ photos: [] }),
+      remove: jest.fn().mockResolvedValue({ photos: [] }),
+      list: jest.fn().mockResolvedValue({ photos: [] }),
+      removeAllForTarget: jest.fn().mockResolvedValue({ photos: 0 }),
+    },
     notifications = { create: jest.fn().mockResolvedValue(undefined) },
   } = doubles;
 
@@ -96,6 +107,7 @@ export function eventsProviders(doubles: EventsTestDoubles = {}) {
     { provide: getModelToken(Location.name), useValue: locationModel },
     { provide: LocationsService, useValue: locations },
     { provide: ImageKitService, useValue: imagekit },
+    { provide: PhotosService, useValue: photosService },
     { provide: NotificationsService, useValue: notifications },
   ];
 }

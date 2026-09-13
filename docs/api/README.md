@@ -9,11 +9,27 @@ Integration guides written against the **live** API — every request/response s
 | [events-api.md](./events-api.md) | Events — the 6-state lifecycle (incl. **`ready_to_play`**), derived `isFull`, listing a group's events, **free-text search**, create/edit/delete, join/leave. ⚠️ **breaking status change**. |
 | [users-api.md](./users-api.md) | Users — **people search** (name/username, exact-email only), and the profile routes. ⚠️ written from source, not captured live. |
 | [global-football-teams-api.md](./global-football-teams-api.md) | Reference data — real-world clubs for a "supported team" picker. Read-only, unpaginated. ⚠️ **not** KickR event teams. |
+| [photos-api.md](./photos-api.md) | Photo galleries for groups and events. A group's gallery **includes its events' photos**; 30 per target. |
 | [chat-api.md](./chat-api.md) | Group chat — **send over REST**, receive live over socket.io. Both doors emit the same `newMessage`. |
 | [notifications-api.md](./notifications-api.md) | Notifications — the in-app list, the socket.io `/notifications` namespace, and **FCM device registration**. Two triggers today: event created, and event → `ready_to_play`. ⚠️ written from source, not captured live. |
 | [admin-api.md](./admin-api.md) | **Back-office only**, behind the `x-admin-key` shared secret — force-add users to a group or event, and seed a throwaway test fixture (§9). Not for the mobile app. |
 
 **Live reference while the server is running:** Swagger UI at `/api-docs`, OpenAPI JSON at `/api-docs-json`.
+
+## New — 2026-09-13 · Photo galleries
+
+`GET|POST|DELETE /groups/:id/photos`. **A group's gallery includes its events'
+photos** — upload to an event and it appears in the group gallery too, one row
+in a shared collection rather than a copy.
+
+Viewing is any approved **member**; uploading and deleting are **owner/admin**.
+**30 photos per target** (30 per group *and* 30 per event, not 30 total).
+
+Event photo routes are unchanged in shape and permission — only their storage
+moved, which is what makes the group gallery work. `event.photos` on the event
+document is deprecated and no longer written.
+
+See [photos-api.md](./photos-api.md).
 
 ## New — 2026-09-13 · `GET /events?includeExpired=`
 
