@@ -1,7 +1,7 @@
 // src/events/schemas/event.schema.ts
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
-import { EVENT_STATUSES } from '../events.lifecycle';
+import { EVENT_STATUSES, FOOTBALL_SUB_TYPES } from '../events.lifecycle';
 
 export type EventDocument = HydratedDocument<Event>;
 
@@ -70,6 +70,27 @@ export class Event {
 
   @Prop({ default: 'football', enum: ['football', 'futsal'] })
   sportType: string;
+
+  /**
+   * The format of a FOOTBALL event: `futsal` or `stadium`.
+   *
+   * Only meaningful when `sportType` is `'football'`, and the create/update
+   * paths reject it otherwise — so it cannot be set on a futsal or padel event
+   * where it would mean nothing.
+   *
+   * `null` by default, which is what every event created before this field
+   * existed reads as: the organizer did not say. Treat it as "unspecified",
+   * NOT as a synonym for stadium.
+   *
+   * ⚠️ Note the overlap: `futsal` is ALSO a top-level `sportType`, here and on
+   * groups and user profiles. So an event can be `sportType: 'futsal'` or
+   * `sportType: 'football'` + `subType: 'futsal'`, and nothing reconciles the
+   * two. That was accepted deliberately — the alternative was a breaking
+   * migration of existing futsal events — but a client filtering for futsal
+   * must check both.
+   */
+  @Prop({ type: String, default: null, enum: [...FOOTBALL_SUB_TYPES, null] })
+  subType: string | null;
 
   @Prop({ default: 'beginner', enum: ['beginner', 'intermediate', 'advanced'] })
   skillLevel: string;
@@ -143,6 +164,26 @@ export class Event {
    */
   @Prop({ default: 90, min: 60 })
   duration: number;
+
+  /**
+   * How long before kick-off registration closes, in **MINUTES**.
+   *
+   * Distinct from `duration` above, which is how long the event RUNS. Same
+   * unit, opposite direction: `duration` measures forward from the start,
+   * this measures backward from it.
+   *
+   *   registrationClosingDuration: 120  ->  registration closes 2h before
+   *   registrationClosingDuration: 0    ->  open right up to kick-off
+   *
+   * `0` is the default because it is the previous behaviour: an event created
+   * before this field existed has no value, and "registration never closes
+   * early" is what that should read as.
+   *
+   * Stored as an OFFSET rather than an absolute closing timestamp, so moving
+   * the event moves the deadline with it instead of leaving a stale one behind.
+   */
+  @Prop({ default: 0, min: 0 })
+  registrationClosingDuration: number;
 
   @Prop({ type: String, default: null })
   coverImage: string | null;

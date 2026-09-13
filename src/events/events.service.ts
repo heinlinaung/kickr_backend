@@ -101,6 +101,23 @@ const DEFAULT_SHUFFLE_MATCHES = 3;
 const ORGANIZER_ROLES = ['owner', 'admin'] as const;
 
 /**
+ * Refuses a `subType` on a non-football event.
+ *
+ * Shared by create and update so the two cannot diverge — update has the harder
+ * job, since it must judge the RESULT of the patch rather than the patch alone.
+ *
+ * Only the combination is checked; the VALUE is already constrained to
+ * FOOTBALL_SUB_TYPES by the DTO.
+ */
+function assertSubTypeMatchesSport(sportType: string, subType?: string): void {
+  if (subType && sportType !== 'football') {
+    throw new BadRequestException(
+      `subType is only valid when sportType is 'football' (got '${sportType}')`,
+    );
+  }
+}
+
+/**
  * Group roles that may enter a match score.
  *
  * `referee` is added here and NOWHERE else — officiating is the one thing the
@@ -554,6 +571,15 @@ export class EventsService {
           'Only group owner or admin can create events',
         );
     }
+    // `subType` describes a FOOTBALL format, so it means nothing on a futsal or
+    // padel event. Rejected rather than silently dropped: a caller who sent it
+    // believes it took effect, and a stored-but-meaningless value is worse than
+    // an error that says so.
+    //
+    // Checked against the RESOLVED sport — `sportType` defaults to 'football'
+    // when omitted, so `{ subType: 'stadium' }` alone is valid.
+    assertSubTypeMatchesSport(dto.sportType ?? 'football', dto.subType);
+
     // Destructure locationId out so the raw string is never spread onto the
     // model (Mongoose's loose create() typing would not flag the mismatch).
     const { locationId: dtoLocationId, templateId, ...rest } = dto;
@@ -1046,6 +1072,15 @@ export class EventsService {
         'A completed event can no longer be edited',
       );
     }
+
+    // Checked against the RESULT of the patch, not the patch alone: a caller
+    // can change sportType, subType, or both. Switching a football event to
+    // futsal while leaving an old subType behind would otherwise strand a
+    // meaningless value on the document.
+    assertSubTypeMatchesSport(
+      dto.sportType ?? event.sportType,
+      dto.subType ?? event.subType ?? undefined,
+    );
 
     const { locationId, date, startTime, endTime } = dto;
     if (locationId) {

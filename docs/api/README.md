@@ -15,6 +15,22 @@ Integration guides written against the **live** API — every request/response s
 
 **Live reference while the server is running:** Swagger UI at `/api-docs`, OpenAPI JSON at `/api-docs-json`.
 
+## New — 2026-09-13 · Two event fields
+
+**`registrationClosingDuration`** — minutes before kick-off that registration
+closes (`0` = never, the default). ⚠️ **Not** `duration`, which is how long the
+event RUNS; same unit, opposite direction. Stored as an offset, so rescheduling
+moves the deadline with it. **Stored but not yet enforced** — nothing refuses a
+join on it.
+
+**`subType`** — `futsal` | `stadium`, valid **only** when `sportType` is
+`football` (a 400 otherwise). ⚠️ `futsal` is also a top-level `sportType`, so a
+client filtering for futsal must check both representations.
+
+Both settable on `POST /events` and editable via `PATCH /events/:id`.
+
+See [events §6.1](./events-api.md).
+
 ## ⚠️ Breaking — 2026-09-08 · Group search paginated, private detail narrowed
 
 **`GET /groups/search`** `data` was a bare array capped at 20; it is now

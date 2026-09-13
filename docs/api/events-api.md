@@ -518,19 +518,54 @@ re-see a row.
   "locationId": "6a6e223e419acf83c69c01a9",
   "maxPlayers": 22,
   "sportType": "football",
+  "subType": "stadium",
   "skillLevel": "beginner",
-  "price": 0
+  "price": 0,
+  "registrationClosingDuration": 120
 }
 ```
 
 Only `title` and `date` are required. New events always start at `status: "join"` — you cannot set the status on create.
+
+#### New fields (2026-09-13)
+
+**`registrationClosingDuration`** — how long before kick-off registration
+closes, in **MINUTES**. `120` closes it two hours before the start; `0` (the
+default) keeps it open right up to kick-off, which is how every event created
+before this field existed behaves.
+
+> ⚠️ **Not the same as `duration`.** `duration` is how long the event RUNS;
+> this counts *backward* from the start. Same unit, opposite direction — the
+> pairing most likely to be confused. It is stored as an **offset**, so
+> rescheduling the event moves the deadline with it rather than leaving a stale
+> absolute time behind.
+>
+> Range 0–10080 (one week). A larger value is rejected: it is far more likely a
+> unit mix-up — hours or days entered as minutes — than a real intention.
+
+**`subType`** — the format of a **football** event: `futsal` or `stadium`.
+
+> ⚠️ **Only valid when `sportType` is `"football"`.** Sending it with any other
+> sportType is a **400**, not a silent drop — a caller who sends it believes it
+> took effect. `sportType` defaults to `football`, so `subType` alone is fine.
+>
+> Omitting it means **unspecified**, which is what every pre-existing event
+> reads as. It is **not** a synonym for `stadium`.
+>
+> ⚠️ **`futsal` is also a top-level `sportType`** — here, on groups and on user
+> profiles. So an event can be `sportType: "futsal"` **or** `sportType:
+> "football"` + `subType: "futsal"`, and nothing reconciles the two. A client
+> filtering for futsal must check both. This was accepted deliberately; the
+> alternative was a breaking migration of existing futsal events.
 
 - **`groupId`** — you must be an approved **owner/admin** of that group, else `403`.
 - **`locationId`** — you must be able to edit that location: its creator, **or** an owner/admin/captain/vice-captain of the group that owns it. (This changed: previously only the personal creator could attach one, which blocked group admins from using their own group's ground.)
 
 ### 6.2 `PATCH /events/:id`
 
-Organizer only. Send only the fields you are changing: `title`, `description`, `date`, `isPublic`, `locationId`, `maxPlayers`, `teamCount` (2–6), `sportType`, `skillLevel`, `price`, `startTime`, `endTime`.
+Organizer only. Send only the fields you are changing: `title`, `description`, `date`, `isPublic`, `locationId`, `maxPlayers`, `teamCount` (2–6), `sportType`, `subType`, `skillLevel`, `price`, `startTime`, `endTime`, `registrationClosingDuration`.
+
+`subType` is validated against the **resulting** sportType, not the patch alone: switching a football event to futsal while leaving an old `subType` behind is a 400, rather than stranding a meaningless value on the document.
 
 **`status` is not editable here** — it is ignored/rejected. Use §7. `groupId` cannot be changed either.
 
