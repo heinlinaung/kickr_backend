@@ -30,8 +30,13 @@ import { LocationsModule } from '../locations/locations.module';
 import { UploadModule } from '../common/upload/upload.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 
+import { PhotosModule } from '../photos/photos.module';
+
 @Module({
   imports: [
+    // For event photos, which land in the shared `photos` collection so they
+    // also appear in the owning group's gallery.
+    PhotosModule,
     MongooseModule.forFeature([
       { name: Event.name, schema: EventSchema },
       { name: EventPlayer.name, schema: EventPlayerSchema },

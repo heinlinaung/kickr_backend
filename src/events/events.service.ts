@@ -56,6 +56,7 @@ import {
   toPage,
 } from '../common/pagination/cursor';
 import { NotificationsService } from '../notifications/notifications.service';
+import { PhotosService } from '../photos/photos.service';
 import {
   EventStatus,
   canEnterScore,
@@ -180,6 +181,7 @@ export class EventsService {
     private locationModel: Model<LocationDocument>,
     private readonly locationsService: LocationsService,
     private readonly imagekit: ImageKitService,
+    private readonly photosService: PhotosService,
     private readonly notificationsService: NotificationsService,
   ) {}
 
@@ -1938,33 +1940,29 @@ export class EventsService {
       );
     }
 
-    const uploaded = await this.imagekit.upload(
-      file.buffer,
-      `event-${eventId}-photo`,
-      'events/photos',
+    // Stored in the shared `photos` collection rather than embedded on the
+    // event. That shared storage is the whole mechanism behind the group
+    // gallery: passing `event.groupId` here is what makes this photo appear
+    // under GET /groups/:id/photos, with no copy and nothing to keep in sync.
+    //
+    // `null` for a standalone event — there is no group for it to show up in.
+    return this.photosService.add(
+      'event',
+      eventId,
+      userId,
+      file,
+      event.groupId ? event.groupId.toString() : null,
     );
-
-    event.photos.push({ url: uploaded.url, fileId: uploaded.fileId });
-    await event.save();
-
-    return { photos: event.photos };
   }
 
   /**
-   * Remove a photo. Deletes the row first, then the remote file: if ImageKit
-   * fails we would rather leak a file than leave a broken URL on the event.
+   * Remove a photo. Delegates to PhotosService, which owns the ordering
+   * (row first, then the remote file) and the best-effort remote delete.
    */
   async removePhoto(eventId: string, userId: string, fileId: string) {
-    const event = await this.assertOrganizer(eventId, userId);
+    await this.assertOrganizer(eventId, userId);
 
-    const index = event.photos.findIndex((photo) => photo.fileId === fileId);
-    if (index === -1) throw new NotFoundException('Photo not found');
-
-    event.photos.splice(index, 1);
-    await event.save();
-    await this.imagekit.deleteFile(fileId).catch(() => undefined);
-
-    return { photos: event.photos };
+    return this.photosService.remove('event', eventId, fileId);
   }
 
   // --- Step 4: discovery, likes, templates --------------------------------

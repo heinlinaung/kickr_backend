@@ -17,8 +17,13 @@ import {
 } from '../locations/schemas/location.schema';
 import { LocationsModule } from '../locations/locations.module';
 
+import { PhotosModule } from '../photos/photos.module';
+
 @Module({
   imports: [
+    // Safe direction: PhotosModule is a leaf (schemas + UploadModule only).
+    // The reverse — PhotosModule importing GroupsModule — closes a cycle.
+    PhotosModule,
     MongooseModule.forFeature([
       { name: Group.name, schema: GroupSchema },
       { name: GroupMember.name, schema: GroupMemberSchema },

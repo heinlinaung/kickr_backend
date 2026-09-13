@@ -13,6 +13,7 @@ const EVENT_ID = '507f1f77bcf86cd799439011';
 const CREATOR = '507f191e810c19729de860ea';
 const PLAYER = '507f191e810c19729de860e1';
 const OUTSIDER = '507f191e810c19729de860ef';
+const GROUP_ID = '507f1f77bcf86cd799439099';
 
 const eventDoc = (over: Record<string, unknown> = {}) => {
   const doc: any = {
@@ -44,12 +45,17 @@ describe('EventsService — after-match (spec §4.4)', () => {
   const playerModel: any = {};
   const memberModel: any = {};
   const imagekit: any = {};
+  const photosService: any = {};
 
   beforeEach(async () => {
     jest.clearAllMocks();
     eventModel.findById = jest.fn();
     playerModel.findOne = jest.fn().mockResolvedValue(null);
     memberModel.findOne = jest.fn().mockResolvedValue(null);
+    Object.assign(photosService, {
+      add: jest.fn().mockResolvedValue({ photos: [] }),
+      remove: jest.fn().mockResolvedValue({ photos: [] }),
+    });
     imagekit.upload = jest
       .fn()
       .mockResolvedValue({ url: 'https://ik/new.jpg', fileId: 'new-file' });
@@ -58,7 +64,13 @@ describe('EventsService — after-match (spec §4.4)', () => {
     const m = await Test.createTestingModule({
       providers: [
         EventsService,
-        ...eventsProviders({ eventModel, playerModel, memberModel, imagekit }),
+        ...eventsProviders({
+          eventModel,
+          playerModel,
+          memberModel,
+          imagekit,
+          photosService,
+        }),
       ],
     }).compile();
     service = m.get(EventsService);
@@ -154,14 +166,43 @@ describe('EventsService — after-match (spec §4.4)', () => {
   });
 
   describe('photos', () => {
-    it('appends an uploaded photo', async () => {
-      const doc = eventDoc();
+    // Photos moved OUT of the event document into the shared `photos`
+    // collection, so these assert DELEGATION rather than a mutated array.
+    // The storage move is what puts an event's photo in its group's gallery.
+    it('delegates the upload, tagging it with the event and its group', async () => {
+      const doc = eventDoc({ groupId: GROUP_ID });
       eventModel.findById.mockResolvedValue(doc);
 
-      const res = await service.addPhoto(EVENT_ID, CREATOR, file);
-      expect(res.photos).toEqual([
-        { url: 'https://ik/new.jpg', fileId: 'new-file' },
-      ]);
+      await service.addPhoto(EVENT_ID, CREATOR, file);
+
+      expect(photosService.add).toHaveBeenCalledWith(
+        'event',
+        EVENT_ID,
+        CREATOR,
+        file,
+        // The denormalised link: this is the ONLY reason the photo shows up
+        // under GET /groups/:id/photos.
+        String(GROUP_ID),
+      );
+    });
+
+    it('passes a null groupId for a standalone event', async () => {
+      // No group means no gallery for it to appear in.
+      eventModel.findById.mockResolvedValue(eventDoc({ groupId: null }));
+
+      await service.addPhoto(EVENT_ID, CREATOR, file);
+
+      expect(photosService.add.mock.calls[0][4]).toBeNull();
+    });
+
+    it('does not upload to ImageKit itself', async () => {
+      // The service no longer owns the upload; PhotosService does, so it can
+      // enforce the per-target cap BEFORE anything reaches ImageKit.
+      eventModel.findById.mockResolvedValue(eventDoc());
+
+      await service.addPhoto(EVENT_ID, CREATOR, file);
+
+      expect(imagekit.upload).not.toHaveBeenCalled();
     });
 
     it.each(['join', 'before_match', 'preparation', 'playing', 'done'])(
@@ -174,26 +215,29 @@ describe('EventsService — after-match (spec §4.4)', () => {
       },
     );
 
-    it('removes a photo and deletes the remote file', async () => {
-      const doc = eventDoc({
-        photos: [
-          { url: 'u1', fileId: 'f1' },
-          { url: 'u2', fileId: 'f2' },
-        ],
-      });
-      eventModel.findById.mockResolvedValue(doc);
+    it('delegates the removal, scoped to this event', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc());
 
-      const res = await service.removePhoto(EVENT_ID, CREATOR, 'f1');
+      await service.removePhoto(EVENT_ID, CREATOR, 'f1');
 
-      expect(res.photos).toEqual([{ url: 'u2', fileId: 'f2' }]);
-      expect(imagekit.deleteFile).toHaveBeenCalledWith('f1');
+      // Scoped to ('event', EVENT_ID) so a fileId belonging to another target
+      // cannot be deleted through this route.
+      expect(photosService.remove).toHaveBeenCalledWith(
+        'event',
+        EVENT_ID,
+        'f1',
+      );
     });
 
-    it('404s when the photo is not on the event', async () => {
+    it('still checks the organizer before removing', async () => {
+      // Delegation must not have dropped the permission check on the way.
       eventModel.findById.mockResolvedValue(eventDoc());
+      memberModel.findOne.mockResolvedValue(null);
+
       await expect(
-        service.removePhoto(EVENT_ID, CREATOR, 'missing'),
-      ).rejects.toBeInstanceOf(NotFoundException);
+        service.removePhoto(EVENT_ID, OUTSIDER, 'f1'),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(photosService.remove).not.toHaveBeenCalled();
     });
   });
 

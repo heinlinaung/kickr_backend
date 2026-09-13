@@ -192,6 +192,16 @@ export class Event {
   @Prop({ type: String, default: null })
   coverImageFileId: string | null;
 
+  /**
+   * @deprecated Photos moved to the shared `photos` collection on 2026-09-13,
+   * so an event's photo can also appear in its group's gallery without being
+   * copied. Nothing reads or writes this any more — use
+   * `GET /events/:id/photos`, which is served by `PhotosService`.
+   *
+   * Kept only so any pre-existing documents are not silently orphaned by a
+   * schema change. Safe to drop once a query confirms no event still carries
+   * one; `scripts/` is the place for that check.
+   */
   @Prop({ type: [EventPhotoSchema], default: [] })
   photos: EventPhoto[];
 
