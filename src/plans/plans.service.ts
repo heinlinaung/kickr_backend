@@ -4,11 +4,18 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { Group, GroupDocument } from '../groups/schemas/group.schema';
-import { PlanLimits, planLimits } from './plans';
+import { Plan, PlanDocument } from './schemas/plan.schema';
+import {
+  DEFAULT_PLAN,
+  DEFAULT_PLAN_LIMITS,
+  PlanLimits,
+  resolveLimit,
+} from './plans';
 
 /**
  * Resolves which limits apply to an action — the join between `User.plan`
- * (data) and the `PLANS` registry (code, see plans.ts).
+ * (which plan a user is on) and the `plans` collection (what that plan
+ * means, seeded by `scripts/seed-plans.ts`).
  *
  * Registers the User and Group schemas directly rather than importing
  * UsersModule/GroupsModule, which would close a cycle: Groups/Events/Photos
@@ -21,7 +28,42 @@ export class PlansService {
   constructor(
     @InjectModel(User.name) private userModel: Model<UserDocument>,
     @InjectModel(Group.name) private groupModel: Model<GroupDocument>,
+    @InjectModel(Plan.name) private planModel: Model<PlanDocument>,
   ) {}
+
+  /**
+   * The limits of one plan by name.
+   *
+   * Every miss degrades TIGHT: an unknown name falls back to the `default`
+   * row, and a database with no rows at all falls back to the in-code
+   * `DEFAULT_PLAN_LIMITS` — enforcement never silently switches off because
+   * a seed was forgotten or a user's plan string went stale. A row's `null`
+   * limit is the one deliberate opposite: it means unlimited (the
+   * `no-limit-plan` convention) and resolves to Infinity.
+   */
+  async limitsByName(name?: unknown): Promise<PlanLimits> {
+    const wanted = typeof name === 'string' && name ? name : DEFAULT_PLAN;
+    let row = await this.planModel.findOne({ name: wanted }).lean();
+    if (!row && wanted !== DEFAULT_PLAN) {
+      row = await this.planModel.findOne({ name: DEFAULT_PLAN }).lean();
+    }
+    if (!row) return DEFAULT_PLAN_LIMITS;
+
+    return {
+      maxGroupsOwned: resolveLimit(
+        row.maxGroupsOwned,
+        DEFAULT_PLAN_LIMITS.maxGroupsOwned,
+      ),
+      maxEventsPerWeek: resolveLimit(
+        row.maxEventsPerWeek,
+        DEFAULT_PLAN_LIMITS.maxEventsPerWeek,
+      ),
+      maxGalleryPhotosPerGroup: resolveLimit(
+        row.maxGalleryPhotosPerGroup,
+        DEFAULT_PLAN_LIMITS.maxGalleryPhotosPerGroup,
+      ),
+    };
+  }
 
   /** The limits for one user. Unknown user or plan → the default plan. */
   async limitsFor(userId: string): Promise<PlanLimits> {
@@ -29,7 +71,7 @@ export class PlansService {
       .findById(userId)
       .select('plan')
       .lean<{ plan?: string }>();
-    return planLimits(user?.plan);
+    return this.limitsByName(user?.plan);
   }
 
   /**
@@ -45,7 +87,7 @@ export class PlansService {
       .findById(groupId)
       .select('ownerId')
       .lean<{ ownerId?: Types.ObjectId }>();
-    if (!group?.ownerId) return planLimits(undefined);
+    if (!group?.ownerId) return this.limitsByName(undefined);
     return this.limitsFor(group.ownerId.toString());
   }
 }

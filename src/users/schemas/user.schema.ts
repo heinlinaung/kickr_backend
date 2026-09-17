@@ -86,15 +86,16 @@ export class User {
   favouriteTeamId: Types.ObjectId | null;
 
   /**
-   * Subscription plan, keying into the `PLANS` registry (`src/plans/plans.ts`)
-   * that says what the user may create: groups owned, events per week, gallery
-   * photos per group.
+   * Subscription plan — the `name` of a row in the `plans` collection
+   * (seeded by `scripts/seed-plans.ts`) that says what the user may create:
+   * groups owned, events per week, gallery photos per group.
    *
-   * A plain string rather than an enum so introducing a plan is a registry
-   * edit, not a migration; `planLimits()` maps any unknown or missing value to
-   * the default plan, so a bad string degrades to the tightest limits rather
-   * than to unlimited. No API writes this yet — changing plans is a billing
-   * concern that does not exist, so rows change by hand until it does.
+   * A plain name string, NOT an ObjectId ref — same convention as sportType.
+   * PlansService maps an unknown or missing value to the default plan, so a
+   * bad string degrades to the tightest limits rather than to unlimited.
+   * Set to 'no-limit-plan' by hand to lift every cap for a testing or admin
+   * account. No API writes this — changing plans is a billing concern that
+   * does not exist yet, so rows change by hand until it does.
    */
   @Prop({ default: 'default' })
   plan: string;
