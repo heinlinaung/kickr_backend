@@ -10,6 +10,9 @@ import {
 } from './schemas/photo.schema';
 import { GroupMember } from '../groups/schemas/group-member.schema';
 import { ImageKitService } from '../common/upload/imagekit.service';
+import { PlansService } from '../plans/plans.service';
+import { PLANS } from '../plans/plans';
+import { plansDouble } from '../events/events.test-providers';
 
 const GROUP = '6a6b2366f78b66d63a911a9e';
 const EVENT = '507f1f77bcf86cd799439011';
@@ -20,6 +23,7 @@ describe('PhotosService', () => {
   const photoModel: any = {};
   const memberModel: any = {};
   const imagekit: any = {};
+  let plansService: ReturnType<typeof plansDouble>;
 
   const file = { buffer: Buffer.from('x') } as any;
 
@@ -44,32 +48,34 @@ describe('PhotosService', () => {
       .mockResolvedValue({ url: 'https://ik/p.jpg', fileId: 'new-file' });
     imagekit.deleteFile = jest.fn().mockResolvedValue(undefined);
 
+    plansService = plansDouble();
     const m = await Test.createTestingModule({
       providers: [
         PhotosService,
         { provide: getModelToken(Photo.name), useValue: photoModel },
         { provide: getModelToken(GroupMember.name), useValue: memberModel },
         { provide: ImageKitService, useValue: imagekit },
+        { provide: PlansService, useValue: plansService },
       ],
     }).compile();
     service = m.get(PhotosService);
   });
 
-  describe('the 30-per-target cap', () => {
+  describe('the 30-per-target cap (events; groups use the plan cap instead)', () => {
     it(`allows the ${MAX_PHOTOS_PER_TARGET}th photo`, async () => {
       photoModel.countDocuments.mockResolvedValue(MAX_PHOTOS_PER_TARGET - 1);
 
       await expect(
-        service.add('group', GROUP, USER, file),
+        service.add('event', EVENT, USER, file),
       ).resolves.toBeDefined();
     });
 
     it('refuses the one after that', async () => {
       photoModel.countDocuments.mockResolvedValue(MAX_PHOTOS_PER_TARGET);
 
-      await expect(service.add('group', GROUP, USER, file)).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
+      await expect(
+        service.add('event', EVENT, USER, file),
+      ).rejects.toBeInstanceOf(BadRequestException);
     });
 
     it('counts BEFORE uploading, so a refusal never reaches ImageKit', async () => {
@@ -77,7 +83,7 @@ describe('PhotosService', () => {
       // billable, and invisible from the database.
       photoModel.countDocuments.mockResolvedValue(MAX_PHOTOS_PER_TARGET);
 
-      await expect(service.add('group', GROUP, USER, file)).rejects.toThrow();
+      await expect(service.add('event', EVENT, USER, file)).rejects.toThrow();
 
       expect(imagekit.upload).not.toHaveBeenCalled();
       expect(photoModel.create).not.toHaveBeenCalled();
@@ -90,6 +96,76 @@ describe('PhotosService', () => {
       const filter = photoModel.countDocuments.mock.calls[0][0];
       expect(filter.targetType).toBe('event');
       expect(String(filter.targetId)).toBe(EVENT);
+    });
+
+    it("does not apply to a group's own photos", async () => {
+      // Their budget is the plan's gallery cap — 30 here would stop a group
+      // ever reaching its plan's 50 with its own uploads.
+      photoModel.countDocuments.mockResolvedValue(MAX_PHOTOS_PER_TARGET);
+
+      await expect(
+        service.add('group', GROUP, USER, file),
+      ).resolves.toBeDefined();
+    });
+  });
+
+  describe("the plan's gallery cap (50 per group on the default plan)", () => {
+    const CAP = PLANS.default.maxGalleryPhotosPerGroup;
+
+    it(`allows the ${CAP}th gallery photo`, async () => {
+      photoModel.countDocuments.mockResolvedValue(CAP - 1);
+
+      await expect(
+        service.add('group', GROUP, USER, file),
+      ).resolves.toBeDefined();
+    });
+
+    it('refuses the one after that, telling the caller to delete first', async () => {
+      photoModel.countDocuments.mockResolvedValue(CAP);
+
+      await expect(service.add('group', GROUP, USER, file)).rejects.toThrow(
+        /Delete existing image\(s\)/,
+      );
+      expect(imagekit.upload).not.toHaveBeenCalled();
+    });
+
+    it("counts the whole GALLERY — the same $or as listForGroup", async () => {
+      // The cap is on what GET /groups/:id/photos shows, so event photos
+      // count against it too.
+      await service.add('group', GROUP, USER, file);
+
+      const filter = photoModel.countDocuments.mock.calls[0][0];
+      expect(filter.$or).toHaveLength(2);
+      expect(filter.$or[0].targetType).toBe('group');
+      expect(String(filter.$or[0].targetId)).toBe(GROUP);
+      expect(String(filter.$or[1].groupId)).toBe(GROUP);
+    });
+
+    it("meters an EVENT upload against its group's gallery too", async () => {
+      // Per-target count first (0), then the gallery count at the cap.
+      photoModel.countDocuments
+        .mockResolvedValueOnce(0)
+        .mockResolvedValueOnce(CAP);
+
+      await expect(
+        service.add('event', EVENT, USER, file, GROUP),
+      ).rejects.toThrow(/gallery/);
+      expect(plansService.limitsForGroupOwner).toHaveBeenCalledWith(GROUP);
+    });
+
+    it('leaves a STANDALONE event out of any gallery math', async () => {
+      await service.add('event', EVENT, USER, file, null);
+
+      expect(plansService.limitsForGroupOwner).not.toHaveBeenCalled();
+      // Only the per-target count ran.
+      expect(photoModel.countDocuments).toHaveBeenCalledTimes(1);
+    });
+
+    it("asks for the group OWNER's limits, not the uploader's", async () => {
+      await service.add('group', GROUP, USER, file);
+
+      expect(plansService.limitsForGroupOwner).toHaveBeenCalledWith(GROUP);
+      expect(plansService.limitsFor).not.toHaveBeenCalled();
     });
   });
 

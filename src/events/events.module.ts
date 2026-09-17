@@ -32,6 +32,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 
 import { PhotosModule } from '../photos/photos.module';
 import { SportTypesModule } from '../sport-types/sport-types.module';
+import { PlansModule } from '../plans/plans.module';
 
 @Module({
   imports: [
@@ -59,6 +60,7 @@ import { SportTypesModule } from '../sport-types/sport-types.module';
     UploadModule,
     NotificationsModule,
     SportTypesModule,
+    PlansModule,
   ],
   controllers: [EventsController, EventTemplatesController],
   providers: [EventsService],

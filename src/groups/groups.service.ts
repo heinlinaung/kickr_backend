@@ -24,6 +24,7 @@ import { LocationsService } from '../locations/locations.service';
 import { EventsService } from '../events/events.service';
 import { PhotosService } from '../photos/photos.service';
 import { SportTypesService } from '../sport-types/sport-types.service';
+import { PlansService } from '../plans/plans.service';
 import {
   clampLimit,
   decodeCursor,
@@ -90,6 +91,7 @@ export class GroupsService {
     private readonly eventsService: EventsService,
     private readonly photosService: PhotosService,
     private readonly sportTypesService: SportTypesService,
+    private readonly plansService: PlansService,
     private config: ConfigService,
   ) {}
 
@@ -123,6 +125,21 @@ export class GroupsService {
     if (rest.sportType !== undefined) {
       await this.sportTypesService.assertValid(rest.sportType);
     }
+
+    // Plan gate: OWNED groups only — joining other people's groups is not
+    // metered. Counted before anything is written, so a refusal leaves no
+    // half-created group or membership behind.
+    const limits = await this.plansService.limitsFor(ownerId);
+    const owned = await this.groupModel.countDocuments({
+      ownerId: new Types.ObjectId(ownerId),
+    });
+    if (owned >= limits.maxGroupsOwned) {
+      throw new BadRequestException(
+        `Your plan allows owning at most ${limits.maxGroupsOwned} groups — ` +
+          'delete one to create another',
+      );
+    }
+
     const locations = await this.resolveOwnedLocationIds(locationIds, ownerId);
 
     let group: GroupDocument;

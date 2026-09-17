@@ -16,6 +16,7 @@ import { LocationsModule } from '../locations/locations.module';
 
 import { PhotosModule } from '../photos/photos.module';
 import { SportTypesModule } from '../sport-types/sport-types.module';
+import { PlansModule } from '../plans/plans.module';
 
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { SportTypesModule } from '../sport-types/sport-types.module';
     UploadModule,
     LocationsModule,
     SportTypesModule,
+    PlansModule,
   ],
   controllers: [GroupsController],
   providers: [GroupsService],

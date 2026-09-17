@@ -13,7 +13,13 @@ export type PhotoDocument = HydratedDocument<Photo>;
 export const PHOTO_TARGETS = ['group', 'event', 'tournament'] as const;
 export type PhotoTarget = (typeof PHOTO_TARGETS)[number];
 
-/** Most photos one target may hold. */
+/**
+ * Most photos one NON-GROUP target (event, tournament) may hold.
+ *
+ * A group's own photos are governed by its owner's plan instead — the gallery
+ * cap in `plans.ts`, which also counts the group's events' photos. See
+ * `PhotosService.add`.
+ */
 export const MAX_PHOTOS_PER_TARGET = 30;
 
 /**

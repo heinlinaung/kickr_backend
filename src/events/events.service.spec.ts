@@ -22,6 +22,8 @@ describe('EventsService — location handling on create', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     eventModel.create = jest.fn().mockResolvedValue({ _id: 'e1' });
+    // create() meters the creator's events-per-week plan cap.
+    eventModel.countDocuments = jest.fn().mockResolvedValue(0);
     // list() resolves the caller's roster first, so it can widen visibility to
     // the events they joined.
     playerModel.find = jest.fn().mockReturnValue({
@@ -99,6 +101,28 @@ describe('EventsService — location handling on create', () => {
       await expect(
         service.create(USER_ID, { ...baseDto, sportType: 'futsal' }),
       ).resolves.toBeDefined();
+    });
+  });
+
+  // The default plan allows 3 events per calendar week (src/plans/plans.ts).
+  describe('the events-per-week plan cap', () => {
+    it('rejects a 4th event scheduled in the same week, before writing', async () => {
+      eventModel.countDocuments.mockResolvedValue(3);
+
+      await expect(service.create(USER_ID, baseDto)).rejects.toThrow(
+        /at most 3 events per week/,
+      );
+      expect(eventModel.create).not.toHaveBeenCalled();
+    });
+
+    it("counts the CREATOR's events inside the UTC week of the NEW event's date", async () => {
+      // baseDto.date 2026-08-01 is a Saturday; its week is Mon 07-27 → 08-03.
+      await service.create(USER_ID, baseDto);
+
+      const filter = eventModel.countDocuments.mock.calls[0][0];
+      expect(String(filter.createdBy)).toBe(USER_ID);
+      expect(filter.date.$gte.toISOString()).toBe('2026-07-27T00:00:00.000Z');
+      expect(filter.date.$lt.toISOString()).toBe('2026-08-03T00:00:00.000Z');
     });
   });
 
