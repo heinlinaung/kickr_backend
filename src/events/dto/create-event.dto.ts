@@ -6,14 +6,12 @@ import {
   IsNumber,
   IsEnum,
   IsDateString,
-  IsIn,
   IsInt,
   IsMongoId,
   Max,
   Min,
   MinLength,
 } from 'class-validator';
-import { FOOTBALL_SUB_TYPES } from '../events.lifecycle';
 import { Type } from 'class-transformer';
 
 export class CreateEventDto {
@@ -53,29 +51,33 @@ export class CreateEventDto {
   maxPlayers?: number;
 
   @ApiProperty({
-    enum: ['football', 'futsal'],
     example: 'football',
     required: false,
+    description:
+      'One of the values from GET /sport-types — checked against that ' +
+      'collection in the service, not a hardcoded list here. Ignored on a ' +
+      'GROUP event unless it matches: an event with a groupId always takes ' +
+      "its group's sportType, and sending a different value is a 400. Only " +
+      'a standalone event chooses its own.',
   })
   @IsOptional()
-  @IsEnum(['football', 'futsal'])
+  @IsString()
   sportType?: string;
 
   @ApiProperty({
-    enum: [...FOOTBALL_SUB_TYPES],
     example: 'stadium',
     required: false,
     description:
-      'Format of a FOOTBALL event. Only valid when `sportType` is ' +
-      "'football' — sending it with any other sportType is a 400, since it " +
-      'would mean nothing there. Omit it for "unspecified"; that is what ' +
-      'every event created before this field existed reads as, and it is NOT ' +
-      'a synonym for stadium.',
+      'Format of the event, e.g. a FOOTBALL event is `futsal` or `stadium`. ' +
+      'Only valid when the resolved sportType lists it in its `subTypes` on ' +
+      'GET /sport-types — sending it for a sport with no formats is a 400, ' +
+      'since it would mean nothing there. Omit it for "unspecified"; that is ' +
+      'what every event created before this field existed reads as, and it ' +
+      'is NOT a synonym for stadium.',
   })
   @IsOptional()
-  @IsIn([...FOOTBALL_SUB_TYPES])
+  @IsString()
   subType?: string;
-
 
   @ApiProperty({
     enum: ['beginner', 'intermediate', 'advanced'],
@@ -183,7 +185,7 @@ export class CreateEventDto {
     minimum: 0,
     description:
       'How long before kick-off registration closes, in MINUTES. NOT the ' +
-      "same as `duration`, which is how long the event RUNS — same unit, " +
+      'same as `duration`, which is how long the event RUNS — same unit, ' +
       'opposite direction: this counts backward from the start. ' +
       '120 closes registration two hours before; 0 (the default) keeps it ' +
       'open right up to kick-off, which is the behaviour of every event ' +

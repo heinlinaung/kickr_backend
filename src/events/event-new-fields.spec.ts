@@ -18,10 +18,13 @@ const validCreate = {
 };
 
 const create = (over: Record<string, unknown>) =>
-  pipe.transform({ ...validCreate, ...over }, {
-    type: 'body',
-    metatype: CreateEventDto,
-  });
+  pipe.transform(
+    { ...validCreate, ...over },
+    {
+      type: 'body',
+      metatype: CreateEventDto,
+    },
+  );
 
 const update = (over: Record<string, unknown>) =>
   pipe.transform(over, { type: 'body', metatype: UpdateEventDto });
@@ -79,9 +82,9 @@ describe('registrationClosingDuration', () => {
   it('defaults to 0 on the schema, not null', async () => {
     // Distinct from subType, which defaults to null: "no early close" is a real
     // answer, whereas an unspecified football format is genuinely unknown.
-    expect(EventSchema.path('registrationClosingDuration').options.default).toBe(
-      0,
-    );
+    expect(
+      EventSchema.path('registrationClosingDuration').options.default,
+    ).toBe(0);
   });
 
   it('is a DIFFERENT field from duration', async () => {
@@ -103,10 +106,14 @@ describe('subType — football format', () => {
     expect(out.subType).toBe(value);
   });
 
-  it('rejects a value outside the enum', async () => {
-    await expect(
-      create({ sportType: 'football', subType: 'beach' }),
-    ).rejects.toThrow();
+  it('passes an unknown value through — the SERVICE rejects it', async () => {
+    // The DTO no longer carries a hardcoded enum: allowed formats live in the
+    // `sporttypes` collection (each sport's `subTypes`), and
+    // EventsService.create/update check against it. See events.service.spec
+    // for the rejection.
+    const out: any = await create({ sportType: 'football', subType: 'beach' });
+
+    expect(out.subType).toBe('beach');
   });
 
   it('is optional — omitting it means unspecified', async () => {

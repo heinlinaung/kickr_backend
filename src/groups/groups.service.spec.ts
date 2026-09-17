@@ -15,6 +15,8 @@ import { ImageKitService } from '../common/upload/imagekit.service';
 import { LocationsService } from '../locations/locations.service';
 import { EventsService } from '../events/events.service';
 import { PhotosService } from '../photos/photos.service';
+import { SportTypesService } from '../sport-types/sport-types.service';
+import { sportTypesDouble } from '../events/events.test-providers';
 import { Message } from '../chat/schemas/message.schema';
 import { Tournament } from '../tournaments/schemas/tournament.schema';
 import { Location } from '../locations/schemas/location.schema';
@@ -38,7 +40,10 @@ describe('GroupsService', () => {
   const messageModel: any = {};
   const tournamentModel: any = {};
   const locationModel: any = {};
-  const eventsService: any = {};
+  // update() propagates a sportType change to the group's events.
+  const eventsService: any = {
+    applyGroupSportType: jest.fn().mockResolvedValue(undefined),
+  };
   // The group delete cascade removes the group's own photos.
   const photosService: any = {
     removeAllForTarget: jest.fn().mockResolvedValue({ photos: 0 }),
@@ -103,6 +108,7 @@ describe('GroupsService', () => {
         { provide: getModelToken(Location.name), useValue: locationModel },
         { provide: EventsService, useValue: eventsService },
         { provide: PhotosService, useValue: photosService },
+        { provide: SportTypesService, useValue: sportTypesDouble() },
         {
           provide: ConfigService,
           useValue: { get: jest.fn().mockReturnValue('http://localhost:3000') },
@@ -332,13 +338,19 @@ describe('GroupsService', () => {
     beforeEach(() => {
       groupModel.findById.mockReturnValue(q(groupDoc()));
       groupModel.deleteOne = jest.fn().mockResolvedValue({ deletedCount: 1 });
-      memberModel.deleteMany = jest.fn().mockResolvedValue({ deletedCount: 27 });
-      messageModel.deleteMany = jest.fn().mockResolvedValue({ deletedCount: 412 });
+      memberModel.deleteMany = jest
+        .fn()
+        .mockResolvedValue({ deletedCount: 27 });
+      messageModel.deleteMany = jest
+        .fn()
+        .mockResolvedValue({ deletedCount: 412 });
       tournamentModel.deleteMany = jest
         .fn()
         .mockResolvedValue({ deletedCount: 0 });
       tournamentModel.countDocuments = jest.fn().mockResolvedValue(0);
-      locationModel.deleteMany = jest.fn().mockResolvedValue({ deletedCount: 2 });
+      locationModel.deleteMany = jest
+        .fn()
+        .mockResolvedValue({ deletedCount: 2 });
       eventsService.removeAllForGroup = jest
         .fn()
         .mockResolvedValue({ events: 3 });
@@ -471,7 +483,9 @@ describe('GroupsService', () => {
 
   describe('private group contents are gated', () => {
     const privateGroup = () =>
-      groupModel.findById.mockReturnValue(q({ _id: GROUP_ID, isPrivate: true }));
+      groupModel.findById.mockReturnValue(
+        q({ _id: GROUP_ID, isPrivate: true }),
+      );
     const publicGroup = () =>
       groupModel.findById.mockReturnValue(
         q({ _id: GROUP_ID, isPrivate: false }),
@@ -503,9 +517,9 @@ describe('GroupsService', () => {
         memberModel.findOne.mockResolvedValue({ role: 'member' });
         memberModel.find.mockReturnValue(q([]));
 
-        await expect(
-          service.listMembers(GROUP_ID, USER_ID),
-        ).resolves.toEqual([]);
+        await expect(service.listMembers(GROUP_ID, USER_ID)).resolves.toEqual(
+          [],
+        );
       });
 
       it('leaves a PUBLIC group open to non-members', async () => {
@@ -514,9 +528,9 @@ describe('GroupsService', () => {
         memberModel.findOne.mockResolvedValue(null);
         memberModel.find.mockReturnValue(q([]));
 
-        await expect(
-          service.listMembers(GROUP_ID, USER_ID),
-        ).resolves.toEqual([]);
+        await expect(service.listMembers(GROUP_ID, USER_ID)).resolves.toEqual(
+          [],
+        );
       });
 
       it('404s an unknown group rather than 403', async () => {
@@ -1343,7 +1357,9 @@ describe('GroupsService', () => {
       // This route is reachable by any authenticated user, so a populated
       // email would hand every member's address to an outsider. User search
       // deliberately never returns one; this must not either.
-      groupModel.findById.mockReturnValue(q({ _id: GROUP_ID, isPrivate: false }));
+      groupModel.findById.mockReturnValue(
+        q({ _id: GROUP_ID, isPrivate: false }),
+      );
       const chain = q([]);
       memberModel.find.mockReturnValue(chain);
 
@@ -1357,13 +1373,70 @@ describe('GroupsService', () => {
     });
 
     it('returns only approved members', async () => {
-      groupModel.findById.mockReturnValue(q({ _id: GROUP_ID, isPrivate: false }));
+      groupModel.findById.mockReturnValue(
+        q({ _id: GROUP_ID, isPrivate: false }),
+      );
       const chain = q([]);
       memberModel.find.mockReturnValue(chain);
 
       await service.listMembers(GROUP_ID, USER_ID);
 
       expect(memberModel.find.mock.calls[0][0].status).toBe('approved');
+    });
+  });
+
+  // sportType is checked against the `sporttypes` collection (via
+  // SportTypesService), not a hardcoded enum — and a grouped event's sportType
+  // is ALWAYS its group's, so a group sportType write must carry the events.
+  describe('sportType', () => {
+    it('create rejects a sport the collection does not list, before writing', async () => {
+      await expect(
+        service.create(USER_ID, { name: 'Cricket Club', sportType: 'cricket' }),
+      ).rejects.toThrow(/Unknown sportType 'cricket'/);
+      expect(groupModel.create).not.toHaveBeenCalled();
+    });
+
+    it('create accepts a seeded sport', async () => {
+      groupModel.create.mockResolvedValue({ _id: GROUP_ID });
+      memberModel.create.mockResolvedValue({});
+
+      await service.create(USER_ID, { name: 'BKK FC', sportType: 'football' });
+
+      expect(groupModel.create.mock.calls[0][0].sportType).toBe('football');
+    });
+
+    it('update rejects an unknown sport before writing', async () => {
+      allowOwner();
+      await expect(
+        service.update(GROUP_ID, USER_ID, { sportType: 'cricket' }),
+      ).rejects.toThrow(/Unknown sportType 'cricket'/);
+      expect(groupModel.findByIdAndUpdate).not.toHaveBeenCalled();
+      expect(eventsService.applyGroupSportType).not.toHaveBeenCalled();
+    });
+
+    it("update propagates the new sportType to the group's events", async () => {
+      allowOwner();
+      groupModel.findByIdAndUpdate.mockReturnValue(
+        q({ _id: GROUP_ID, sportType: 'padel' }),
+      );
+
+      await service.update(GROUP_ID, USER_ID, { sportType: 'padel' });
+
+      expect(eventsService.applyGroupSportType).toHaveBeenCalledWith(
+        GROUP_ID,
+        'padel',
+      );
+    });
+
+    it('update leaves events alone when sportType was not sent', async () => {
+      allowOwner();
+      groupModel.findByIdAndUpdate.mockReturnValue(
+        q({ _id: GROUP_ID, name: 'Renamed' }),
+      );
+
+      await service.update(GROUP_ID, USER_ID, { name: 'Renamed' });
+
+      expect(eventsService.applyGroupSportType).not.toHaveBeenCalled();
     });
   });
 });

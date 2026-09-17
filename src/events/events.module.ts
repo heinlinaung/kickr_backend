@@ -31,6 +31,7 @@ import { UploadModule } from '../common/upload/upload.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 
 import { PhotosModule } from '../photos/photos.module';
+import { SportTypesModule } from '../sport-types/sport-types.module';
 
 @Module({
   imports: [
@@ -57,6 +58,7 @@ import { PhotosModule } from '../photos/photos.module';
     LocationsModule,
     UploadModule,
     NotificationsModule,
+    SportTypesModule,
   ],
   controllers: [EventsController, EventTemplatesController],
   providers: [EventsService],

@@ -78,7 +78,7 @@ describe('EventsService — location handling on create', () => {
           sportType: 'futsal',
           subType: 'stadium',
         }),
-      ).rejects.toThrow(/only valid when sportType is 'football'/);
+      ).rejects.toThrow(/not valid for sportType 'futsal'/);
     });
 
     it('does not write the event when the pair is rejected', async () => {
@@ -266,7 +266,9 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
     it('is independent of the group role', async () => {
       // A group owner who never joined must still read as not joined — the
       // gap that prompted this field.
-      eventModel.findById.mockReturnValue(q({ _id: EVENT_ID, groupId: GROUP_ID }));
+      eventModel.findById.mockReturnValue(
+        q({ _id: EVENT_ID, groupId: GROUP_ID }),
+      );
       groupModel.findById.mockReturnValue(q({ rules: '' }));
       memberModel.findOne = jest
         .fn()
@@ -283,7 +285,9 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
   describe('findById → groupRules', () => {
     it("attaches the parent group's rules as text", async () => {
       const rules = 'No smoking\nArrive 15 min early\n(or tell the captain)';
-      eventModel.findById.mockReturnValue(q({ _id: EVENT_ID, groupId: GROUP_ID }));
+      eventModel.findById.mockReturnValue(
+        q({ _id: EVENT_ID, groupId: GROUP_ID }),
+      );
       groupModel.findById.mockReturnValue(q({ rules }));
 
       const res: any = await service.findById(EVENT_ID);
@@ -303,7 +307,9 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
     });
 
     it("returns '' when the group has no rules set", async () => {
-      eventModel.findById.mockReturnValue(q({ _id: EVENT_ID, groupId: GROUP_ID }));
+      eventModel.findById.mockReturnValue(
+        q({ _id: EVENT_ID, groupId: GROUP_ID }),
+      );
       groupModel.findById.mockReturnValue(q({}));
 
       const res: any = await service.findById(EVENT_ID);
@@ -322,7 +328,9 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
     };
 
     it('attaches the group name, logo and wallpaper', async () => {
-      eventModel.findById.mockReturnValue(q({ _id: EVENT_ID, groupId: GROUP_ID }));
+      eventModel.findById.mockReturnValue(
+        q({ _id: EVENT_ID, groupId: GROUP_ID }),
+      );
       groupModel.findById.mockReturnValue(q(branding));
 
       const res: any = await service.findById(EVENT_ID);
@@ -338,7 +346,9 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
     it('fetches branding and rules in ONE group query', async () => {
       // The rules projection was already here; the branding fields ride along
       // rather than costing a second round trip on every detail request.
-      eventModel.findById.mockReturnValue(q({ _id: EVENT_ID, groupId: GROUP_ID }));
+      eventModel.findById.mockReturnValue(
+        q({ _id: EVENT_ID, groupId: GROUP_ID }),
+      );
       const chain = q(branding);
       groupModel.findById.mockReturnValue(chain);
 
@@ -351,7 +361,9 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
     it('does NOT leak the internal ImageKit file ids', async () => {
       // logoFileId/wallpaperFileId are storage handles used for deletion, not
       // client data — the projection must not widen to the whole document.
-      eventModel.findById.mockReturnValue(q({ _id: EVENT_ID, groupId: GROUP_ID }));
+      eventModel.findById.mockReturnValue(
+        q({ _id: EVENT_ID, groupId: GROUP_ID }),
+      );
       groupModel.findById.mockReturnValue(
         q({ ...branding, logoFileId: 'file_123', wallpaperFileId: 'file_456' }),
       );
@@ -365,7 +377,9 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
 
     it('reports null for images the group has not set', async () => {
       // null, not '': an unset image is absent rather than empty.
-      eventModel.findById.mockReturnValue(q({ _id: EVENT_ID, groupId: GROUP_ID }));
+      eventModel.findById.mockReturnValue(
+        q({ _id: EVENT_ID, groupId: GROUP_ID }),
+      );
       groupModel.findById.mockReturnValue(q({ _id: GROUP_ID, name: 'Bare' }));
 
       const res: any = await service.findById(EVENT_ID);
@@ -388,7 +402,9 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
 
     it('is null when the groupId points at a deleted group', async () => {
       // A dangling groupId must not crash detail — the event still renders.
-      eventModel.findById.mockReturnValue(q({ _id: EVENT_ID, groupId: GROUP_ID }));
+      eventModel.findById.mockReturnValue(
+        q({ _id: EVENT_ID, groupId: GROUP_ID }),
+      );
       groupModel.findById.mockReturnValue(q(null));
 
       const res: any = await service.findById(EVENT_ID);
@@ -399,7 +415,9 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
 
     it('keeps groupRules at the top level, unmoved', async () => {
       // Additive change: an existing client reading groupRules must not break.
-      eventModel.findById.mockReturnValue(q({ _id: EVENT_ID, groupId: GROUP_ID }));
+      eventModel.findById.mockReturnValue(
+        q({ _id: EVENT_ID, groupId: GROUP_ID }),
+      );
       groupModel.findById.mockReturnValue(q(branding));
 
       const res: any = await service.findById(EVENT_ID);
@@ -409,7 +427,7 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
   });
 
   describe('list → includeExpired', () => {
-    const filterOf = () => eventModel.find.mock.calls.at(-1)[0] as any;
+    const filterOf = () => eventModel.find.mock.calls.at(-1)[0];
     const startOfToday = () => {
       const d = new Date();
       d.setHours(0, 0, 0, 0);
@@ -484,8 +502,7 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
   });
 
   describe('list → finished events', () => {
-    const statusOf = () =>
-      (eventModel.find.mock.calls.at(-1)[0] as any).status;
+    const statusOf = () => eventModel.find.mock.calls.at(-1)[0].status;
 
     it('hides after_match and done by default', async () => {
       // A played fixture is history, not something to turn up to. Both states
@@ -592,7 +609,7 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
       });
     });
 
-    it('normalises the caller\'s casing to the stored lowercase form', async () => {
+    it("normalises the caller's casing to the stored lowercase form", async () => {
       // Values are stored lowercase, so a caller typing "Yangon" must still
       // match. Previously handled by an /i regex; now by normalising the input.
       groupModel.find.mockReturnValue(q([]));

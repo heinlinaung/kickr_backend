@@ -11,13 +11,11 @@ import {
   Tournament,
   TournamentSchema,
 } from '../tournaments/schemas/tournament.schema';
-import {
-  Location,
-  LocationSchema,
-} from '../locations/schemas/location.schema';
+import { Location, LocationSchema } from '../locations/schemas/location.schema';
 import { LocationsModule } from '../locations/locations.module';
 
 import { PhotosModule } from '../photos/photos.module';
+import { SportTypesModule } from '../sport-types/sport-types.module';
 
 @Module({
   imports: [
@@ -37,6 +35,7 @@ import { PhotosModule } from '../photos/photos.module';
     EventsModule,
     UploadModule,
     LocationsModule,
+    SportTypesModule,
   ],
   controllers: [GroupsController],
   providers: [GroupsService],

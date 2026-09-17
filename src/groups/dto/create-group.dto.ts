@@ -4,7 +4,6 @@ import {
   IsOptional,
   IsBoolean,
   IsNumber,
-  IsIn,
   IsArray,
   IsMongoId,
   ArrayMaxSize,
@@ -31,10 +30,13 @@ export class CreateGroupDto {
   @ApiProperty({
     example: 'football',
     required: false,
-    enum: ['football', 'futsal', 'padel', 'basketball'],
+    description:
+      'One of the values from GET /sport-types — checked against that ' +
+      'collection in the service, not a hardcoded list here. Events created ' +
+      "under the group always inherit the group's sportType.",
   })
   @IsOptional()
-  @IsIn(['football', 'futsal', 'padel', 'basketball'])
+  @IsString()
   sportType?: string;
 
   @ApiProperty({ example: 'bangkok-fc', required: false })
