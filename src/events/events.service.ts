@@ -60,6 +60,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { PhotosService } from '../photos/photos.service';
 import {
   EventStatus,
+  buildStageFor,
   canEnterScore,
   canJoin,
   canLeave,
@@ -1081,9 +1082,14 @@ export class EventsService {
     if (!isEventStatus(to)) {
       throw new BadRequestException(`Unknown status '${to}'`);
     }
-    if (!canTransition(event.status, to)) {
+    // Sport-aware: football runs the six-state table, every other sport skips
+    // `preparation` — so e.g. join -> preparation on a badminton event lands
+    // here, not in the isEventStatus check above (it IS a status, just not a
+    // reachable one for that sport).
+    if (!canTransition(event.status, to, event.sportType)) {
       throw new ConflictException(
-        `Cannot move an event from '${event.status}' to '${to}'`,
+        `Cannot move a ${event.sportType ?? 'football'} event from ` +
+          `'${event.status}' to '${to}'`,
       );
     }
 
@@ -1375,9 +1381,10 @@ export class EventsService {
     { persistTeamCount = false }: { persistTeamCount?: boolean } = {},
   ) {
     const event = await this.assertOrganizer(eventId, userId);
-    if (!canShuffle(event.status)) {
+    if (!canShuffle(event.status, event.sportType)) {
       throw new BadRequestException(
-        `Teams can only be generated during preparation (event is '${event.status}')`,
+        `Teams can only be generated during ` +
+          `${buildStageFor(event.sportType)} (event is '${event.status}')`,
       );
     }
 
@@ -1514,9 +1521,10 @@ export class EventsService {
     dto: AssignTeamPlayersDto,
   ) {
     const event = await this.assertOrganizer(eventId, userId);
-    if (!canShuffle(event.status)) {
+    if (!canShuffle(event.status, event.sportType)) {
       throw new BadRequestException(
-        `Teams can only be edited during preparation (event is '${event.status}')`,
+        `Teams can only be edited during ` +
+          `${buildStageFor(event.sportType)} (event is '${event.status}')`,
       );
     }
     if (!Types.ObjectId.isValid(teamId)) {
@@ -1690,9 +1698,10 @@ export class EventsService {
    */
   async shuffleTeams(eventId: string, userId: string) {
     const event = await this.assertOrganizer(eventId, userId);
-    if (!canShuffle(event.status)) {
+    if (!canShuffle(event.status, event.sportType)) {
       throw new BadRequestException(
-        `Teams can only be shuffled during preparation (event is '${event.status}')`,
+        `Teams can only be shuffled during ` +
+          `${buildStageFor(event.sportType)} (event is '${event.status}')`,
       );
     }
 

@@ -211,6 +211,52 @@ describe('EventsService — sportType from the sporttypes collection', () => {
     });
   });
 
+  describe('setStatus — the lifecycle is sport-aware', () => {
+    const eventDoc = (over: Record<string, unknown> = {}) => ({
+      _id: 'e1',
+      title: 'Sunday game',
+      createdBy: new Types.ObjectId(USER_ID),
+      groupId: null,
+      status: 'join',
+      sportType: 'badminton',
+      save: jest.fn().mockResolvedValue(undefined),
+      toJSON: jest.fn().mockReturnValue({}),
+      ...over,
+    });
+
+    it('a non-football event closes registration straight into ready_to_play', async () => {
+      const doc = eventDoc();
+      eventModel.findById = jest.fn().mockResolvedValue(doc);
+
+      await service.setStatus('e1', USER_ID, 'ready_to_play');
+
+      expect(doc.status).toBe('ready_to_play');
+      expect(doc.save).toHaveBeenCalled();
+    });
+
+    it('a non-football event cannot enter preparation', async () => {
+      // 'preparation' IS a status, just not a reachable one for this sport —
+      // so it 409s at the transition check, naming the sport.
+      eventModel.findById = jest.fn().mockResolvedValue(eventDoc());
+
+      await expect(
+        service.setStatus('e1', USER_ID, 'preparation'),
+      ).rejects.toThrow(/Cannot move a badminton event from 'join'/);
+    });
+
+    it('a football event keeps the six-state path', async () => {
+      const doc = eventDoc({ sportType: 'football' });
+      eventModel.findById = jest.fn().mockResolvedValue(doc);
+
+      await expect(
+        service.setStatus('e1', USER_ID, 'ready_to_play'),
+      ).rejects.toThrow(/Cannot move a football event from 'join'/);
+
+      await service.setStatus('e1', USER_ID, 'preparation');
+      expect(doc.status).toBe('preparation');
+    });
+  });
+
   describe('applyGroupSportType — group change propagates to its events', () => {
     it('rewrites every event and clears formats the new sport does not list', async () => {
       await service.applyGroupSportType(GROUP_ID, 'padel');
