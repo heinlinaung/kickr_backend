@@ -1,7 +1,9 @@
 import {
   EVENT_STATUSES,
+  NON_FOOTBALL_EVENT_STATUSES,
   EventStatus,
   allowedTransitions,
+  buildStageFor,
   canEnterScore,
   canJoin,
   canLeave,
@@ -10,6 +12,8 @@ import {
   canSubmitResult,
   canTransition,
   isEventStatus,
+  isFootball,
+  statusesFor,
 } from './events.lifecycle';
 
 /**
@@ -219,5 +223,106 @@ describe('event lifecycle — action gates', () => {
     for (const { fn } of Object.values(gates)) {
       expect(fn('done')).toBe(false);
     }
+  });
+});
+
+describe('event lifecycle — sport-aware (non-football skips preparation)', () => {
+  const SPORT = 'badminton';
+
+  /**
+   * The non-football table, transcribed independently of the implementation —
+   * football's edges with `preparation` cut out and its edges rewired.
+   */
+  const NON_FOOTBALL_LEGAL: ReadonlyArray<[EventStatus, EventStatus]> = [
+    ['join', 'ready_to_play'],
+    ['ready_to_play', 'playing'],
+    // Reverse edge lands back in registration — there is no build stage.
+    ['ready_to_play', 'join'],
+    ['playing', 'after_match'],
+    ['after_match', 'done'],
+    // Escape edges only: nothing can ENTER preparation for these sports, but
+    // a group switching sport away from football can leave an event stranded
+    // there, and it must be able to get out.
+    ['preparation', 'ready_to_play'],
+    ['preparation', 'join'],
+  ];
+
+  const isLegal = (from: EventStatus, to: EventStatus) =>
+    NON_FOOTBALL_LEGAL.some(([f, t]) => f === from && t === to);
+
+  it('statusesFor lists five states for other sports, six for football', () => {
+    expect([...statusesFor(SPORT)]).toEqual([
+      'join',
+      'ready_to_play',
+      'playing',
+      'after_match',
+      'done',
+    ]);
+    expect([...statusesFor('football')]).toEqual([...EVENT_STATUSES]);
+    // Absent means football: the schema default, and every pre-field document.
+    expect([...statusesFor(undefined)]).toEqual([...EVENT_STATUSES]);
+    expect([...statusesFor(null)]).toEqual([...EVENT_STATUSES]);
+  });
+
+  it('NON_FOOTBALL_EVENT_STATUSES is the exported five-state list', () => {
+    expect([...NON_FOOTBALL_EVENT_STATUSES]).not.toContain('preparation');
+    expect(NON_FOOTBALL_EVENT_STATUSES).toHaveLength(5);
+  });
+
+  // 36 ordered pairs again, this time under a non-football sport.
+  describe.each(EVENT_STATUSES)('from %s', (from) => {
+    it.each(EVENT_STATUSES)(`-> %s (${SPORT})`, (to) => {
+      expect(canTransition(from, to, SPORT)).toBe(isLegal(from, to));
+    });
+  });
+
+  it('registration closes straight into ready_to_play', () => {
+    expect(canTransition('join', 'ready_to_play', SPORT)).toBe(true);
+    // ...and preparation cannot be entered from anywhere.
+    for (const from of EVENT_STATUSES) {
+      expect(canTransition(from, 'preparation', SPORT)).toBe(false);
+    }
+  });
+
+  it('omitting the sport keeps the football table — the pre-existing callers', () => {
+    expect(canTransition('join', 'preparation')).toBe(true);
+    expect(canTransition('join', 'ready_to_play')).toBe(false);
+  });
+
+  it('allowedTransitions agrees with canTransition per sport', () => {
+    for (const from of EVENT_STATUSES) {
+      for (const to of EVENT_STATUSES) {
+        expect(allowedTransitions(from, SPORT).includes(to)).toBe(
+          canTransition(from, to, SPORT),
+        );
+      }
+    }
+  });
+
+  it('teams are built in ready_to_play for other sports, preparation for football', () => {
+    expect(buildStageFor(SPORT)).toBe('ready_to_play');
+    expect(buildStageFor('football')).toBe('preparation');
+    expect(buildStageFor(undefined)).toBe('preparation');
+
+    expect(canShuffle('ready_to_play', SPORT)).toBe(true);
+    expect(canShuffle('preparation', SPORT)).toBe(false);
+    // Football's freeze semantics are untouched.
+    expect(canShuffle('ready_to_play', 'football')).toBe(false);
+    expect(canShuffle('preparation', 'football')).toBe(true);
+  });
+
+  it('shuffle and score entry still never overlap, for either family', () => {
+    for (const s of EVENT_STATUSES) {
+      expect(canShuffle(s, SPORT) && canEnterScore(s)).toBe(false);
+      expect(canShuffle(s, 'football') && canEnterScore(s)).toBe(false);
+    }
+  });
+
+  it('isFootball treats only a present non-football string as other', () => {
+    expect(isFootball('football')).toBe(true);
+    expect(isFootball(undefined)).toBe(true);
+    expect(isFootball(null)).toBe(true);
+    expect(isFootball('badminton')).toBe(false);
+    expect(isFootball('padel')).toBe(false);
   });
 });

@@ -25,6 +25,55 @@ import { LocationsService } from '../locations/locations.service';
 import { ImageKitService } from '../common/upload/imagekit.service';
 import { PhotosService } from '../photos/photos.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { SportTypesService } from '../sport-types/sport-types.service';
+import { BadRequestException } from '@nestjs/common';
+
+/**
+ * Mirror of `scripts/seed-sport-types.ts`, so the default double validates
+ * exactly like a seeded database and specs can assert real rejections
+ * (unknown sport, subType on a sport with no formats) without wiring a mock.
+ */
+export const TEST_SPORT_TYPES = [
+  { value: 'football', subTypes: ['futsal', 'stadium'], sortOrder: 1 },
+  { value: 'futsal', subTypes: [], sortOrder: 2 },
+  { value: 'badminton', subTypes: [], sortOrder: 3 },
+  { value: 'padel', subTypes: [], sortOrder: 4 },
+  { value: 'basketball', subTypes: [], sortOrder: 5 },
+];
+
+/** Behavioural double of SportTypesService over TEST_SPORT_TYPES. */
+export function sportTypesDouble() {
+  return {
+    findAll: jest.fn().mockResolvedValue(TEST_SPORT_TYPES),
+    findByValue: jest.fn(
+      async (value: string) =>
+        TEST_SPORT_TYPES.find((row) => row.value === value) ?? null,
+    ),
+    // Same messages as the real SportTypesService, so message-matching
+    // assertions exercise the text callers actually see.
+    assertValid: jest.fn(async (sportType: string, subType?: string | null) => {
+      const sport = TEST_SPORT_TYPES.find((row) => row.value === sportType);
+      if (!sport) {
+        const valid = TEST_SPORT_TYPES.map((row) => row.value).join(', ');
+        throw new BadRequestException(
+          `Unknown sportType '${sportType}'. Valid values: ${valid}`,
+        );
+      }
+      if (!subType) return;
+      if (!sport.subTypes.includes(subType)) {
+        if (sport.subTypes.length === 0) {
+          throw new BadRequestException(
+            `subType is not valid for sportType '${sportType}'`,
+          );
+        }
+        throw new BadRequestException(
+          `Unknown subType '${subType}' for sportType '${sportType}'. ` +
+            `Valid values: ${sport.subTypes.join(', ')}`,
+        );
+      }
+    }),
+  };
+}
 
 export interface EventsTestDoubles {
   eventModel?: any;
@@ -42,6 +91,7 @@ export interface EventsTestDoubles {
   imagekit?: any;
   photosService?: any;
   notifications?: any;
+  sportTypes?: any;
 }
 
 export function eventsProviders(doubles: EventsTestDoubles = {}) {
@@ -91,6 +141,7 @@ export function eventsProviders(doubles: EventsTestDoubles = {}) {
       removeAllForTarget: jest.fn().mockResolvedValue({ photos: 0 }),
     },
     notifications = { create: jest.fn().mockResolvedValue(undefined) },
+    sportTypes = sportTypesDouble(),
   } = doubles;
 
   return [
@@ -109,5 +160,6 @@ export function eventsProviders(doubles: EventsTestDoubles = {}) {
     { provide: ImageKitService, useValue: imagekit },
     { provide: PhotosService, useValue: photosService },
     { provide: NotificationsService, useValue: notifications },
+    { provide: SportTypesService, useValue: sportTypes },
   ];
 }

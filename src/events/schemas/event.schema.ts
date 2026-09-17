@@ -1,7 +1,7 @@
 // src/events/schemas/event.schema.ts
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
-import { EVENT_STATUSES, FOOTBALL_SUB_TYPES } from '../events.lifecycle';
+import { EVENT_STATUSES } from '../events.lifecycle';
 
 export type EventDocument = HydratedDocument<Event>;
 
@@ -68,15 +68,31 @@ export class Event {
   @Prop({ default: 0 })
   joinedCount: number;
 
-  @Prop({ default: 'football', enum: ['football', 'futsal'] })
+  /**
+   * A plain value from the `sporttypes` collection (seeded by
+   * `scripts/seed-sport-types.ts`) — deliberately NOT an ObjectId ref. No
+   * schema-level enum: the old inline lists here, on the group schema and in
+   * the DTOs had already drifted apart, so the collection is now the single
+   * source of truth and the services validate writes against it.
+   *
+   * A grouped event does not choose this: an event with a `groupId` always
+   * carries its GROUP's sportType. EventsService copies it on create, rejects
+   * a conflicting value on update, and propagates a group sportType change to
+   * every event under the group. Only a standalone event (`groupId: null`)
+   * sets it freely.
+   */
+  @Prop({ default: 'football' })
   sportType: string;
 
   /**
    * The format of a FOOTBALL event: `futsal` or `stadium`.
    *
-   * Only meaningful when `sportType` is `'football'`, and the create/update
-   * paths reject it otherwise — so it cannot be set on a futsal or padel event
-   * where it would mean nothing.
+   * Only meaningful when the sport has formats at all — the allowed values
+   * are the `subTypes` of this event's sportType row in the `sporttypes`
+   * collection, and only football has any. The create/update paths reject a
+   * subType the row does not carry, so it cannot be set on a futsal or padel
+   * event where it would mean nothing. A football GROUP's events keep
+   * `sportType: 'football'` and pick their format here.
    *
    * `null` by default, which is what every event created before this field
    * existed reads as: the organizer did not say. Treat it as "unspecified",
@@ -89,7 +105,7 @@ export class Event {
    * migration of existing futsal events — but a client filtering for futsal
    * must check both.
    */
-  @Prop({ type: String, default: null, enum: [...FOOTBALL_SUB_TYPES, null] })
+  @Prop({ type: String, default: null })
   subType: string | null;
 
   @Prop({ default: 'beginner', enum: ['beginner', 'intermediate', 'advanced'] })
@@ -132,7 +148,6 @@ export class Event {
    */
   @Prop({ default: false })
   isAllowExtraPlayer: boolean;
-
 
   /**
    * Lifecycle state (spec §4.1). Replaces the old `open|full|done`.

@@ -87,19 +87,23 @@ describe('CreateGroupDto', () => {
     expect(out.city).toBe('bangkok');
   });
 
-  it('rejects an unknown sportType, accepts football', async () => {
-    expect(
-      await expectRejected(CreateGroupDto, {
-        name: 'Bangkok FC',
-        sportType: 'cricket',
-      }),
-    ).toContain('sportType');
-
+  // The DTO no longer carries a hardcoded enum — allowed values live in the
+  // `sporttypes` collection and GroupsService checks against it, so an unknown
+  // sport is rejected in the SERVICE (see groups.service.spec), not here. The
+  // DTO's job is only the shape.
+  it('passes sportType through as a string; a non-string is rejected', async () => {
     const out: any = await run(CreateGroupDto, {
       name: 'Bangkok FC',
       sportType: 'football',
     });
     expect(out.sportType).toBe('football');
+
+    expect(
+      await expectRejected(CreateGroupDto, {
+        name: 'Bangkok FC',
+        sportType: 42,
+      }),
+    ).toContain('sportType');
   });
 });
 

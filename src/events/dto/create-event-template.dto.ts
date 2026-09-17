@@ -62,9 +62,15 @@ export class CreateEventTemplateDto {
   @Max(6)
   teamCount?: number;
 
-  @ApiProperty({ required: false, enum: ['football', 'futsal'] })
+  @ApiProperty({
+    required: false,
+    example: 'football',
+    description: 'One of the values from GET /sport-types.',
+  })
   @IsOptional()
-  @IsIn(['football', 'futsal'])
+  // Validated against the `sporttypes` collection in the service, same as
+  // event create — not a hardcoded list here.
+  @IsString()
   sportType?: string;
 
   @ApiProperty({

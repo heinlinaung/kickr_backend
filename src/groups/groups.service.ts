@@ -23,6 +23,7 @@ import { ImageKitService } from '../common/upload/imagekit.service';
 import { LocationsService } from '../locations/locations.service';
 import { EventsService } from '../events/events.service';
 import { PhotosService } from '../photos/photos.service';
+import { SportTypesService } from '../sport-types/sport-types.service';
 import {
   clampLimit,
   decodeCursor,
@@ -88,6 +89,7 @@ export class GroupsService {
     private readonly locationsService: LocationsService,
     private readonly eventsService: EventsService,
     private readonly photosService: PhotosService,
+    private readonly sportTypesService: SportTypesService,
     private config: ConfigService,
   ) {}
 
@@ -116,6 +118,11 @@ export class GroupsService {
     // unknown field is silently dropped with no compile error, so the mapping to
     // `locations` is done explicitly here.
     const { locationIds, ...rest } = dto;
+    // Against the `sporttypes` collection, not a hardcoded list — the DTO only
+    // checks it is a string. See SportTypesService.assertValid.
+    if (rest.sportType !== undefined) {
+      await this.sportTypesService.assertValid(rest.sportType);
+    }
     const locations = await this.resolveOwnedLocationIds(locationIds, ownerId);
 
     let group: GroupDocument;
@@ -232,6 +239,11 @@ export class GroupsService {
     dto: UpdateGroupDto,
   ): Promise<GroupDocument> {
     await this.assertOwnerOrAdmin(groupId, userId);
+    // Against the `sporttypes` collection, not a hardcoded list — the DTO only
+    // checks it is a string. See SportTypesService.assertValid.
+    if (dto.sportType !== undefined) {
+      await this.sportTypesService.assertValid(dto.sportType);
+    }
     let group: GroupDocument | null;
     try {
       group = await this.groupModel
@@ -241,6 +253,15 @@ export class GroupsService {
       throw this.mapDuplicateKey(err);
     }
     if (!group) throw new NotFoundException('Group not found');
+
+    // A grouped event's sportType is ALWAYS its group's, so a sportType write
+    // here must carry the events with it. Run whenever the field was sent, not
+    // only when it changed: the extra updateMany on a no-op PATCH is cheap,
+    // and re-sending the value doubles as a repair pass for any event that has
+    // drifted (e.g. one created before the group set a sportType).
+    if (dto.sportType !== undefined) {
+      await this.eventsService.applyGroupSportType(groupId, dto.sportType);
+    }
     return group;
   }
 

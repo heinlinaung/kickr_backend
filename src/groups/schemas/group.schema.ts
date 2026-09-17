@@ -27,7 +27,18 @@ export class Group {
   @Prop()
   logoFileId: string;
 
-  @Prop({ enum: ['football', 'futsal', 'padel', 'basketball'] })
+  /**
+   * The sport this group plays, and the source of truth for every event under
+   * the group: an event with a `groupId` always carries its group's sportType
+   * (EventsService copies it on create and propagates changes).
+   *
+   * A plain value from the `sporttypes` collection — deliberately NOT an
+   * ObjectId ref. No schema-level enum: the allowed values live in that
+   * collection now (seeded by `scripts/seed-sport-types.ts`), and create/update
+   * validate against it in the service, so adding a sport is a seed re-run
+   * rather than a deploy.
+   */
+  @Prop()
   sportType: string;
 
   @Prop({ trim: true })

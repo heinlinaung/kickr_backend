@@ -314,12 +314,15 @@ export class EventsController {
   @ApiOperation({
     summary: 'Advance the event lifecycle',
     description:
-      'join -> preparation -> ready_to_play -> playing -> after_match -> ' +
-      'done. ready_to_play is where the teams are final and reviewable but ' +
-      'the match has not kicked off — the roster is frozen, so shuffling is ' +
-      'refused there. Two reverse edges: preparation may revert to join ' +
-      '(reopening registration), and ready_to_play may revert to ' +
-      'preparation (to re-shuffle a wrong team set). done is terminal. ' +
+      'Sport-aware. FOOTBALL: join -> preparation -> ready_to_play -> ' +
+      'playing -> after_match -> done. ready_to_play is where the teams are ' +
+      'final and reviewable but the match has not kicked off — the roster ' +
+      'is frozen, so shuffling is refused there. Two reverse edges: ' +
+      'preparation may revert to join (reopening registration), and ' +
+      'ready_to_play may revert to preparation (to re-shuffle a wrong team ' +
+      'set). EVERY OTHER SPORT skips preparation: join -> ready_to_play -> ' +
+      'playing -> after_match -> done, with ready_to_play reverting to join ' +
+      'and doubling as the team-building stage. done is terminal for all. ' +
       'BREAKING: preparation -> playing is no longer legal and now 409s — ' +
       'kick-off must pass through ready_to_play.',
   })

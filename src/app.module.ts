@@ -20,6 +20,7 @@ import { ShuffleModule } from './shuffle/shuffle.module';
 import { AdminModule } from './admin/admin.module';
 import { GlobalFootballTeamsModule } from './global-football-teams/global-football-teams.module';
 import { PhotosModule } from './photos/photos.module';
+import { SportTypesModule } from './sport-types/sport-types.module';
 
 @Module({
   imports: [
@@ -69,6 +70,7 @@ import { PhotosModule } from './photos/photos.module';
     AdminModule,
     GlobalFootballTeamsModule,
     PhotosModule,
+    SportTypesModule,
   ],
   providers: [
     // Removed with ThrottlerModule above. It CANNOT be left registered on its

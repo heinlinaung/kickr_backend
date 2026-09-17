@@ -47,6 +47,7 @@ import { UpdateMatchScoreDto } from './dto/update-match-score.dto';
 import { SubmitResultDto } from './dto/submit-result.dto';
 import { CreateEventTemplateDto } from './dto/create-event-template.dto';
 import { LocationsService } from '../locations/locations.service';
+import { SportTypesService } from '../sport-types/sport-types.service';
 import { ImageKitService } from '../common/upload/imagekit.service';
 import {
   clampLimit,
@@ -59,6 +60,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { PhotosService } from '../photos/photos.service';
 import {
   EventStatus,
+  buildStageFor,
   canEnterScore,
   canJoin,
   canLeave,
@@ -100,23 +102,6 @@ const DEFAULT_SHUFFLE_MATCHES = 3;
 
 /** Group roles that may manage an event: edit, delete, transition, teams. */
 const ORGANIZER_ROLES = ['owner', 'admin'] as const;
-
-/**
- * Refuses a `subType` on a non-football event.
- *
- * Shared by create and update so the two cannot diverge — update has the harder
- * job, since it must judge the RESULT of the patch rather than the patch alone.
- *
- * Only the combination is checked; the VALUE is already constrained to
- * FOOTBALL_SUB_TYPES by the DTO.
- */
-function assertSubTypeMatchesSport(sportType: string, subType?: string): void {
-  if (subType && sportType !== 'football') {
-    throw new BadRequestException(
-      `subType is only valid when sportType is 'football' (got '${sportType}')`,
-    );
-  }
-}
 
 /**
  * Group roles that may enter a match score.
@@ -183,6 +168,7 @@ export class EventsService {
     private readonly imagekit: ImageKitService,
     private readonly photosService: PhotosService,
     private readonly notificationsService: NotificationsService,
+    private readonly sportTypesService: SportTypesService,
   ) {}
 
   /**
@@ -600,15 +586,6 @@ export class EventsService {
           'Only group owner or admin can create events',
         );
     }
-    // `subType` describes a FOOTBALL format, so it means nothing on a futsal or
-    // padel event. Rejected rather than silently dropped: a caller who sent it
-    // believes it took effect, and a stored-but-meaningless value is worse than
-    // an error that says so.
-    //
-    // Checked against the RESOLVED sport — `sportType` defaults to 'football'
-    // when omitted, so `{ subType: 'stadium' }` alone is valid.
-    assertSubTypeMatchesSport(dto.sportType ?? 'football', dto.subType);
-
     // Destructure locationId out so the raw string is never spread onto the
     // model (Mongoose's loose create() typing would not flag the mismatch).
     const { locationId: dtoLocationId, templateId, ...rest } = dto;
@@ -654,6 +631,47 @@ export class EventsService {
         rest.groupId = template.groupId.toString();
       }
     }
+
+    // A group event does not choose its sport: it always carries its GROUP's
+    // sportType. Resolved AFTER the template fill, because both the sportType
+    // and the groupId can arrive from the template.
+    //
+    // A conflicting value is rejected rather than silently overridden — the
+    // caller who sent it believes it took effect. Sending the matching value
+    // (or nothing) is fine.
+    if (rest.groupId) {
+      const group = await this.groupModel
+        .findById(rest.groupId)
+        .select('sportType')
+        .lean();
+      if (!group) throw new NotFoundException('Group not found');
+      if (group.sportType) {
+        if (
+          rest.sportType !== undefined &&
+          rest.sportType !== group.sportType
+        ) {
+          throw new BadRequestException(
+            `A group event's sportType is always its group's ` +
+              `('${group.sportType}') — omit sportType or send that value`,
+          );
+        }
+        rest.sportType = group.sportType;
+      }
+      // A group with no sportType (created before the field, or never set)
+      // cannot impose one; the event's own value applies, checked below.
+    }
+
+    // One check covers both fields: the RESOLVED sport must exist in the
+    // `sporttypes` collection, and `subType` must be one of that row's
+    // formats. Resolved because `sportType` defaults to 'football' when
+    // omitted, so `{ subType: 'stadium' }` alone is valid — and a subType on
+    // a sport with no formats (anything but football today) is rejected
+    // rather than silently dropped: a stored-but-meaningless value is worse
+    // than an error that says so.
+    await this.sportTypesService.assertValid(
+      rest.sportType ?? 'football',
+      dto.subType,
+    );
 
     if (locationId) {
       // assertCanEdit, not assertOwnedBy: a group's owner/admin/captain may
@@ -1064,13 +1082,18 @@ export class EventsService {
     if (!isEventStatus(to)) {
       throw new BadRequestException(`Unknown status '${to}'`);
     }
-    if (!canTransition(event.status, to)) {
+    // Sport-aware: football runs the six-state table, every other sport skips
+    // `preparation` — so e.g. join -> preparation on a badminton event lands
+    // here, not in the isEventStatus check above (it IS a status, just not a
+    // reachable one for that sport).
+    if (!canTransition(event.status, to, event.sportType)) {
       throw new ConflictException(
-        `Cannot move an event from '${event.status}' to '${to}'`,
+        `Cannot move a ${event.sportType ?? 'football'} event from ` +
+          `'${event.status}' to '${to}'`,
       );
     }
 
-    event.status = to as EventStatus;
+    event.status = to;
     await event.save();
 
     // Tell the people actually playing that the teams are final. Fired only on
@@ -1085,7 +1108,7 @@ export class EventsService {
     // rooms stay readable — this closes them to new messages, not to history.
     if (to === 'done') {
       await this.teamChatModel.updateMany(
-        { eventId: event._id as Types.ObjectId },
+        { eventId: event._id },
         { $set: { archived: true } },
       );
     }
@@ -1102,13 +1125,37 @@ export class EventsService {
       );
     }
 
+    // A group event's sportType cannot change here — it is always its group's.
+    // The way to change it is to change the GROUP's sportType, which
+    // propagates to every event under it (applyGroupSportType). Re-sending the
+    // current value is fine, so a client that echoes the form back is not
+    // punished for it.
+    if (dto.sportType !== undefined && event.groupId) {
+      const group = await this.groupModel
+        .findById(event.groupId)
+        .select('sportType')
+        .lean();
+      if (group?.sportType && dto.sportType !== group.sportType) {
+        throw new BadRequestException(
+          `A group event's sportType is always its group's ` +
+            `('${group.sportType}') — change the group's sportType instead`,
+        );
+      }
+    }
+
     // Checked against the RESULT of the patch, not the patch alone: a caller
     // can change sportType, subType, or both. Switching a football event to
-    // futsal while leaving an old subType behind would otherwise strand a
-    // meaningless value on the document.
-    assertSubTypeMatchesSport(
-      dto.sportType ?? event.sportType,
-      dto.subType ?? event.subType ?? undefined,
+    // padel while leaving an old subType behind would otherwise strand a
+    // meaningless value on the document — clear it with `subType: null` in
+    // the same patch. Both values are checked against the `sporttypes`
+    // collection, not a hardcoded list.
+    const patchedSubType =
+      dto.subType === undefined ? event.subType : dto.subType;
+    await this.sportTypesService.assertValid(
+      // The trailing 'football' mirrors the schema default, for any document
+      // hydrated without the field.
+      dto.sportType ?? event.sportType ?? 'football',
+      patchedSubType,
     );
 
     const { locationId, date, startTime, endTime } = dto;
@@ -1130,6 +1177,11 @@ export class EventsService {
       'teamCount',
       'duration',
       'sportType',
+      // Was validated but missing from this list, so a PATCH with subType
+      // silently no-opped. Applied now; `subType: null` clears it, which is
+      // how a standalone event switches away from football without stranding
+      // a meaningless format value.
+      'subType',
       'skillLevel',
       'price',
       'additionalPrice',
@@ -1199,6 +1251,38 @@ export class EventsService {
    * organizer from destroying a finished event by accident; here the owner has
    * explicitly asked for the whole group to go, archived events included.
    */
+  /**
+   * Rewrites every event under a group to the group's (new) sportType.
+   *
+   * Exists for `PATCH /groups/:id`, the same way `removeAllForGroup` exists
+   * for the delete: a grouped event's sportType is ALWAYS its group's, so
+   * changing the group must carry the events with it or the invariant is one
+   * PATCH away from being false. Lives here rather than in GroupsService
+   * because the events collection is this module's.
+   *
+   * Takes NO permission argument — authorisation is the caller's job, exactly
+   * as documented on `removeAllForGroup`.
+   *
+   * A `subType` that the new sport does not list is cleared rather than kept:
+   * a football event's 'stadium' means nothing once the group turns into a
+   * padel group, and a stored-but-meaningless value is worse than none.
+   * Formats the new sport DOES list survive (`$nin` spares them and null).
+   */
+  async applyGroupSportType(groupId: string, sportType: string) {
+    const sport = await this.sportTypesService.findByValue(sportType);
+    const validSubTypes = sport?.subTypes ?? [];
+    const groupObjectId = new Types.ObjectId(groupId);
+
+    await this.eventModel.updateMany(
+      { groupId: groupObjectId },
+      { $set: { sportType } },
+    );
+    await this.eventModel.updateMany(
+      { groupId: groupObjectId, subType: { $nin: [...validSubTypes, null] } },
+      { $set: { subType: null } },
+    );
+  }
+
   async removeAllForGroup(groupId: string) {
     const groupObjectId = new Types.ObjectId(groupId);
 
@@ -1297,9 +1381,10 @@ export class EventsService {
     { persistTeamCount = false }: { persistTeamCount?: boolean } = {},
   ) {
     const event = await this.assertOrganizer(eventId, userId);
-    if (!canShuffle(event.status)) {
+    if (!canShuffle(event.status, event.sportType)) {
       throw new BadRequestException(
-        `Teams can only be generated during preparation (event is '${event.status}')`,
+        `Teams can only be generated during ` +
+          `${buildStageFor(event.sportType)} (event is '${event.status}')`,
       );
     }
 
@@ -1315,7 +1400,7 @@ export class EventsService {
       );
     }
 
-    const eventObjectId = event._id as Types.ObjectId;
+    const eventObjectId = event._id;
     const names = this.resolveTeamNames(dto);
 
     // Record the organizer's choice on the event, so `event.teamCount` and the
@@ -1436,16 +1521,17 @@ export class EventsService {
     dto: AssignTeamPlayersDto,
   ) {
     const event = await this.assertOrganizer(eventId, userId);
-    if (!canShuffle(event.status)) {
+    if (!canShuffle(event.status, event.sportType)) {
       throw new BadRequestException(
-        `Teams can only be edited during preparation (event is '${event.status}')`,
+        `Teams can only be edited during ` +
+          `${buildStageFor(event.sportType)} (event is '${event.status}')`,
       );
     }
     if (!Types.ObjectId.isValid(teamId)) {
       throw new NotFoundException('Team not found');
     }
 
-    const eventObjectId = event._id as Types.ObjectId;
+    const eventObjectId = event._id;
     const team = await this.teamModel.findOne({
       _id: new Types.ObjectId(teamId),
       eventId: eventObjectId,
@@ -1612,9 +1698,10 @@ export class EventsService {
    */
   async shuffleTeams(eventId: string, userId: string) {
     const event = await this.assertOrganizer(eventId, userId);
-    if (!canShuffle(event.status)) {
+    if (!canShuffle(event.status, event.sportType)) {
       throw new BadRequestException(
-        `Teams can only be shuffled during preparation (event is '${event.status}')`,
+        `Teams can only be shuffled during ` +
+          `${buildStageFor(event.sportType)} (event is '${event.status}')`,
       );
     }
 
@@ -1716,7 +1803,7 @@ export class EventsService {
    */
   async addMatch(eventId: string, userId: string, dto: AddMatchDto) {
     const event = await this.assertOrganizer(eventId, userId);
-    const eventObjectId = event._id as Types.ObjectId;
+    const eventObjectId = event._id;
 
     const teamA = dto.teamA.trim();
     const teamB = dto.teamB.trim();
@@ -1892,7 +1979,7 @@ export class EventsService {
       mvpUserId: dto.mvpUserId ? new Types.ObjectId(dto.mvpUserId) : null,
       scoreA: dto.scoreA ?? null,
       scoreB: dto.scoreB ?? null,
-    } as EventDocument['result'];
+    };
     await event.save();
 
     return event.toJSON();
@@ -2029,6 +2116,11 @@ export class EventsService {
   async createTemplate(userId: string, dto: CreateEventTemplateDto) {
     if (dto.locationId) {
       await this.locationsService.assertCanEdit(dto.locationId, userId);
+    }
+    // Checked here as well as at event create, so a bad value fails when the
+    // template is SAVED rather than months later when someone uses it.
+    if (dto.sportType) {
+      await this.sportTypesService.assertValid(dto.sportType);
     }
     return this.templateModel.create({
       ...dto,
@@ -2705,4 +2797,3 @@ function escapeRegex(input: string): string {
  * reject it — every comparison against NaN is false, so the NaN flows straight
  * through to Mongoose's .limit(). Hence the explicit isFinite check.
  */
-
