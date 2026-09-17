@@ -5,6 +5,7 @@ import { GroupPhotosController } from './group-photos.controller';
 import { PhotosService } from './photos.service';
 import { Photo, PhotoSchema } from './schemas/photo.schema';
 import { UploadModule } from '../common/upload/upload.module';
+import { PlansModule } from '../plans/plans.module';
 import {
   GroupMember,
   GroupMemberSchema,
@@ -22,6 +23,9 @@ import {
       { name: GroupMember.name, schema: GroupMemberSchema },
     ]),
     UploadModule,
+    // Also a leaf (schemas only), so the gallery cap can consult the group
+    // owner's plan without reintroducing the cycle above.
+    PlansModule,
   ],
   controllers: [GroupPhotosController],
   providers: [PhotosService],

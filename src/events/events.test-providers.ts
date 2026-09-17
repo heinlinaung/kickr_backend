@@ -26,7 +26,17 @@ import { ImageKitService } from '../common/upload/imagekit.service';
 import { PhotosService } from '../photos/photos.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SportTypesService } from '../sport-types/sport-types.service';
+import { PlansService } from '../plans/plans.service';
+import { PLANS } from '../plans/plans';
 import { BadRequestException } from '@nestjs/common';
+
+/** PlansService double answering every lookup with the default plan. */
+export function plansDouble() {
+  return {
+    limitsFor: jest.fn().mockResolvedValue(PLANS.default),
+    limitsForGroupOwner: jest.fn().mockResolvedValue(PLANS.default),
+  };
+}
 
 /**
  * Mirror of `scripts/seed-sport-types.ts`, so the default double validates
@@ -92,6 +102,7 @@ export interface EventsTestDoubles {
   photosService?: any;
   notifications?: any;
   sportTypes?: any;
+  plans?: any;
 }
 
 export function eventsProviders(doubles: EventsTestDoubles = {}) {
@@ -142,6 +153,7 @@ export function eventsProviders(doubles: EventsTestDoubles = {}) {
     },
     notifications = { create: jest.fn().mockResolvedValue(undefined) },
     sportTypes = sportTypesDouble(),
+    plans = plansDouble(),
   } = doubles;
 
   return [
@@ -161,5 +173,6 @@ export function eventsProviders(doubles: EventsTestDoubles = {}) {
     { provide: PhotosService, useValue: photosService },
     { provide: NotificationsService, useValue: notifications },
     { provide: SportTypesService, useValue: sportTypes },
+    { provide: PlansService, useValue: plans },
   ];
 }

@@ -86,6 +86,20 @@ export class User {
   favouriteTeamId: Types.ObjectId | null;
 
   /**
+   * Subscription plan, keying into the `PLANS` registry (`src/plans/plans.ts`)
+   * that says what the user may create: groups owned, events per week, gallery
+   * photos per group.
+   *
+   * A plain string rather than an enum so introducing a plan is a registry
+   * edit, not a migration; `planLimits()` maps any unknown or missing value to
+   * the default plan, so a bad string degrades to the tightest limits rather
+   * than to unlimited. No API writes this yet — changing plans is a billing
+   * concern that does not exist, so rows change by hand until it does.
+   */
+  @Prop({ default: 'default' })
+  plan: string;
+
+  /**
    * Registered push targets — one row per device, not one token per user.
    *
    * An array because a single account is routinely signed in on more than one

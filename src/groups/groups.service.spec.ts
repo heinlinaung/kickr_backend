@@ -16,7 +16,11 @@ import { LocationsService } from '../locations/locations.service';
 import { EventsService } from '../events/events.service';
 import { PhotosService } from '../photos/photos.service';
 import { SportTypesService } from '../sport-types/sport-types.service';
-import { sportTypesDouble } from '../events/events.test-providers';
+import {
+  plansDouble,
+  sportTypesDouble,
+} from '../events/events.test-providers';
+import { PlansService } from '../plans/plans.service';
 import { Message } from '../chat/schemas/message.schema';
 import { Tournament } from '../tournaments/schemas/tournament.schema';
 import { Location } from '../locations/schemas/location.schema';
@@ -74,6 +78,8 @@ describe('GroupsService', () => {
       findOne: jest.fn(),
       findByIdAndUpdate: jest.fn(),
       deleteOne: jest.fn(),
+      // create() meters the owner's groups-owned plan cap.
+      countDocuments: jest.fn().mockResolvedValue(0),
     });
     Object.assign(memberModel, {
       create: jest.fn(),
@@ -109,6 +115,7 @@ describe('GroupsService', () => {
         { provide: EventsService, useValue: eventsService },
         { provide: PhotosService, useValue: photosService },
         { provide: SportTypesService, useValue: sportTypesDouble() },
+        { provide: PlansService, useValue: plansDouble() },
         {
           provide: ConfigService,
           useValue: { get: jest.fn().mockReturnValue('http://localhost:3000') },
@@ -1437,6 +1444,30 @@ describe('GroupsService', () => {
       await service.update(GROUP_ID, USER_ID, { name: 'Renamed' });
 
       expect(eventsService.applyGroupSportType).not.toHaveBeenCalled();
+    });
+  });
+
+  // The default plan allows owning at most 2 groups (src/plans/plans.ts).
+  describe('the groups-owned plan cap', () => {
+    it('rejects a third owned group, before writing anything', async () => {
+      groupModel.countDocuments.mockResolvedValue(2);
+
+      await expect(
+        service.create(USER_ID, { name: 'Third FC' }),
+      ).rejects.toThrow(/at most 2 groups/);
+      expect(groupModel.create).not.toHaveBeenCalled();
+      expect(memberModel.create).not.toHaveBeenCalled();
+    });
+
+    it('counts only groups the caller OWNS — memberships are not metered', async () => {
+      groupModel.create.mockResolvedValue({ _id: GROUP_ID });
+      memberModel.create.mockResolvedValue({});
+
+      await service.create(USER_ID, { name: 'BKK FC' });
+
+      const filter = groupModel.countDocuments.mock.calls[0][0];
+      expect(String(filter.ownerId)).toBe(USER_ID);
+      expect(Object.keys(filter)).toEqual(['ownerId']);
     });
   });
 });

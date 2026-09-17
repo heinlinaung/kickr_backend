@@ -18,6 +18,7 @@ import {
   GroupMember,
   GroupMemberDocument,
 } from '../groups/schemas/group-member.schema';
+import { PlansService } from '../plans/plans.service';
 
 @Injectable()
 export class PhotosService {
@@ -28,6 +29,7 @@ export class PhotosService {
     @InjectModel(GroupMember.name)
     private memberModel: Model<GroupMemberDocument>,
     private readonly imagekit: ImageKitService,
+    private readonly plansService: PlansService,
   ) {}
 
   /**
@@ -77,17 +79,48 @@ export class PhotosService {
     file: Express.Multer.File,
     groupId: string | null = null,
   ) {
-    // Counted BEFORE the upload, so a rejected photo never reaches ImageKit.
-    // Uploading first would leave an orphaned remote file on every refusal —
-    // billable, and invisible from the database.
-    const existing = await this.photoModel.countDocuments({
-      targetType,
-      targetId: new Types.ObjectId(targetId),
-    });
-    if (existing >= MAX_PHOTOS_PER_TARGET) {
-      throw new BadRequestException(
-        `This ${targetType} already has the maximum of ${MAX_PHOTOS_PER_TARGET} photos. Delete one before adding another.`,
+    // Both caps are counted BEFORE the upload, so a rejected photo never
+    // reaches ImageKit. Uploading first would leave an orphaned remote file on
+    // every refusal — billable, and invisible from the database.
+
+    // Per-target sanity cap for events (and tournaments later). A GROUP's own
+    // photos are exempt: their budget is the gallery cap below, which the
+    // plan sets higher than this — capping them here too would stop a group
+    // ever reaching its plan's gallery allowance with its own uploads.
+    if (targetType !== 'group') {
+      const existing = await this.photoModel.countDocuments({
+        targetType,
+        targetId: new Types.ObjectId(targetId),
+      });
+      if (existing >= MAX_PHOTOS_PER_TARGET) {
+        throw new BadRequestException(
+          `This ${targetType} already has the maximum of ${MAX_PHOTOS_PER_TARGET} photos. Delete one before adding another.`,
+        );
+      }
+    }
+
+    // Plan gate: the owning group's GALLERY — its own photos plus its events'
+    // (the same $or as listForGroup) — is capped by the group OWNER's plan.
+    // Checked for the group's own uploads and for event uploads carrying a
+    // groupId alike, since both land in that gallery; a standalone event has
+    // no gallery to fill. Full means full: freeing a slot takes deleting an
+    // existing image.
+    const galleryGroupId = targetType === 'group' ? targetId : groupId;
+    if (galleryGroupId) {
+      const limits = await this.plansService.limitsForGroupOwner(
+        galleryGroupId,
       );
+      const gid = new Types.ObjectId(galleryGroupId);
+      const inGallery = await this.photoModel.countDocuments({
+        $or: [{ targetType: 'group', targetId: gid }, { groupId: gid }],
+      });
+      if (inGallery >= limits.maxGalleryPhotosPerGroup) {
+        throw new BadRequestException(
+          `This group's gallery already holds the maximum of ` +
+            `${limits.maxGalleryPhotosPerGroup} photos allowed by its plan. ` +
+            'Delete existing image(s) before adding more.',
+        );
+      }
     }
 
     const uploaded = await this.imagekit.upload(

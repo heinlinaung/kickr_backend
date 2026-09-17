@@ -35,6 +35,8 @@ describe('EventsService — sportType from the sporttypes collection', () => {
     jest.clearAllMocks();
     eventModel.create = jest.fn().mockResolvedValue({ _id: 'e1' });
     eventModel.updateMany = jest.fn().mockResolvedValue({ modifiedCount: 0 });
+    // create() meters the creator's events-per-week plan cap.
+    eventModel.countDocuments = jest.fn().mockResolvedValue(0);
     // The caller is a group owner, so the create permission gate passes.
     memberModel.findOne = jest.fn().mockResolvedValue({ role: 'owner' });
     groupModel.findById = jest

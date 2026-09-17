@@ -48,6 +48,8 @@ import { SubmitResultDto } from './dto/submit-result.dto';
 import { CreateEventTemplateDto } from './dto/create-event-template.dto';
 import { LocationsService } from '../locations/locations.service';
 import { SportTypesService } from '../sport-types/sport-types.service';
+import { PlansService } from '../plans/plans.service';
+import { weekOf } from '../plans/plans';
 import { ImageKitService } from '../common/upload/imagekit.service';
 import {
   clampLimit,
@@ -169,6 +171,7 @@ export class EventsService {
     private readonly photosService: PhotosService,
     private readonly notificationsService: NotificationsService,
     private readonly sportTypesService: SportTypesService,
+    private readonly plansService: PlansService,
   ) {}
 
   /**
@@ -672,6 +675,25 @@ export class EventsService {
       rest.sportType ?? 'football',
       dto.subType,
     );
+
+    // Plan gate: how many events this CREATOR already has scheduled in the
+    // calendar week (UTC, Monday-start) of the NEW event's date. Metered on
+    // the event's date rather than the moment of creation, so the limit is on
+    // how full a week gets — see PlanLimits.maxEventsPerWeek. Deleting an
+    // event frees its slot; a done event still occupies one, since it was
+    // played that week.
+    const limits = await this.plansService.limitsFor(userId);
+    const { start: weekStart, end: weekEnd } = weekOf(new Date(dto.date));
+    const scheduled = await this.eventModel.countDocuments({
+      createdBy: new Types.ObjectId(userId),
+      date: { $gte: weekStart, $lt: weekEnd },
+    });
+    if (scheduled >= limits.maxEventsPerWeek) {
+      throw new BadRequestException(
+        `Your plan allows at most ${limits.maxEventsPerWeek} events per ` +
+          'week — pick a different week or delete one of that week\'s events',
+      );
+    }
 
     if (locationId) {
       // assertCanEdit, not assertOwnedBy: a group's owner/admin/captain may
