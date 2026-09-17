@@ -3,13 +3,16 @@
  * Plans — what a user's subscription tier allows.
  *
  * Pure module: no Mongoose, no Nest, no I/O — same reasoning as
- * `events.lifecycle.ts`. The registry lives in code rather than a collection
- * because a plan's limits are behaviour the codebase must be written against
- * (every limit needs an enforcement site), so a new plan is a code change
- * anyway; a database row could promise limits nothing enforces.
+ * `events.lifecycle.ts`. The plan DEFINITIONS live in the `plans` collection
+ * (seeded by `scripts/seed-plans.ts`; see `Plan` schema), so a limit can be
+ * tuned or a plan added without a deploy. What stays in code is the SHAPE
+ * (`PlanLimits`), the fallback for an unseeded database, and the week math —
+ * the parts enforcement is written against.
  *
- * Which plan a USER is on is data (`User.plan`); what that plan MEANS is
- * defined here. `PlansService` joins the two.
+ * Which plan a USER is on is `User.plan` (a name string); what that plan
+ * means is the collection row. `PlansService` joins the two, resolving a
+ * row's `null` limits (the `no-limit-plan` convention) to Infinity so the
+ * enforcement sites keep their plain `count >= limit` shape.
  */
 
 export interface PlanLimits {
@@ -30,26 +33,35 @@ export interface PlanLimits {
   readonly maxGalleryPhotosPerGroup: number;
 }
 
-export const PLANS: Readonly<Record<string, PlanLimits>> = {
-  default: {
-    maxGroupsOwned: 2,
-    maxEventsPerWeek: 3,
-    maxGalleryPhotosPerGroup: 50,
-  },
-};
-
 /** The plan every user starts on, and the `User.plan` schema default. */
 export const DEFAULT_PLAN = 'default';
 
 /**
- * The limits for a plan name, falling back to the default plan.
- *
- * Total on purpose: an unknown or missing name (a user created before the
- * field existed, or on a plan that was later removed) degrades to the default
- * limits rather than crashing or, worse, skipping enforcement.
+ * The default plan's limits, duplicated from the seed as the LAST-RESORT
+ * fallback: an unseeded or unreachable `plans` collection degrades to the
+ * tightest limits rather than crashing creation or, worse, skipping
+ * enforcement. `scripts/seed-plans.ts` is the authority; keep the two equal.
  */
-export function planLimits(plan?: unknown): PlanLimits {
-  return (typeof plan === 'string' && PLANS[plan]) || PLANS[DEFAULT_PLAN];
+export const DEFAULT_PLAN_LIMITS: PlanLimits = {
+  maxGroupsOwned: 2,
+  maxEventsPerWeek: 3,
+  maxGalleryPhotosPerGroup: 50,
+};
+
+/**
+ * One stored limit → one enforceable number.
+ *
+ * `null` is the explicit "unlimited" convention (how `no-limit-plan` lifts
+ * every cap) and becomes Infinity, which no count reaches. A MISSING field is
+ * not the same thing: a half-seeded row falls back to the default plan's
+ * value, so absence degrades tight, never open.
+ */
+export function resolveLimit(
+  stored: number | null | undefined,
+  fallback: number,
+): number {
+  if (stored === null) return Number.POSITIVE_INFINITY;
+  return typeof stored === 'number' ? stored : fallback;
 }
 
 /**

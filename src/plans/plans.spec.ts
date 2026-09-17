@@ -1,25 +1,32 @@
 // src/plans/plans.spec.ts
-import { DEFAULT_PLAN, PLANS, planLimits, weekOf } from './plans';
+import { DEFAULT_PLAN, DEFAULT_PLAN_LIMITS, resolveLimit, weekOf } from './plans';
 
-describe('plans registry', () => {
-  it('the default plan carries the launch limits', () => {
-    expect(PLANS.default).toEqual({
+describe('plan fallbacks', () => {
+  it('the in-code fallback carries the default plan launch limits', () => {
+    // Must stay equal to the `default` row in scripts/seed-plans.ts — this is
+    // what an unseeded database enforces.
+    expect(DEFAULT_PLAN).toBe('default');
+    expect(DEFAULT_PLAN_LIMITS).toEqual({
       maxGroupsOwned: 2,
       maxEventsPerWeek: 3,
       maxGalleryPhotosPerGroup: 50,
     });
   });
+});
 
-  it('planLimits resolves the named plan', () => {
-    expect(planLimits('default')).toBe(PLANS.default);
+describe('resolveLimit — stored value to enforceable number', () => {
+  it('passes a number through', () => {
+    expect(resolveLimit(2, 99)).toBe(2);
+    expect(resolveLimit(0, 99)).toBe(0);
   });
 
-  it('planLimits degrades unknown or missing plans to the default', () => {
-    // A user created before the field, or on a plan later removed, must get
-    // the tightest limits — never a crash, and never unlimited.
-    for (const bad of [undefined, null, '', 'premium', 7, {}]) {
-      expect(planLimits(bad)).toBe(PLANS[DEFAULT_PLAN]);
-    }
+  it('null means UNLIMITED — the no-limit-plan convention', () => {
+    expect(resolveLimit(null, 2)).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it('a MISSING field degrades to the fallback, never to unlimited', () => {
+    // A half-seeded row must read tight — only an explicit null lifts a cap.
+    expect(resolveLimit(undefined, 2)).toBe(2);
   });
 });
 

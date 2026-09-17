@@ -11,7 +11,7 @@ import {
 import { GroupMember } from '../groups/schemas/group-member.schema';
 import { ImageKitService } from '../common/upload/imagekit.service';
 import { PlansService } from '../plans/plans.service';
-import { PLANS } from '../plans/plans';
+import { DEFAULT_PLAN_LIMITS } from '../plans/plans';
 import { plansDouble } from '../events/events.test-providers';
 
 const GROUP = '6a6b2366f78b66d63a911a9e';
@@ -110,7 +110,7 @@ describe('PhotosService', () => {
   });
 
   describe("the plan's gallery cap (50 per group on the default plan)", () => {
-    const CAP = PLANS.default.maxGalleryPhotosPerGroup;
+    const CAP = DEFAULT_PLAN_LIMITS.maxGalleryPhotosPerGroup;
 
     it(`allows the ${CAP}th gallery photo`, async () => {
       photoModel.countDocuments.mockResolvedValue(CAP - 1);

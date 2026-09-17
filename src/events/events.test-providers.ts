@@ -27,14 +27,15 @@ import { PhotosService } from '../photos/photos.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SportTypesService } from '../sport-types/sport-types.service';
 import { PlansService } from '../plans/plans.service';
-import { PLANS } from '../plans/plans';
+import { DEFAULT_PLAN_LIMITS } from '../plans/plans';
 import { BadRequestException } from '@nestjs/common';
 
 /** PlansService double answering every lookup with the default plan. */
 export function plansDouble() {
   return {
-    limitsFor: jest.fn().mockResolvedValue(PLANS.default),
-    limitsForGroupOwner: jest.fn().mockResolvedValue(PLANS.default),
+    limitsByName: jest.fn().mockResolvedValue(DEFAULT_PLAN_LIMITS),
+    limitsFor: jest.fn().mockResolvedValue(DEFAULT_PLAN_LIMITS),
+    limitsForGroupOwner: jest.fn().mockResolvedValue(DEFAULT_PLAN_LIMITS),
   };
 }
 
