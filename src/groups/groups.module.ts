@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { GroupsController } from './groups.controller';
+import { InviteLinkController } from './invite-link.controller';
 import { GroupsService } from './groups.service';
 import { Group, GroupSchema } from './schemas/group.schema';
 import { GroupMember, GroupMemberSchema } from './schemas/group-member.schema';
@@ -39,7 +40,7 @@ import { PlansModule } from '../plans/plans.module';
     SportTypesModule,
     PlansModule,
   ],
-  controllers: [GroupsController],
+  controllers: [GroupsController, InviteLinkController],
   providers: [GroupsService],
   exports: [GroupsService, MongooseModule],
 })
