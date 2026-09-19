@@ -45,6 +45,7 @@ import { AssignTeamPlayersDto } from './dto/assign-team-players.dto';
 import { AddMatchDto } from './dto/add-match.dto';
 import { UpdateMatchScoreDto } from './dto/update-match-score.dto';
 import { SubmitResultDto } from './dto/submit-result.dto';
+import { SubmitMvpDto } from './dto/submit-mvp.dto';
 import { CreateEventTemplateDto } from './dto/create-event-template.dto';
 import { LocationsService } from '../locations/locations.service';
 import { SportTypesService } from '../sport-types/sport-types.service';
@@ -1990,6 +1991,12 @@ export class EventsService {
    * The MVP must be a joined player: naming someone who never played would
    * corrupt the profile `mvpCount` that parent §2.3 feeds from.
    */
+  /**
+   * Record the overall score. The MVP is NOT accepted here any more — it has
+   * its own endpoint (`submitMvp`), so re-posting a corrected score cannot
+   * silently blank an MVP recorded earlier. The MVP pair already on the
+   * result is preserved for the same reason.
+   */
   async submitResult(eventId: string, userId: string, dto: SubmitResultDto) {
     const event = await this.assertOrganizer(eventId, userId);
     if (!canSubmitResult(event.status)) {
@@ -1998,23 +2005,53 @@ export class EventsService {
       );
     }
 
-    if (dto.mvpUserId) {
-      const player = await this.playerModel.findOne({
-        eventId: new Types.ObjectId(eventId),
-        userId: new Types.ObjectId(dto.mvpUserId),
-        status: 'joined',
-      });
-      if (!player) {
-        throw new BadRequestException(
-          'The MVP must be a player who joined this event',
-        );
-      }
+    event.result = {
+      mvpUserId: event.result?.mvpUserId ?? null,
+      mvpGoal: event.result?.mvpGoal ?? null,
+      scoreA: dto.scoreA ?? null,
+      scoreB: dto.scoreB ?? null,
+    };
+    await event.save();
+
+    return event.toJSON();
+  }
+
+  /**
+   * Record the MVP and their goal count — `POST /events/:id/mvp`, split out
+   * of `submitResult` (2026-09-19) so naming the match's best player is its
+   * own act, gated and validated on its own.
+   *
+   * Same window and authority as the result: organizer only, `after_match`
+   * only. The scores already on the result are preserved, so MVP and score
+   * can be submitted in either order, and re-posting one never disturbs the
+   * other.
+   */
+  async submitMvp(eventId: string, userId: string, dto: SubmitMvpDto) {
+    const event = await this.assertOrganizer(eventId, userId);
+    if (!canSubmitResult(event.status)) {
+      throw new BadRequestException(
+        `The MVP can only be submitted after the match (event is '${event.status}')`,
+      );
+    }
+
+    // A non-player MVP would corrupt the profile mvpCount (parent §2.3) —
+    // same rule the result endpoint enforced when it owned this field.
+    const player = await this.playerModel.findOne({
+      eventId: new Types.ObjectId(eventId),
+      userId: new Types.ObjectId(dto.userId),
+      status: 'joined',
+    });
+    if (!player) {
+      throw new BadRequestException(
+        'The MVP must be a player who joined this event',
+      );
     }
 
     event.result = {
-      mvpUserId: dto.mvpUserId ? new Types.ObjectId(dto.mvpUserId) : null,
-      scoreA: dto.scoreA ?? null,
-      scoreB: dto.scoreB ?? null,
+      mvpUserId: new Types.ObjectId(dto.userId),
+      mvpGoal: dto.goal,
+      scoreA: event.result?.scoreA ?? null,
+      scoreB: event.result?.scoreB ?? null,
     };
     await event.save();
 
