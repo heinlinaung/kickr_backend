@@ -104,6 +104,79 @@ describe('EventsService — location handling on create', () => {
     });
   });
 
+  describe('template fill — templates now mirror the event-create body', () => {
+    const TEMPLATE_ID = '665f1a2b3c4d5e6f7a8b9c99';
+    const template = (over: Record<string, unknown> = {}) => ({
+      _id: TEMPLATE_ID,
+      ownerId: { toString: () => USER_ID },
+      name: 'Tuesday 5s',
+      ...over,
+    });
+    const fillFrom = (doc: Record<string, unknown>) =>
+      templateModel.findById.mockReturnValue({
+        lean: jest.fn().mockResolvedValue(doc),
+      });
+
+    it('fills every new field the caller omitted', async () => {
+      fillFrom(
+        template({
+          subType: 'futsal',
+          duration: 120,
+          additionalPrice: 5,
+          takeAdditionalPrice: true,
+          isAllowExtraPlayer: true,
+          registrationClosingDuration: 60,
+        }),
+      );
+
+      await service.create(USER_ID, { ...baseDto, templateId: TEMPLATE_ID });
+
+      expect(eventModel.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subType: 'futsal',
+          duration: 120,
+          additionalPrice: 5,
+          takeAdditionalPrice: true,
+          isAllowExtraPlayer: true,
+          registrationClosingDuration: 60,
+        }),
+      );
+    });
+
+    it('a filled subType is validated like an explicit one', async () => {
+      // The template's format must suit the RESOLVED sport — 'stadium' means
+      // nothing on the futsal event this create asks for.
+      fillFrom(template({ subType: 'stadium' }));
+
+      await expect(
+        service.create(USER_ID, {
+          ...baseDto,
+          templateId: TEMPLATE_ID,
+          sportType: 'futsal',
+        }),
+      ).rejects.toThrow(/not valid for sportType 'futsal'/);
+    });
+
+    it('never fills teamCount, even from an old template that stored one', async () => {
+      // Removed from templates 2026-09-19 — the event default applies.
+      fillFrom(template({ teamCount: 6 }));
+
+      await service.create(USER_ID, { ...baseDto, templateId: TEMPLATE_ID });
+
+      expect(eventModel.create.mock.calls[0][0].teamCount).toBeUndefined();
+    });
+
+    it('never fills date — the caller always supplies the real one', async () => {
+      fillFrom(template({ date: new Date('2020-01-01T00:00:00.000Z') }));
+
+      await service.create(USER_ID, { ...baseDto, templateId: TEMPLATE_ID });
+
+      expect(eventModel.create.mock.calls[0][0].date.toISOString()).toBe(
+        baseDto.date,
+      );
+    });
+  });
+
   // The default plan allows 3 events per calendar week (src/plans/plans.ts).
   describe('the events-per-week plan cap', () => {
     it('rejects a 4th event scheduled in the same week, before writing', async () => {

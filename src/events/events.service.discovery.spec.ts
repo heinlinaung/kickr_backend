@@ -616,6 +616,47 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
       expect(locations.assertCanEdit).toHaveBeenCalledWith(LOC_A, USER);
     });
 
+    it('stores the event-create-shaped fields, with date as a Date', async () => {
+      await service.createTemplate(USER, {
+        name: 'Tuesday 5s',
+        date: '2026-07-01T18:00:00.000Z',
+        subType: 'stadium',
+        additionalPrice: 5,
+        takeAdditionalPrice: false,
+        isAllowExtraPlayer: false,
+        duration: 90,
+        registrationClosingDuration: 120,
+      });
+
+      const stored = templateModel.create.mock.calls[0][0];
+      expect(stored.date).toBeInstanceOf(Date);
+      expect(stored.date.toISOString()).toBe('2026-07-01T18:00:00.000Z');
+      expect(stored).toMatchObject({
+        subType: 'stadium',
+        additionalPrice: 5,
+        duration: 90,
+        registrationClosingDuration: 120,
+      });
+    });
+
+    it('rejects a subType the sport does not list, at SAVE time', async () => {
+      // Fails when the template is saved rather than months later on use.
+      await expect(
+        service.createTemplate(USER, {
+          name: 'x',
+          sportType: 'futsal',
+          subType: 'stadium',
+        }),
+      ).rejects.toThrow(/not valid for sportType 'futsal'/);
+      expect(templateModel.create).not.toHaveBeenCalled();
+    });
+
+    it('judges a bare subType against football, like event create', async () => {
+      await expect(
+        service.createTemplate(USER, { name: 'x', subType: 'stadium' }),
+      ).resolves.toBeDefined();
+    });
+
     it('deletes the caller’s own template', async () => {
       templateModel.findById.mockResolvedValue({
         ownerId: new Types.ObjectId(USER),
