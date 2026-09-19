@@ -1,6 +1,7 @@
 // src/events/event-new-fields.spec.ts
 import { ValidationPipe } from '@nestjs/common';
 import { CreateEventDto } from './dto/create-event.dto';
+import { CreateEventTemplateDto } from './dto/create-event-template.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { EventSchema } from './schemas/event.schema';
 import { FOOTBALL_SUB_TYPES } from './events.lifecycle';
@@ -142,5 +143,59 @@ describe('subType — football format', () => {
 
     expect(out.sportType).toBe('football');
     expect(out.subType).toBe('futsal');
+  });
+});
+
+describe('CreateEventTemplateDto — mirrors the event-create body', () => {
+  const template = (over: Record<string, unknown>) =>
+    pipe.transform(
+      { name: 'Tuesday 5-a-side', ...over },
+      { type: 'body', metatype: CreateEventTemplateDto },
+    );
+
+  it('accepts the full event-create-shaped body', async () => {
+    // The exact request shape the client sends to POST /events, plus `name`.
+    const out: any = await template({
+      groupId: '665f1a2b3c4d5e6f7a8b9c0d',
+      title: 'Friday Night Football',
+      description: 'Casual 11v11 match at the park',
+      date: '2026-07-01T18:00:00.000Z',
+      isPublic: true,
+      locationId: '507f1f77bcf86cd799439011',
+      maxPlayers: 22,
+      sportType: 'football',
+      subType: 'stadium',
+      skillLevel: 'beginner',
+      price: 0,
+      additionalPrice: 5,
+      takeAdditionalPrice: false,
+      isAllowExtraPlayer: false,
+      duration: 90,
+      registrationClosingDuration: 120,
+    });
+
+    expect(out.subType).toBe('stadium');
+    expect(out.duration).toBe(90);
+    expect(out.registrationClosingDuration).toBe(120);
+    expect(out.date).toBe('2026-07-01T18:00:00.000Z');
+  });
+
+  it('REJECTS teamCount — removed from templates entirely', async () => {
+    // forbidNonWhitelisted makes the removal loud: a client still sending it
+    // gets a 400 naming the property, not a silent drop.
+    await expect(template({ teamCount: 4 })).rejects.toThrow();
+  });
+
+  it('keeps only name required, like before', async () => {
+    const out: any = await template({});
+
+    expect(out.name).toBe('Tuesday 5-a-side');
+  });
+
+  it('bounds duration and registrationClosingDuration like event create', async () => {
+    await expect(template({ duration: 30 })).rejects.toThrow();
+    await expect(
+      template({ registrationClosingDuration: 10081 }),
+    ).rejects.toThrow();
   });
 });

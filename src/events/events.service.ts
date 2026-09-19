@@ -604,14 +604,24 @@ export class EventsService {
         throw new ForbiddenException('You can only use your own templates');
       }
 
+      // `date` is deliberately absent even though templates store one: it is
+      // REQUIRED on this endpoint, so the caller always supplies the real
+      // instant and a fill (omitted fields only) could never apply.
+      // `teamCount` was removed from templates on 2026-09-19 — the event
+      // schema's own default applies.
       const FILLABLE = [
         'title',
         'description',
         'maxPlayers',
-        'teamCount',
         'sportType',
+        'subType',
         'skillLevel',
         'price',
+        'additionalPrice',
+        'takeAdditionalPrice',
+        'isAllowExtraPlayer',
+        'duration',
+        'registrationClosingDuration',
         'isPublic',
       ] as const;
       const target = rest as Record<string, unknown>;
@@ -671,9 +681,13 @@ export class EventsService {
     // a sport with no formats (anything but football today) is rejected
     // rather than silently dropped: a stored-but-meaningless value is worse
     // than an error that says so.
+    // `rest.subType`, not `dto.subType`: the format can arrive from the
+    // template fill above, and a filled-but-invalid pairing (say a template's
+    // 'stadium' landing on a padel group's event) must fail the same way an
+    // explicit one does.
     await this.sportTypesService.assertValid(
       rest.sportType ?? 'football',
-      dto.subType,
+      rest.subType,
     );
 
     // Plan gate: how many events this CREATOR already has scheduled in the
@@ -2140,15 +2154,21 @@ export class EventsService {
       await this.locationsService.assertCanEdit(dto.locationId, userId);
     }
     // Checked here as well as at event create, so a bad value fails when the
-    // template is SAVED rather than months later when someone uses it.
-    if (dto.sportType) {
-      await this.sportTypesService.assertValid(dto.sportType);
+    // template is SAVED rather than months later when someone uses it. The
+    // subType is judged against the same sport event create would resolve —
+    // 'football' when the template names none.
+    if (dto.sportType || dto.subType) {
+      await this.sportTypesService.assertValid(
+        dto.sportType ?? 'football',
+        dto.subType,
+      );
     }
     return this.templateModel.create({
       ...dto,
       ownerId: new Types.ObjectId(userId),
       groupId: dto.groupId ? new Types.ObjectId(dto.groupId) : null,
       locationId: dto.locationId ? new Types.ObjectId(dto.locationId) : null,
+      date: dto.date ? new Date(dto.date) : null,
     });
   }
 
