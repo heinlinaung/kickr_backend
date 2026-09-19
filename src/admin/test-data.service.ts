@@ -752,12 +752,23 @@ export class TestDataService {
 
     await this.expect(
       record,
-      'MVP + score recorded after the match',
+      'score recorded after the match',
       () =>
         this.eventsService.submitResult(eventId, owner.id, {
-          mvpUserId: joiners[0].id,
           scoreA: 2,
           scoreB: 1,
+        }),
+      'resolve',
+    );
+
+    // MVP has its own endpoint now — POST /events/:id/mvp.
+    await this.expect(
+      record,
+      'MVP + goal count recorded after the match',
+      () =>
+        this.eventsService.submitMvp(eventId, owner.id, {
+          userId: joiners[0].id,
+          goal: 2,
         }),
       'resolve',
     );
@@ -766,8 +777,9 @@ export class TestDataService {
       record,
       'an MVP who never joined is refused',
       () =>
-        this.eventsService.submitResult(eventId, owner.id, {
-          mvpUserId: new Types.ObjectId().toString(),
+        this.eventsService.submitMvp(eventId, owner.id, {
+          userId: new Types.ObjectId().toString(),
+          goal: 1,
         }),
       'reject',
     );

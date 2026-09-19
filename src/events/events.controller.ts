@@ -34,6 +34,7 @@ import { AssignTeamPlayersDto } from './dto/assign-team-players.dto';
 import { AddMatchDto } from './dto/add-match.dto';
 import { UpdateMatchScoreDto } from './dto/update-match-score.dto';
 import { SubmitResultDto } from './dto/submit-result.dto';
+import { SubmitMvpDto } from './dto/submit-mvp.dto';
 import { SetPaymentDto } from './dto/set-payment.dto';
 import { AddGuestDto } from './dto/add-guest.dto';
 import { SetGuestApprovalDto } from './dto/set-guest-approval.dto';
@@ -699,14 +700,38 @@ export class EventsController {
   // --- After-match (spec §4.4) --------------------------------------------
 
   @Post(':id/result')
-  @ApiOperation({ summary: 'Record MVP and optional overall score' })
-  @ApiResponse({ status: 400, description: 'MVP did not join, or wrong state' })
+  @ApiOperation({
+    summary: 'Record the overall score',
+    description:
+      'Score only — the MVP moved to POST /events/:id/mvp and is no longer ' +
+      'accepted here (sending mvpUserId is now a 400). An MVP already ' +
+      'recorded is preserved when the score is posted or corrected.',
+  })
+  @ApiResponse({ status: 400, description: 'Wrong state, or mvpUserId sent' })
   submitResult(
     @Param('id') id: string,
     @CurrentUser() user: any,
     @Body() dto: SubmitResultDto,
   ) {
     return this.eventsService.submitResult(id, user._id.toString(), dto);
+  }
+
+  @Post(':id/mvp')
+  @ApiOperation({
+    summary: "Record the MVP and the MVP's goal count",
+    description:
+      'Organizer-only, after_match only — the same window as the result. ' +
+      '`userId` must be a player who joined this event. The overall score ' +
+      'already on the result is preserved, so MVP and score can be submitted ' +
+      'in either order.',
+  })
+  @ApiResponse({ status: 400, description: 'MVP did not join, or wrong state' })
+  submitMvp(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() dto: SubmitMvpDto,
+  ) {
+    return this.eventsService.submitMvp(id, user._id.toString(), dto);
   }
 
   @Post(':id/cover')

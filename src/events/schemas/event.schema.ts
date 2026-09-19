@@ -24,11 +24,25 @@ export class EventPhoto {
 
 export const EventPhotoSchema = SchemaFactory.createForClass(EventPhoto);
 
-/** Overall result. `scoreA`/`scoreB` are for simple 2-team events only. */
+/**
+ * Overall result. `scoreA`/`scoreB` are for simple 2-team events only.
+ *
+ * The MVP pair is written by `POST /events/:id/mvp` (2026-09-19 — it moved
+ * out of `POST /events/:id/result`, which now records only the score); the
+ * two endpoints preserve each other's fields, so either can be submitted
+ * first or re-submitted alone.
+ */
 @Schema({ _id: false })
 export class EventResult {
   @Prop({ type: Types.ObjectId, ref: 'User', default: null })
   mvpUserId: Types.ObjectId | null;
+
+  /**
+   * Goals scored by the MVP. `null` on results recorded before the field
+   * existed — "not reported", not zero.
+   */
+  @Prop({ type: Number, default: null })
+  mvpGoal: number | null;
 
   @Prop({ type: Number, default: null })
   scoreA: number | null;
