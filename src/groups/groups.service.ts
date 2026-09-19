@@ -500,6 +500,23 @@ export class GroupsService {
     return { inviteCode: code, inviteLink: `${base}/g/${code}`, expiresAt };
   }
 
+  /**
+   * The group an invite link (`GET /g/:code`) points at, or `null` when the
+   * code is unknown or expired.
+   *
+   * Mirrors `InvitationsService.joinByCode`'s validity rule — the expiry must
+   * be strictly in the future — so the landing page never presents a code
+   * that redemption would then refuse. Returns only the card fields a
+   * stranger may see (the link is public); never the code's expiry or
+   * anything membership-gated.
+   */
+  async resolveInviteCode(code: string) {
+    return this.groupModel
+      .findOne({ inviteCode: code, inviteCodeExpiry: { $gt: new Date() } })
+      .select('name description logo sportType isPrivate')
+      .lean();
+  }
+
   // Group rules are handled by create()/update() via the `rules` field and
   // read back on findById() — there are deliberately no setRules/getRules
   // methods. Rule text is stored verbatim (no count or length cap), so

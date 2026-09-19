@@ -1395,6 +1395,37 @@ describe('GroupsService', () => {
   // sportType is checked against the `sporttypes` collection (via
   // SportTypesService), not a hardcoded enum — and a grouped event's sportType
   // is ALWAYS its group's, so a group sportType write must carry the events.
+  describe('resolveInviteCode — behind GET /g/:code', () => {
+    it("mirrors joinByCode's validity rule: expiry strictly in the future", async () => {
+      groupModel.findOne.mockReturnValue(q({ _id: GROUP_ID, name: 'BKK FC' }));
+
+      await service.resolveInviteCode('some-code');
+
+      const filter = groupModel.findOne.mock.calls[0][0];
+      expect(filter.inviteCode).toBe('some-code');
+      // The same $gt joinByCode uses — the landing page must never present a
+      // code that redemption would refuse.
+      expect(filter.inviteCodeExpiry.$gt).toBeInstanceOf(Date);
+    });
+
+    it('selects only public card fields — never the expiry or invite internals', async () => {
+      const chain = q({ _id: GROUP_ID });
+      groupModel.findOne.mockReturnValue(chain);
+
+      await service.resolveInviteCode('some-code');
+
+      const selected = chain.select.mock.calls[0][0] as string;
+      expect(selected).toContain('name');
+      expect(selected).not.toContain('inviteCode');
+    });
+
+    it('resolves null for an unknown code', async () => {
+      groupModel.findOne.mockReturnValue(q(null));
+
+      expect(await service.resolveInviteCode('nope')).toBeNull();
+    });
+  });
+
   describe('sportType', () => {
     it('create rejects a sport the collection does not list, before writing', async () => {
       await expect(
