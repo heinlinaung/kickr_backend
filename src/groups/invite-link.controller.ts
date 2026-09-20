@@ -3,6 +3,7 @@ import { Controller, Get, Param, Req, Res } from '@nestjs/common';
 import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 import { GroupsService } from './groups.service';
+import { groupDeepLink } from '../common/deep-links';
 
 /**
  * Serves the invite LINK — the URL inside a group's QR code
@@ -67,12 +68,15 @@ export class InviteLinkController {
         );
     }
 
+    const deepLink = groupDeepLink(String(group._id));
+
     if (wantsJson) {
       // Hand-wrapped in { data } to match the API's global envelope, which
       // @Res() bypasses.
       return res.json({
         data: {
           code,
+          deepLink,
           group: {
             _id: group._id,
             name: group.name,
@@ -91,6 +95,12 @@ export class InviteLinkController {
     const logo = group.logo
       ? `<img class="logo" src="${esc(group.logo)}" alt="" />`
       : '';
+    // The auto-attempt below jumps a phone WITH the app straight to the group
+    // details screen, which is the whole point of scanning; without the app
+    // the scheme is unregistered, nothing navigates (at worst iOS shows one
+    // alert), and this page with the button and the code remains the
+    // fallback. JSON.stringify — not esc() — for the script value: it needs a
+    // JS string literal, and the id is server-made anyway.
     return res.type('html').send(
       page(
         `Join ${name} on KickR`,
@@ -98,13 +108,16 @@ export class InviteLinkController {
          <h1>${name}</h1>
          ${group.description ? `<p class="desc">${esc(group.description)}</p>` : ''}
          <p>You’ve been invited to join this group on <strong>KickR</strong>.</p>
+         <a class="open" href="${esc(deepLink)}">Open in KickR</a>
+         <p class="fine">Don’t have the app, or nothing happened?</p>
          <ol>
            <li>Open the KickR app</li>
            <li>Go to <strong>Groups → Join with code</strong></li>
            <li>Enter the code below (or scan the QR again inside the app)</li>
          </ol>
          <p class="code">${esc(code)}</p>
-         <p class="fine">Joining sends a request that a group admin approves.</p>`,
+         <p class="fine">Joining sends a request that a group admin approves.</p>
+         <script>setTimeout(function () { window.location.href = ${JSON.stringify(deepLink)}; }, 30);</script>`,
       ),
     );
   }
@@ -146,6 +159,9 @@ function page(title: string, body: string): string {
   .code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
           font-size: 1.05rem; background: #f0f2f5; border-radius: 8px;
           padding: 12px; word-break: break-all; user-select: all; }
+  .open { display: block; margin: 20px auto 4px; padding: 14px 20px;
+          background: #16a34a; color: #fff; border-radius: 10px;
+          font-weight: 600; text-decoration: none; }
   .fine { color: #8a919c; font-size: .85rem; }
 </style>
 </head>

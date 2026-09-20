@@ -25,6 +25,7 @@ import { EventsService } from '../events/events.service';
 import { PhotosService } from '../photos/photos.service';
 import { SportTypesService } from '../sport-types/sport-types.service';
 import { PlansService } from '../plans/plans.service';
+import { groupDeepLink } from '../common/deep-links';
 import {
   clampLimit,
   decodeCursor,
@@ -464,6 +465,8 @@ export class GroupsService {
   async getQr(groupId: string): Promise<{
     inviteCode: string;
     inviteLink: string;
+    deepLink: string;
+    groupId: string;
     expiresAt: Date | null;
   }> {
     // Deliberately NOT role-gated: any authenticated user may fetch a group's
@@ -497,7 +500,19 @@ export class GroupsService {
     }
 
     const base = this.config.get<string>('APP_BASE_URL') ?? '';
-    return { inviteCode: code, inviteLink: `${base}/g/${code}`, expiresAt };
+    return {
+      inviteCode: code,
+      // Still what the QR ENCODES: an https link works scanned by any camera
+      // whether or not the app is installed, and GET /g/:code hops into the
+      // app from there. The custom scheme would dead-end without the app.
+      inviteLink: `${base}/g/${code}`,
+      // The in-app jump (`kickrsport://group/<id>`) — lets the app's own
+      // scanner or share sheet go straight to the group details screen.
+      deepLink: groupDeepLink(groupId),
+      // So an in-app consumer can navigate without resolving the code first.
+      groupId,
+      expiresAt,
+    };
   }
 
   /**
