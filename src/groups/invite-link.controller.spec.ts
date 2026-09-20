@@ -86,11 +86,24 @@ describe('InviteLinkController — GET /g/:code', () => {
 
     const body = res.json.mock.calls[0][0];
     expect(body.data.code).toBe(CODE);
+    expect(body.data.deepLink).toBe('kickrsport://group/g1');
     expect(body.data.group).toMatchObject({
       name: 'Bangkok FC',
       sportType: 'football',
       isPrivate: false,
     });
+  });
+
+  it('the landing page jumps into the app: auto-attempt plus a visible button', async () => {
+    const res = resDouble();
+
+    await controller.open(CODE, reqAccepting('html'), res);
+
+    const html = res.send.mock.calls[0][0] as string;
+    // Visible fallback for when the auto-attempt is blocked or ignored.
+    expect(html).toContain('href="kickrsport://group/g1"');
+    // The redirect that lands a phone WITH the app on the group details page.
+    expect(html).toContain('window.location.href = "kickrsport://group/g1"');
   });
 
   it('404s JSON callers with the join-by-code wording', async () => {

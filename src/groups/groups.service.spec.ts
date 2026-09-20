@@ -822,6 +822,25 @@ describe('GroupsService', () => {
       expect(res.inviteCode).toBe('shared-code');
     });
 
+    it('carries the deep link and groupId for the in-app jump', async () => {
+      memberModel.findOne.mockResolvedValue(null);
+      groupModel.findById.mockReturnValue(
+        q({
+          inviteCode: 'shared-code',
+          inviteCodeExpiry: new Date(Date.now() + 60 * 60 * 1000),
+        }),
+      );
+
+      const res = await service.getQr(GROUP_ID);
+
+      // The scheme/path the Flutter app registers: kickrsport://group/<id>.
+      expect(res.deepLink).toBe(`kickrsport://group/${GROUP_ID}`);
+      expect(res.groupId).toBe(GROUP_ID);
+      // The QR still ENCODES the https link — a scheme URL in a camera scan
+      // dead-ends when the app is missing.
+      expect(res.inviteLink).toContain('/g/shared-code');
+    });
+
     it('mints a code for a non-member when none is valid (no role check)', async () => {
       memberModel.findOne.mockResolvedValue(null);
       groupModel.findById
