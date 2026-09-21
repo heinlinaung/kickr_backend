@@ -15,7 +15,6 @@ import { Type } from 'class-transformer';
 import {
   FOOTBALL_POSITIONS,
   PROFILE_VISIBILITY,
-  SPORT_TYPES,
 } from '../profile.constants';
 
 class PrivacyDto {
@@ -90,15 +89,29 @@ export class UpdateProfileDto {
   @IsDateString()
   dateOfBirth?: string;
 
-  @ApiProperty({ required: false, type: [String] })
+  @ApiProperty({
+    required: false,
+    type: [String],
+    example: ['football', 'badminton'],
+    description:
+      'Values from GET /sport-types — checked against that collection in ' +
+      'the service, not a hardcoded list here, same as group/event ' +
+      'sportType.',
+  })
   @IsOptional()
   @IsArray()
-  @IsIn([...SPORT_TYPES], { each: true })
+  @IsString({ each: true })
   sports?: string[];
 
-  @ApiProperty({ required: false, enum: SPORT_TYPES })
+  @ApiProperty({
+    required: false,
+    example: 'football',
+    description:
+      'One of the values from GET /sport-types — checked against that ' +
+      'collection in the service.',
+  })
   @IsOptional()
-  @IsIn([...SPORT_TYPES])
+  @IsString()
   preferredSport?: string;
 
   @ApiProperty({ required: false, enum: FOOTBALL_POSITIONS })

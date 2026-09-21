@@ -1,7 +1,6 @@
 import {
   FOOTBALL_POSITIONS,
   PROFILE_VISIBILITY,
-  SPORT_TYPES,
 } from './profile.constants';
 
 describe('profile constants', () => {
@@ -17,7 +16,6 @@ describe('profile constants', () => {
   it('visibility', () => {
     expect(PROFILE_VISIBILITY).toEqual(['public', 'members', 'private']);
   });
-  it('sports include football', () => {
-    expect(SPORT_TYPES).toEqual(expect.arrayContaining(['football', 'futsal']));
-  });
+  // SPORT_TYPES is gone: profile sports validate against the `sporttypes`
+  // collection now (UsersService.updateProfile), not a hardcoded list.
 });

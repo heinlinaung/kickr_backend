@@ -9,6 +9,7 @@ import {
 } from '../events/schemas/event-player.schema';
 import { Event, EventSchema } from '../events/schemas/event.schema';
 import { UploadModule } from '../common/upload/upload.module';
+import { SportTypesModule } from '../sport-types/sport-types.module';
 import {
   GlobalFootballTeam,
   GlobalFootballTeamSchema,
@@ -29,6 +30,9 @@ import {
       },
     ]),
     UploadModule,
+    // For profile sports/preferredSport validation against the `sporttypes`
+    // collection. A leaf module, so no cycle risk.
+    SportTypesModule,
   ],
   controllers: [UsersController],
   providers: [UsersService],

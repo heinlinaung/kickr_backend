@@ -8,6 +8,8 @@ import { EventPlayer } from '../events/schemas/event-player.schema';
 import { Event } from '../events/schemas/event.schema';
 import { GlobalFootballTeam } from '../global-football-teams/schemas/global-football-team.schema';
 import { ImageKitService } from '../common/upload/imagekit.service';
+import { SportTypesService } from '../sport-types/sport-types.service';
+import { sportTypesDouble } from '../events/events.test-providers';
 
 describe('UsersService', () => {
   let service: UsersService;
@@ -45,6 +47,7 @@ describe('UsersService', () => {
           provide: getModelToken(GlobalFootballTeam.name),
           useValue: globalTeamModel,
         },
+        { provide: SportTypesService, useValue: sportTypesDouble() },
       ],
     }).compile();
     service = m.get(UsersService);
