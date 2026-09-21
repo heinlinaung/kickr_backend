@@ -249,12 +249,28 @@ export class EventsService {
     // A disjunction rather than a bare `isPublic: true`, and it sits in $or at
     // the top level so the region/date/status/geo narrowings below stay ANDed
     // against it: a joined event must not bypass an explicit filter.
-    const joinedIds = await this.joinedEventIds(userId);
-    const filter: Record<string, unknown> = joinedIds.length
-      ? { $or: [{ isPublic: true }, { _id: { $in: joinedIds } }] }
-      : // No roster rows means the disjunction could only ever match the
-        // public half, so keep the simpler filter and let the index work.
-        { isPublic: true };
+    const [joinedIds, memberGroupIds] = await Promise.all([
+      this.joinedEventIds(userId),
+      this.approvedGroupIds(userId),
+    ]);
+    // Three routes to visibility: an event is public, the caller JOINED it,
+    // or it belongs to a group the caller is an approved MEMBER of. The third
+    // arm is what lets a member discover their own group's private events
+    // BEFORE joining them — without it, a private event was visible in
+    // GET /events/group/:id (membership-gated) yet missing from this list
+    // until the member had already joined, which is backwards for discovery.
+    const visibility: Record<string, unknown>[] = [{ isPublic: true }];
+    if (joinedIds.length) visibility.push({ _id: { $in: joinedIds } });
+    if (memberGroupIds.length) {
+      visibility.push({ groupId: { $in: memberGroupIds } });
+    }
+    const filter: Record<string, unknown> =
+      visibility.length > 1
+        ? { $or: visibility }
+        : // No roster or membership rows means the disjunction could only ever
+          // match the public half, so keep the simpler filter and let the
+          // index work.
+          { isPublic: true };
 
     if (region?.trim()) {
       // country/city are stored lowercase, so this is an exact match on a
@@ -2779,6 +2795,24 @@ export class EventsService {
       .sort({ joinedAt: 1 })
       .lean();
     return guests.map((guest) => String(guest._id));
+  }
+
+  /**
+   * Group ids the caller is an APPROVED member of.
+   *
+   * Approved only, same as every other membership gate on this branch: a
+   * pending requester is a stranger until someone accepts them, and a private
+   * group's events must not leak into their discovery list beforehand.
+   */
+  private async approvedGroupIds(userId: string): Promise<unknown[]> {
+    // Same guard and reasoning as joinedEventIds below.
+    if (!Types.ObjectId.isValid(userId)) return [];
+
+    const rows = await this.memberModel
+      .find({ userId: new Types.ObjectId(userId), status: 'approved' })
+      .select('groupId')
+      .lean();
+    return rows.map((row) => row.groupId);
   }
 
   /** Event ids the caller is currently on the roster of (a left event is not one). */

@@ -26,6 +26,7 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
   let service: EventsService;
   const eventModel: any = {};
   const playerModel: any = {};
+  const memberModel: any = {};
   const likeModel: any = {};
   const templateModel: any = {};
   const locationModel: any = {};
@@ -36,6 +37,11 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
     eventModel.find = jest.fn().mockReturnValue(findChain([]));
     // list() resolves the caller's roster before filtering.
     playerModel.find = jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([]),
+    });
+    // ...and their approved group memberships, for the visibility $or.
+    memberModel.find = jest.fn().mockReturnValue({
       select: jest.fn().mockReturnThis(),
       lean: jest.fn().mockResolvedValue([]),
     });
@@ -60,6 +66,7 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
         ...eventsProviders({
           eventModel,
           playerModel,
+          memberModel,
           likeModel,
           templateModel,
           locationModel,
@@ -495,6 +502,59 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
       expect(playerModel.find.mock.calls[0][0]).toEqual(
         expect.objectContaining({ status: 'joined' }),
       );
+    });
+
+    // The bug this pins (2026-09-21): a group's private event appeared in
+    // GET /events/group/:id (membership-gated) yet was missing from this list
+    // until the member had JOINED it — visibility only had the public and
+    // joined arms. Membership is the third route in.
+    const MEMBER_GROUP = '507f1f77bcf86cd7994390b1';
+    const memberOf = (groupIds: string[]) => {
+      memberModel.find = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest
+          .fn()
+          .mockResolvedValue(groupIds.map((id) => ({ groupId: id }))),
+      });
+    };
+
+    it("includes the caller's groups' private events they have NOT joined", async () => {
+      roster([]);
+      memberOf([MEMBER_GROUP]);
+
+      await service.list(USER);
+
+      expect(filter().$or).toEqual([
+        { isPublic: true },
+        { groupId: { $in: [MEMBER_GROUP] } },
+      ]);
+      expect(filter().isPublic).toBeUndefined();
+    });
+
+    it('carries all three visibility arms together', async () => {
+      roster([JOINED_A]);
+      memberOf([MEMBER_GROUP]);
+
+      await service.list(USER);
+
+      expect(filter().$or).toEqual([
+        { isPublic: true },
+        { _id: { $in: [JOINED_A] } },
+        { groupId: { $in: [MEMBER_GROUP] } },
+      ]);
+    });
+
+    it('membership must be APPROVED — a pending requester sees nothing extra', async () => {
+      roster([]);
+      memberOf([]);
+
+      await service.list(USER);
+
+      expect(memberModel.find.mock.calls[0][0]).toEqual(
+        expect.objectContaining({ status: 'approved' }),
+      );
+      expect(filter().isPublic).toBe(true);
+      expect(filter().$or).toBeUndefined();
     });
 
     it('still ANDs the other filters against the visibility rule', async () => {
