@@ -170,6 +170,22 @@ export class Event {
   @Prop({ default: 'join', enum: EVENT_STATUSES })
   status: string;
 
+  /**
+   * Why the event was cancelled — the message players see. Written only by
+   * `POST /events/:id/cancel` together with `status: 'cancelled'`; `null` on
+   * every live event. Never editable afterwards: the cancellation is a
+   * record, and canModify() is false once it exists.
+   */
+  @Prop({ type: String, default: null })
+  cancelReason: string | null;
+
+  @Prop({ type: Date, default: null })
+  cancelledAt: Date | null;
+
+  /** Which organizer called it off — cheap to record now, unattributable later. */
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null })
+  cancelledBy: Types.ObjectId | null;
+
   // --- Fields landed by build-order step 1, filled by steps 2-3 ------------
   // These ship empty so the status migration is the only pass over every
   // event document. Presence here does NOT mean the behaviour exists yet.

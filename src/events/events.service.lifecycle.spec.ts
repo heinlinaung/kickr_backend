@@ -183,6 +183,9 @@ describe('EventsService — lifecycle', () => {
 
     it('409s any move out of done', async () => {
       for (const to of EVENT_STATUSES) {
+        // 'cancelled' is refused even earlier — as a 400 redirecting to the
+        // cancel endpoint, tested below — so it never reaches the table.
+        if (to === 'cancelled') continue;
         const doc = eventDoc({ status: 'done' });
         eventModel.findById.mockResolvedValue(doc);
         await expect(
@@ -192,6 +195,125 @@ describe('EventsService — lifecycle', () => {
       }
     });
 
+    it('400s status=cancelled, pointing at the cancel endpoint', async () => {
+      // The transition IS legal from join, but this body carries no reason —
+      // cancellation must go through POST /events/:id/cancel.
+      const doc = eventDoc({ status: 'join' });
+      eventModel.findById.mockResolvedValue(doc);
+
+      await expect(
+        service.setStatus(EVENT_ID, CREATOR, 'cancelled'),
+      ).rejects.toThrow(/POST \/events\/:id\/cancel/);
+      expect(doc.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('cancel — POST /events/:id/cancel', () => {
+    const REASON = 'Pitch flooded — venue closed for the day';
+
+    it.each(['join', 'preparation', 'ready_to_play', 'playing'])(
+      'cancels from %s, recording reason/at/by',
+      async (status) => {
+        const doc = eventDoc({ status });
+        eventModel.findById.mockResolvedValue(doc);
+
+        await service.cancel(EVENT_ID, CREATOR, { reason: REASON });
+
+        expect(doc.status).toBe('cancelled');
+        expect(doc.cancelReason).toBe(REASON);
+        expect(doc.cancelledAt).toBeInstanceOf(Date);
+        expect(doc.cancelledBy.toString()).toBe(CREATOR);
+        expect(doc.save).toHaveBeenCalled();
+      },
+    );
+
+    it.each(['after_match', 'done'])(
+      'refuses to cancel a played match (%s)',
+      async (status) => {
+        const doc = eventDoc({ status });
+        eventModel.findById.mockResolvedValue(doc);
+
+        await expect(
+          service.cancel(EVENT_ID, CREATOR, { reason: REASON }),
+        ).rejects.toThrow(/can no longer be cancelled/);
+        expect(doc.save).not.toHaveBeenCalled();
+      },
+    );
+
+    it('rejects cancelling twice, saying so', async () => {
+      const doc = eventDoc({ status: 'cancelled' });
+      eventModel.findById.mockResolvedValue(doc);
+
+      await expect(
+        service.cancel(EVENT_ID, CREATOR, { reason: REASON }),
+      ).rejects.toThrow(/already cancelled/);
+    });
+
+    it('is organizer-gated, like every lifecycle move', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc());
+
+      await expect(
+        service.cancel(EVENT_ID, STRANGER, { reason: REASON }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('respects the sport-aware table — a badminton join event cancels too', async () => {
+      const doc = eventDoc({ sportType: 'badminton', status: 'join' });
+      eventModel.findById.mockResolvedValue(doc);
+
+      await service.cancel(EVENT_ID, CREATOR, { reason: REASON });
+
+      expect(doc.status).toBe('cancelled');
+    });
+
+    it('archives the team chats, same closure as done', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc({ status: 'playing' }));
+
+      await service.cancel(EVENT_ID, CREATOR, { reason: REASON });
+
+      expect(teamChatModel.updateMany).toHaveBeenCalledWith(
+        { eventId: EVENT_ID },
+        { $set: { archived: true } },
+      );
+    });
+
+    it('notifies the joined roster with the reason as the body', async () => {
+      const doc = eventDoc({ title: 'Friday Night Football' });
+      eventModel.findById.mockResolvedValue(doc);
+      playerModel.find = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockReturnThis(),
+        lean: jest
+          .fn()
+          .mockResolvedValue([{ userId: new Types.ObjectId(STRANGER) }]),
+      });
+
+      await service.cancel(EVENT_ID, CREATOR, { reason: REASON });
+
+      expect(notifications.notifyUsers).toHaveBeenCalledWith(
+        [STRANGER],
+        expect.objectContaining({
+          title: 'Friday Night Football is cancelled',
+          body: REASON,
+          refId: EVENT_ID,
+        }),
+      );
+    });
+
+    it('a failed notification does not fail the cancellation', async () => {
+      // The event IS cancelled; reporting that as an error would be a lie.
+      const doc = eventDoc();
+      eventModel.findById.mockResolvedValue(doc);
+      notifications.notifyUsers.mockRejectedValue(new Error('FCM down'));
+
+      await expect(
+        service.cancel(EVENT_ID, CREATOR, { reason: REASON }),
+      ).resolves.toBeDefined();
+      expect(doc.status).toBe('cancelled');
+    });
+  });
+
+  describe('setStatus — input and permission guards', () => {
     it('400s an unknown status value', async () => {
       const doc = eventDoc({ status: 'join' });
       eventModel.findById.mockResolvedValue(doc);

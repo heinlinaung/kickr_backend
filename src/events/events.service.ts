@@ -46,6 +46,7 @@ import { AddMatchDto } from './dto/add-match.dto';
 import { UpdateMatchScoreDto } from './dto/update-match-score.dto';
 import { SubmitResultDto } from './dto/submit-result.dto';
 import { SubmitMvpDto } from './dto/submit-mvp.dto';
+import { CancelEventDto } from './dto/cancel-event.dto';
 import { CreateEventTemplateDto } from './dto/create-event-template.dto';
 import { LocationsService } from '../locations/locations.service';
 import { SportTypesService } from '../sport-types/sport-types.service';
@@ -393,7 +394,11 @@ export class EventsService {
 
     if (!includeExpired) {
       filter.date = { $gte: startOfToday() };
-      filter.status = { $ne: 'done' };
+      // `cancelled` joins `done` here: search is discovery-flavoured, and a
+      // called-off fixture is as un-attendable as an archived one. It stays
+      // visible in listByGroup and listJoined, where the point is telling the
+      // people involved.
+      filter.status = { $nin: ['done', 'cancelled'] };
     }
 
     // The keyset goes in $and: the query already uses a top-level $or for the
@@ -718,6 +723,9 @@ export class EventsService {
     const scheduled = await this.eventModel.countDocuments({
       createdBy: new Types.ObjectId(userId),
       date: { $gte: weekStart, $lt: weekEnd },
+      // A cancelled event frees its slot, same as a deleted one: the week was
+      // not used. A `done` event still counts — it was played that week.
+      status: { $ne: 'cancelled' },
     });
     if (scheduled >= limits.maxEventsPerWeek) {
       throw new BadRequestException(
@@ -1135,6 +1143,14 @@ export class EventsService {
     if (!isEventStatus(to)) {
       throw new BadRequestException(`Unknown status '${to}'`);
     }
+    // Cancellation is a legal TRANSITION but not through this endpoint: it
+    // must carry the reason players see, and this body has nowhere to put
+    // one. Rejected loudly rather than allowed reasonless.
+    if (to === 'cancelled') {
+      throw new BadRequestException(
+        'Use POST /events/:id/cancel to cancel an event — it requires the reason players will see',
+      );
+    }
     // Sport-aware: football runs the six-state table, every other sport skips
     // `preparation` — so e.g. join -> preparation on a badminton event lands
     // here, not in the isEventStatus check above (it IS a status, just not a
@@ -1167,6 +1183,70 @@ export class EventsService {
     }
 
     return event.toJSON();
+  }
+
+  /**
+   * Cancel the event — `POST /events/:id/cancel`.
+   *
+   * Its own endpoint rather than a `setStatus` target because cancellation
+   * carries data (the reason players see) and side effects (roster
+   * notification, chat archival) that a generic transition does not. Same
+   * authority as every lifecycle move: organizer only, and the sport-aware
+   * transition table decides from where — any state up to and including
+   * `playing`; a played match (`after_match`/`done`) can no longer be
+   * cancelled, and cancelling twice is rejected like any self-transition.
+   *
+   * Cancel, not delete: the event stays readable with its reason, so players
+   * see WHY instead of watching it vanish. Deleting remains possible while
+   * canModify allows it, but once anyone has joined, this is the right verb.
+   */
+  async cancel(eventId: string, userId: string, dto: CancelEventDto) {
+    const event = await this.assertOrganizer(eventId, userId);
+    if (!canTransition(event.status, 'cancelled', event.sportType)) {
+      throw new BadRequestException(
+        event.status === 'cancelled'
+          ? 'This event is already cancelled'
+          : `A '${event.status}' event can no longer be cancelled`,
+      );
+    }
+
+    event.status = 'cancelled';
+    event.cancelReason = dto.reason;
+    event.cancelledAt = new Date();
+    event.cancelledBy = new Types.ObjectId(userId);
+    await event.save();
+
+    // Same closure as `done`: the fixture is over, the rooms stay readable.
+    await this.teamChatModel.updateMany(
+      { eventId: event._id },
+      { $set: { archived: true } },
+    );
+
+    await this.notifyRosterCancelled(event);
+    return event.toJSON();
+  }
+
+  /**
+   * Tells the joined roster the event is off, and why.
+   *
+   * Addressed to the people PLAYING, same as the ready-to-play announcement —
+   * and of everything this API sends, this is the one that most needs to
+   * reach a phone in a pocket: someone is about to travel to a match that
+   * will not happen. The reason is the body, so the push alone answers "why".
+   */
+  private async notifyRosterCancelled(event: EventDocument): Promise<void> {
+    try {
+      const playerIds = await this.joinedPlayerIds(String(event._id));
+
+      await this.notificationsService.notifyUsers(playerIds, {
+        title: `${event.title} is cancelled`,
+        body: event.cancelReason ?? 'The organizer cancelled this event.',
+        type: 'event',
+        refId: String(event._id),
+      });
+    } catch (err) {
+      this.logger.error(`Failed to announce cancellation: ${err}`);
+    }
   }
 
   /** Edit an event. Organizer-gated; rejected once archived. */

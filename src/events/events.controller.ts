@@ -35,6 +35,7 @@ import { AddMatchDto } from './dto/add-match.dto';
 import { UpdateMatchScoreDto } from './dto/update-match-score.dto';
 import { SubmitResultDto } from './dto/submit-result.dto';
 import { SubmitMvpDto } from './dto/submit-mvp.dto';
+import { CancelEventDto } from './dto/cancel-event.dto';
 import { SetPaymentDto } from './dto/set-payment.dto';
 import { AddGuestDto } from './dto/add-guest.dto';
 import { SetGuestApprovalDto } from './dto/set-guest-approval.dto';
@@ -732,6 +733,30 @@ export class EventsController {
     @Body() dto: SubmitMvpDto,
   ) {
     return this.eventsService.submitMvp(id, user._id.toString(), dto);
+  }
+
+  @Post(':id/cancel')
+  @ApiOperation({
+    summary: 'Cancel the event, with the reason players see',
+    description:
+      'Organizer-only. Legal from any state up to and including `playing` ' +
+      '(emergencies happen mid-match); a played match (after_match/done) can ' +
+      'no longer be cancelled. Terminal: a cancelled event is frozen like a ' +
+      'done one, keeps its `cancelReason`/`cancelledAt`/`cancelledBy`, drops ' +
+      'out of discovery and search, but stays visible in the group tab and ' +
+      "the roster's joined list — telling players is the point, and every " +
+      'joined player is push-notified with the reason. Cancelling also frees ' +
+      "the week's plan slot. Prefer this over DELETE once anyone has joined: " +
+      'cancel keeps the record, delete makes the event vanish.',
+  })
+  @ApiResponse({ status: 400, description: 'Already cancelled, or played' })
+  @ApiResponse({ status: 403, description: 'Caller is not the organizer' })
+  cancel(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() dto: CancelEventDto,
+  ) {
+    return this.eventsService.cancel(id, user._id.toString(), dto);
   }
 
   @Post(':id/cover')
