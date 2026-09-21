@@ -117,7 +117,15 @@ export function eventsProviders(doubles: EventsTestDoubles = {}) {
         lean: jest.fn().mockResolvedValue([]),
       }),
     },
-    memberModel = {},
+    // list() resolves the caller's approved group memberships for the
+    // visibility disjunction, so the default double has to answer a
+    // find().select().lean() chain.
+    memberModel = {
+      find: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([]),
+      }),
+    },
     groupModel = {},
     // findById/standings always query fixtures now, so the default double has
     // to answer a full find().sort().lean() chain with an empty list.
