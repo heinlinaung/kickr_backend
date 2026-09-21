@@ -41,6 +41,12 @@ export const FOOTBALL_EVENT_STATUSES = [
   'playing',
   'after_match',
   'done',
+  // Second terminal state (2026-09-22): the organizer called the event off —
+  // an emergency, or not enough players to start. NOT a flavour of `done`:
+  // done means PLAYED, and ratings/standings/profile stats aggregate over it;
+  // a cancelled fixture never happened and must stay out of those. The reason
+  // lives on the event (`cancelReason`), set by POST /events/:id/cancel.
+  'cancelled',
 ] as const;
 
 export const EVENT_STATUSES = FOOTBALL_EVENT_STATUSES;
@@ -54,6 +60,7 @@ export const NON_FOOTBALL_EVENT_STATUSES = [
   'playing',
   'after_match',
   'done',
+  'cancelled',
 ] as const satisfies readonly EventStatus[];
 
 /**
@@ -100,16 +107,22 @@ export function statusesFor(sportType: unknown): readonly EventStatus[] {
  *    cannot have started, so nothing can be discarded by going back.
  *
  * There is deliberately no edge out of `done` — archival is terminal.
+ *
+ * `cancelled` is reachable from every state up to and including `playing`:
+ * the not-enough-players call happens before kick-off, the emergency call can
+ * come mid-match. NOT from `after_match`/`done` — the match was played, and
+ * that history must not be erasable. Terminal like `done`.
  */
 const FOOTBALL_TRANSITIONS: Readonly<
   Record<EventStatus, readonly EventStatus[]>
 > = {
-  join: ['preparation'],
-  preparation: ['ready_to_play', 'join'],
-  ready_to_play: ['playing', 'preparation'],
-  playing: ['after_match'],
+  join: ['preparation', 'cancelled'],
+  preparation: ['ready_to_play', 'join', 'cancelled'],
+  ready_to_play: ['playing', 'preparation', 'cancelled'],
+  playing: ['after_match', 'cancelled'],
   after_match: ['done'],
   done: [],
+  cancelled: [],
 };
 
 /**
@@ -126,12 +139,13 @@ const FOOTBALL_TRANSITIONS: Readonly<
 const NON_FOOTBALL_TRANSITIONS: Readonly<
   Record<EventStatus, readonly EventStatus[]>
 > = {
-  join: ['ready_to_play'],
-  preparation: ['ready_to_play', 'join'],
-  ready_to_play: ['playing', 'join'],
-  playing: ['after_match'],
+  join: ['ready_to_play', 'cancelled'],
+  preparation: ['ready_to_play', 'join', 'cancelled'],
+  ready_to_play: ['playing', 'join', 'cancelled'],
+  playing: ['after_match', 'cancelled'],
   after_match: ['done'],
   done: [],
+  cancelled: [],
 };
 
 /** The transition table for a sport. */
@@ -146,7 +160,9 @@ function transitionsFor(
  *
  * `after_match` sits here with `done` because the match has been played — it is
  * the window for entering the result, not a fixture anyone can still turn up
- * to. A discovery or "ongoing" list showing either is showing history.
+ * to. `cancelled` sits here for the mirror reason: the fixture will never be
+ * played. A discovery or "ongoing" list showing any of these is showing
+ * history.
  *
  * Named once rather than inlined as a `$nin` at each call site, so the two
  * lists cannot drift on what "finished" means.
@@ -154,14 +170,15 @@ function transitionsFor(
 export const FINISHED_STATUSES: readonly EventStatus[] = [
   'after_match',
   'done',
+  'cancelled',
 ];
 
-/** True when the fixture has been played. */
+/** True when the fixture is over — played out, or called off. */
 export function isFinished(status: unknown): boolean {
   return FINISHED_STATUSES.includes(status as EventStatus);
 }
 
-/** True when `value` is one of the six lifecycle states. */
+/** True when `value` is one of the lifecycle states. */
 export function isEventStatus(value: unknown): value is EventStatus {
   return (
     typeof value === 'string' && EVENT_STATUSES.includes(value as EventStatus)
@@ -241,7 +258,12 @@ export function canSubmitResult(status: unknown): boolean {
   return status === 'after_match';
 }
 
-/** Organizers may edit or delete an event until it is archived. */
+/**
+ * Organizers may edit or delete an event until it reaches a terminal state.
+ * A cancelled event is as frozen as a done one: it exists to tell players
+ * what happened (and why — `cancelReason`), and editing it would rewrite
+ * that record.
+ */
 export function canModify(status: unknown): boolean {
-  return isEventStatus(status) && status !== 'done';
+  return isEventStatus(status) && status !== 'done' && status !== 'cancelled';
 }

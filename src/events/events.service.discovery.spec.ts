@@ -182,10 +182,10 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
       expect(filter().isPublic).toBe(true);
     });
 
-    it('hides expired and done events by default', async () => {
+    it('hides expired, done and cancelled events by default', async () => {
       await service.search('friday');
       expect(filter().date.$gte).toBeInstanceOf(Date);
-      expect(filter().status).toEqual({ $ne: 'done' });
+      expect(filter().status).toEqual({ $nin: ['done', 'cancelled'] });
     });
 
     it('includeExpired returns past and done events', async () => {

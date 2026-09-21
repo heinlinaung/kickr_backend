@@ -33,17 +33,27 @@ const LEGAL: ReadonlyArray<[EventStatus, EventStatus]> = [
   ['ready_to_play', 'preparation'],
   ['playing', 'after_match'],
   ['after_match', 'done'],
+  // Cancellation: any state up to and including playing — the
+  // not-enough-players call comes before kick-off, the emergency call can
+  // come mid-match. NOT from after_match/done: a played match is history.
+  ['join', 'cancelled'],
+  ['preparation', 'cancelled'],
+  ['ready_to_play', 'cancelled'],
+  ['playing', 'cancelled'],
 ];
 
 const isLegal = (from: EventStatus, to: EventStatus) =>
   LEGAL.some(([f, t]) => f === from && t === to);
 
 describe('event lifecycle — transition table', () => {
-  it('declares exactly the six spec states, in lifecycle order', () => {
+  it('declares exactly the seven states, in lifecycle order', () => {
     // `ready_to_play` sits between team assignment and kick-off: teams are
     // final and reviewable, but the match has not started. Unlike the removed
     // `before_match`, it gates something real — canShuffle is false here, so
-    // the roster is frozen.
+    // the roster is frozen. `cancelled` is the second terminal state: the
+    // organizer called the event off, and `done` (= PLAYED) must not absorb
+    // it or ratings/standings would aggregate over fixtures that never
+    // happened.
     expect([...EVENT_STATUSES]).toEqual([
       'join',
       'preparation',
@@ -51,6 +61,7 @@ describe('event lifecycle — transition table', () => {
       'playing',
       'after_match',
       'done',
+      'cancelled',
     ]);
   });
 
@@ -245,18 +256,25 @@ describe('event lifecycle — sport-aware (non-football skips preparation)', () 
     // there, and it must be able to get out.
     ['preparation', 'ready_to_play'],
     ['preparation', 'join'],
+    // Cancellation edges, same shape as football's — including from the
+    // stranded `preparation` state, which must be cancellable too.
+    ['join', 'cancelled'],
+    ['preparation', 'cancelled'],
+    ['ready_to_play', 'cancelled'],
+    ['playing', 'cancelled'],
   ];
 
   const isLegal = (from: EventStatus, to: EventStatus) =>
     NON_FOOTBALL_LEGAL.some(([f, t]) => f === from && t === to);
 
-  it('statusesFor lists five states for other sports, six for football', () => {
+  it('statusesFor lists six states for other sports, seven for football', () => {
     expect([...statusesFor(SPORT)]).toEqual([
       'join',
       'ready_to_play',
       'playing',
       'after_match',
       'done',
+      'cancelled',
     ]);
     expect([...statusesFor('football')]).toEqual([...EVENT_STATUSES]);
     // Absent means football: the schema default, and every pre-field document.
@@ -264,9 +282,9 @@ describe('event lifecycle — sport-aware (non-football skips preparation)', () 
     expect([...statusesFor(null)]).toEqual([...EVENT_STATUSES]);
   });
 
-  it('NON_FOOTBALL_EVENT_STATUSES is the exported five-state list', () => {
+  it('NON_FOOTBALL_EVENT_STATUSES skips preparation only', () => {
     expect([...NON_FOOTBALL_EVENT_STATUSES]).not.toContain('preparation');
-    expect(NON_FOOTBALL_EVENT_STATUSES).toHaveLength(5);
+    expect(NON_FOOTBALL_EVENT_STATUSES).toHaveLength(EVENT_STATUSES.length - 1);
   });
 
   // 36 ordered pairs again, this time under a non-football sport.

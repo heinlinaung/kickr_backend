@@ -197,6 +197,14 @@ describe('EventsService — location handling on create', () => {
       expect(filter.date.$gte.toISOString()).toBe('2026-07-27T00:00:00.000Z');
       expect(filter.date.$lt.toISOString()).toBe('2026-08-03T00:00:00.000Z');
     });
+
+    it('a cancelled event frees its slot — excluded from the count', async () => {
+      // Same as deletion: the week was not used. A done event still counts.
+      await service.create(USER_ID, baseDto);
+
+      const filter = eventModel.countDocuments.mock.calls[0][0];
+      expect(filter.status).toEqual({ $ne: 'cancelled' });
+    });
   });
 
   it('verifies ownership and stores locationId as an ObjectId', async () => {
@@ -559,7 +567,7 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
 
       const filter = filterOf();
       expect(filter.date.$gte).toBeDefined();
-      expect(filter.status).toEqual({ $nin: ['after_match', 'done'] });
+      expect(filter.status).toEqual({ $nin: ['after_match', 'done', 'cancelled'] });
     });
 
     it('lets an explicit ?from= override the expiry floor', async () => {
@@ -601,14 +609,16 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
   describe('list → finished events', () => {
     const statusOf = () => eventModel.find.mock.calls.at(-1)[0].status;
 
-    it('hides after_match and done by default', async () => {
-      // A played fixture is history, not something to turn up to. Both states
-      // mean the match happened; only the result is outstanding in after_match.
+    it('hides after_match, done and cancelled by default', async () => {
+      // A played fixture is history, not something to turn up to — and a
+      // cancelled one will never be played at all.
       eventModel.find.mockReturnValue(q([]));
 
       await service.list('u1');
 
-      expect(statusOf()).toEqual({ $nin: ['after_match', 'done'] });
+      expect(statusOf()).toEqual({
+        $nin: ['after_match', 'done', 'cancelled'],
+      });
     });
 
     it.each(['after_match', 'done'])(
@@ -645,7 +655,7 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
 
       await service.list('u1', { region: 'yangon' });
 
-      expect(statusOf()).toEqual({ $nin: ['after_match', 'done'] });
+      expect(statusOf()).toEqual({ $nin: ['after_match', 'done', 'cancelled'] });
       expect(eventModel.find.mock.calls.at(-1)[0]).toHaveProperty('groupId');
     });
   });
@@ -660,7 +670,7 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
       // visibility clause AND the status exclusion.
       expect(eventModel.find).toHaveBeenCalledWith({
         isPublic: true,
-        status: { $nin: ['after_match', 'done'] },
+        status: { $nin: ['after_match', 'done', 'cancelled'] },
       });
       expect(groupModel.find).not.toHaveBeenCalled();
     });
@@ -702,7 +712,7 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
       expect(groupModel.find).not.toHaveBeenCalled();
       expect(eventModel.find).toHaveBeenCalledWith({
         isPublic: true,
-        status: { $nin: ['after_match', 'done'] },
+        status: { $nin: ['after_match', 'done', 'cancelled'] },
       });
     });
 
