@@ -16,6 +16,7 @@ import {
 } from './schemas/user.schema';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ImageKitService } from '../common/upload/imagekit.service';
+import { SportTypesService } from '../sport-types/sport-types.service';
 import {
   EventPlayer,
   EventPlayerDocument,
@@ -78,6 +79,7 @@ export class UsersService {
     @InjectModel(Event.name) private eventModel: Model<EventDocument>,
     @InjectModel(GlobalFootballTeam.name)
     private globalTeamModel: Model<GlobalFootballTeamDocument>,
+    private readonly sportTypesService: SportTypesService,
   ) {}
 
   /**
@@ -149,6 +151,28 @@ export class UsersService {
       });
       if (!exists) {
         throw new BadRequestException('Unknown favouriteTeamId');
+      }
+    }
+
+    // `sports`/`preferredSport` validate against the `sporttypes` collection,
+    // same source as group/event sportType — the DTO only checks they are
+    // strings. One findAll covers the whole array; per-value assertValid
+    // would re-query for every entry.
+    if (dto.sports?.length || dto.preferredSport) {
+      const valid = new Set(
+        (await this.sportTypesService.findAll()).map((row) => row.value),
+      );
+      const unknown = (dto.sports ?? []).find((sport) => !valid.has(sport));
+      if (unknown) {
+        throw new BadRequestException(
+          `Unknown sport '${unknown}'. Valid values: ${[...valid].join(', ')}`,
+        );
+      }
+      if (dto.preferredSport && !valid.has(dto.preferredSport)) {
+        throw new BadRequestException(
+          `Unknown preferredSport '${dto.preferredSport}'. ` +
+            `Valid values: ${[...valid].join(', ')}`,
+        );
       }
     }
     try {

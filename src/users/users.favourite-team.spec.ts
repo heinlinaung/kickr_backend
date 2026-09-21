@@ -9,6 +9,8 @@ import { EventPlayer } from '../events/schemas/event-player.schema';
 import { Event } from '../events/schemas/event.schema';
 import { GlobalFootballTeam } from '../global-football-teams/schemas/global-football-team.schema';
 import { ImageKitService } from '../common/upload/imagekit.service';
+import { SportTypesService } from '../sport-types/sport-types.service';
+import { sportTypesDouble } from '../events/events.test-providers';
 import { ConfigService } from '@nestjs/config';
 
 const USER = '507f191e810c19729de860e1';
@@ -49,6 +51,7 @@ describe('UsersService — favourite team', () => {
           useValue: globalTeamModel,
         },
         { provide: ImageKitService, useValue: {} },
+        { provide: SportTypesService, useValue: sportTypesDouble() },
         { provide: ConfigService, useValue: { get: () => '' } },
       ],
     }).compile();
@@ -191,6 +194,56 @@ describe('UsersService — favourite team', () => {
 
       const [, update] = userModel.findByIdAndUpdate.mock.calls[0];
       expect(update.$set.favouriteTeamId).toBe(TEAM);
+    });
+  });
+
+  // Validated against the `sporttypes` collection (via SportTypesService) —
+  // the DTO's hardcoded enum is gone; it had already drifted (no badminton).
+  describe('PATCH /users/me — sports validation', () => {
+    it('accepts sports the collection lists, badminton included', async () => {
+      await expect(
+        service.updateProfile(USER, {
+          sports: ['football', 'badminton'],
+          preferredSport: 'badminton',
+        } as any),
+      ).resolves.toBeDefined();
+    });
+
+    it('rejects an unknown sport, naming it and the valid values', async () => {
+      await expect(
+        service.updateProfile(USER, {
+          sports: ['football', 'cricket'],
+        } as any),
+      ).rejects.toThrow(/Unknown sport 'cricket'.*football/);
+
+      expect(userModel.findByIdAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('rejects an unknown preferredSport even alongside valid sports', async () => {
+      await expect(
+        service.updateProfile(USER, {
+          sports: ['football'],
+          preferredSport: 'cricket',
+        } as any),
+      ).rejects.toThrow(/Unknown preferredSport 'cricket'/);
+    });
+
+    it('skips the lookup when neither field is sent', async () => {
+      // An unrelated profile edit must not pay for a sports query — the same
+      // rule as the club lookup above.
+      const sportTypes = (service as any).sportTypesService;
+
+      await service.updateProfile(USER, { name: 'Hein' } as any);
+
+      expect(sportTypes.findAll).not.toHaveBeenCalled();
+    });
+
+    it('an empty sports array clears the list with no lookup', async () => {
+      await expect(
+        service.updateProfile(USER, { sports: [] } as any),
+      ).resolves.toBeDefined();
+
+      expect((service as any).sportTypesService.findAll).not.toHaveBeenCalled();
     });
   });
 });
