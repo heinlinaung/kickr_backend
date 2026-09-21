@@ -311,6 +311,133 @@ describe('EventsService — lifecycle', () => {
       ).resolves.toBeDefined();
       expect(doc.status).toBe('cancelled');
     });
+
+    it('records the status it was cancelled from, for restore', async () => {
+      const doc = eventDoc({ status: 'playing' });
+      eventModel.findById.mockResolvedValue(doc);
+
+      await service.cancel(EVENT_ID, CREATOR, { reason: REASON });
+
+      expect(doc.statusBeforeCancel).toBe('playing');
+    });
+  });
+
+  describe('restore — POST /events/:id/restore', () => {
+    /** A cancelled doc as cancel() leaves it. */
+    const cancelledDoc = (over: Record<string, unknown> = {}) =>
+      eventDoc({
+        status: 'cancelled',
+        statusBeforeCancel: 'ready_to_play',
+        cancelReason: 'wrong click',
+        cancelledAt: new Date(),
+        cancelledBy: new Types.ObjectId(CREATOR),
+        ...over,
+      });
+
+    beforeEach(() => {
+      // The weekly plan re-check: no other event holds the freed slot.
+      eventModel.countDocuments = jest.fn().mockResolvedValue(0);
+    });
+
+    it('puts the event back where it was and clears the cancellation record', async () => {
+      const doc = cancelledDoc();
+      eventModel.findById.mockResolvedValue(doc);
+
+      await service.restore(EVENT_ID, CREATOR);
+
+      expect(doc.status).toBe('ready_to_play');
+      expect(doc.statusBeforeCancel).toBeNull();
+      expect(doc.cancelReason).toBeNull();
+      expect(doc.cancelledAt).toBeNull();
+      expect(doc.cancelledBy).toBeNull();
+      expect(doc.save).toHaveBeenCalled();
+    });
+
+    it('falls back to join when no prior status was recorded', async () => {
+      // Rows cancelled before statusBeforeCancel existed.
+      const doc = cancelledDoc({ statusBeforeCancel: null });
+      eventModel.findById.mockResolvedValue(doc);
+
+      await service.restore(EVENT_ID, CREATOR);
+
+      expect(doc.status).toBe('join');
+    });
+
+    it('rejects restoring an event that is not cancelled', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc({ status: 'join' }));
+
+      await expect(service.restore(EVENT_ID, CREATOR)).rejects.toThrow(
+        /Only a cancelled event/,
+      );
+    });
+
+    it('is organizer-gated', async () => {
+      eventModel.findById.mockResolvedValue(cancelledDoc());
+
+      await expect(
+        service.restore(EVENT_ID, STRANGER),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('refuses when another event has taken the freed weekly slot', async () => {
+      // Cancelling freed the slot; the creator scheduled 3 others that week.
+      const doc = cancelledDoc();
+      eventModel.findById.mockResolvedValue(doc);
+      eventModel.countDocuments.mockResolvedValue(3);
+
+      await expect(service.restore(EVENT_ID, CREATOR)).rejects.toThrow(
+        /freed slot/,
+      );
+      expect(doc.save).not.toHaveBeenCalled();
+    });
+
+    it('counts the week against the CREATOR, excluding cancelled rows', async () => {
+      const doc = cancelledDoc();
+      eventModel.findById.mockResolvedValue(doc);
+
+      await service.restore(EVENT_ID, CREATOR);
+
+      const filter = eventModel.countDocuments.mock.calls[0][0];
+      expect(String(filter.createdBy)).toBe(CREATOR);
+      // This event itself is still cancelled while counting, so the
+      // exclusion keeps it from occupying the very slot it is reclaiming.
+      expect(filter.status).toEqual({ $ne: 'cancelled' });
+      expect(filter.date.$gte).toBeInstanceOf(Date);
+      expect(filter.date.$lt).toBeInstanceOf(Date);
+    });
+
+    it('reopens the team chats', async () => {
+      eventModel.findById.mockResolvedValue(cancelledDoc());
+
+      await service.restore(EVENT_ID, CREATOR);
+
+      expect(teamChatModel.updateMany).toHaveBeenCalledWith(
+        { eventId: EVENT_ID },
+        { $set: { archived: false } },
+      );
+    });
+
+    it('tells the roster the event is back on', async () => {
+      const doc = cancelledDoc({ title: 'Friday Night Football' });
+      eventModel.findById.mockResolvedValue(doc);
+      playerModel.find = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockReturnThis(),
+        lean: jest
+          .fn()
+          .mockResolvedValue([{ userId: new Types.ObjectId(STRANGER) }]),
+      });
+
+      await service.restore(EVENT_ID, CREATOR);
+
+      expect(notifications.notifyUsers).toHaveBeenCalledWith(
+        [STRANGER],
+        expect.objectContaining({
+          title: 'Friday Night Football is back on',
+          refId: EVENT_ID,
+        }),
+      );
+    });
   });
 
   describe('setStatus — input and permission guards', () => {
