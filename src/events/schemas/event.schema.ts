@@ -186,6 +186,15 @@ export class Event {
   @Prop({ type: Types.ObjectId, ref: 'User', default: null })
   cancelledBy: Types.ObjectId | null;
 
+  /**
+   * The status the event held when it was cancelled, so
+   * `POST /events/:id/restore` can put a wrongly-cancelled event BACK rather
+   * than reset it — a match cancelled mid-`playing` resumes as `playing`,
+   * not at registration. Cleared (with the fields above) on restore.
+   */
+  @Prop({ type: String, default: null })
+  statusBeforeCancel: string | null;
+
   // --- Fields landed by build-order step 1, filled by steps 2-3 ------------
   // These ship empty so the status migration is the only pass over every
   // event document. Presence here does NOT mean the behaviour exists yet.

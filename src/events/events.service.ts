@@ -1210,6 +1210,9 @@ export class EventsService {
       );
     }
 
+    // Recorded BEFORE the overwrite, so restore() can put the event back
+    // where it was rather than resetting it to registration.
+    event.statusBeforeCancel = event.status;
     event.status = 'cancelled';
     event.cancelReason = dto.reason;
     event.cancelledAt = new Date();
@@ -1246,6 +1249,83 @@ export class EventsService {
       });
     } catch (err) {
       this.logger.error(`Failed to announce cancellation: ${err}`);
+    }
+  }
+
+  /**
+   * Undo a wrong cancellation — `POST /events/:id/restore`.
+   *
+   * Puts the event back in the status it held when cancelled
+   * (`statusBeforeCancel`; `join` for any row cancelled before that field
+   * existed) and clears the cancellation record, so the "cancelReason exists
+   * iff cancelled" invariant holds. Its own endpoint for the same reason
+   * cancel is one: the transition table keeps `cancelled` terminal, so
+   * `PATCH /:id/status` can never walk out of it leaving a stale reason
+   * behind.
+   *
+   * Re-checks the CREATOR's weekly plan slot: cancelling freed it, and the
+   * creator may have scheduled another event in that week since — restoring
+   * must not let the week exceed the cap through the back door.
+   */
+  async restore(eventId: string, userId: string) {
+    const event = await this.assertOrganizer(eventId, userId);
+    if (event.status !== 'cancelled') {
+      throw new BadRequestException(
+        'Only a cancelled event can be restored',
+      );
+    }
+
+    const limits = await this.plansService.limitsFor(
+      event.createdBy.toString(),
+    );
+    const { start: weekStart, end: weekEnd } = weekOf(event.date);
+    const scheduled = await this.eventModel.countDocuments({
+      createdBy: event.createdBy,
+      date: { $gte: weekStart, $lt: weekEnd },
+      status: { $ne: 'cancelled' },
+    });
+    if (scheduled >= limits.maxEventsPerWeek) {
+      throw new BadRequestException(
+        `Restoring would exceed the plan's ${limits.maxEventsPerWeek} events ` +
+          "for that week — another event has taken the freed slot",
+      );
+    }
+
+    const backTo = event.statusBeforeCancel;
+    event.status = isEventStatus(backTo) && backTo !== 'cancelled' ? backTo : 'join';
+    event.statusBeforeCancel = null;
+    event.cancelReason = null;
+    event.cancelledAt = null;
+    event.cancelledBy = null;
+    await event.save();
+
+    // Reopen what cancellation closed.
+    await this.teamChatModel.updateMany(
+      { eventId: event._id },
+      { $set: { archived: false } },
+    );
+
+    await this.notifyRosterRestored(event);
+    return event.toJSON();
+  }
+
+  /**
+   * Tells the joined roster the cancellation was a mistake and the event is
+   * on again — they were just told the opposite, so silence here would leave
+   * half the roster not showing up.
+   */
+  private async notifyRosterRestored(event: EventDocument): Promise<void> {
+    try {
+      const playerIds = await this.joinedPlayerIds(String(event._id));
+
+      await this.notificationsService.notifyUsers(playerIds, {
+        title: `${event.title} is back on`,
+        body: 'The cancellation was undone — the event is happening as planned.',
+        type: 'event',
+        refId: String(event._id),
+      });
+    } catch (err) {
+      this.logger.error(`Failed to announce restoration: ${err}`);
     }
   }
 

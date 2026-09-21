@@ -759,6 +759,26 @@ export class EventsController {
     return this.eventsService.cancel(id, user._id.toString(), dto);
   }
 
+  @Post(':id/restore')
+  @ApiOperation({
+    summary: 'Undo a wrong cancellation',
+    description:
+      'Organizer-only, cancelled events only. Puts the event back in the ' +
+      'status it held when cancelled and clears ' +
+      'cancelReason/cancelledAt/cancelledBy; team chats reopen and every ' +
+      'joined player is notified the event is back on. Re-checks the ' +
+      "creator's weekly plan slot — if another event has taken the freed " +
+      'slot since, restoring is a 400. No body.',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Not cancelled, or the weekly plan slot is taken',
+  })
+  @ApiResponse({ status: 403, description: 'Caller is not the organizer' })
+  restore(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.eventsService.restore(id, user._id.toString());
+  }
+
   @Post(':id/cover')
   @UseInterceptors(FileInterceptor('file', multerMemoryImageOptions))
   @ApiOperation({ summary: 'Set or replace the cover image' })
