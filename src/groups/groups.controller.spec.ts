@@ -38,28 +38,41 @@ describe('GroupsController', () => {
   });
 
   describe('search', () => {
-    it('GET /groups/search delegates the query', async () => {
-      await controller.search('lumpini');
+    // The caller rides along so each card can carry joinedByMe/memberStatus.
+    const CALLER = { _id: 'u1' };
+
+    it('GET /groups/search delegates the query and the caller', async () => {
+      await controller.search(CALLER, 'lumpini');
       // limit/cursor pass through as undefined when absent, so the service's
       // own defaults apply rather than the controller inventing them.
-      expect(svc.search).toHaveBeenCalledWith('lumpini', undefined, undefined);
+      expect(svc.search).toHaveBeenCalledWith(
+        'lumpini',
+        undefined,
+        undefined,
+        'u1',
+      );
     });
 
     it('coerces a missing query to an empty string', async () => {
-      await controller.search(undefined as any);
-      expect(svc.search).toHaveBeenCalledWith('', undefined, undefined);
+      await controller.search(CALLER, undefined as any);
+      expect(svc.search).toHaveBeenCalledWith('', undefined, undefined, 'u1');
     });
 
     it('passes limit and cursor through', async () => {
-      await controller.search('lumpini', '5', 'eyJpIjoiYWJjIn0');
+      await controller.search(CALLER, 'lumpini', '5', 'eyJpIjoiYWJjIn0');
 
-      expect(svc.search).toHaveBeenCalledWith('lumpini', 5, 'eyJpIjoiYWJjIn0');
+      expect(svc.search).toHaveBeenCalledWith(
+        'lumpini',
+        5,
+        'eyJpIjoiYWJjIn0',
+        'u1',
+      );
     });
 
     it('hands a non-numeric limit to the service as NaN', async () => {
       // clampLimit owns the NaN guard; the controller must not pre-empt it with
       // a second, divergent clamp.
-      await controller.search('x', 'abc');
+      await controller.search(CALLER, 'x', 'abc');
 
       const limit = svc.search.mock.calls[0][1];
       expect(Number.isNaN(limit)).toBe(true);

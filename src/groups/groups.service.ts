@@ -393,7 +393,12 @@ export class GroupsService {
    * "request to join" action rather than navigating into a group whose
    * contents will refuse it.
    */
-  async search(q: string, limit = DEFAULT_PAGE_LIMIT, cursor?: string) {
+  async search(
+    q: string,
+    limit = DEFAULT_PAGE_LIMIT,
+    cursor?: string,
+    userId?: string,
+  ) {
     const term = (q ?? '').trim();
     if (!term) return { items: [], nextCursor: null, hasMore: false };
 
@@ -423,7 +428,40 @@ export class GroupsService {
       .limit(size + 1)
       .lean();
 
-    return toPage(rows, size, (row) => ({ i: String(row._id) }));
+    const page = toPage(rows, size, (row) => ({ i: String(row._id) }));
+
+    // Each card says where the CALLER stands with the group, so the client
+    // can render Join / Requested / Open without a per-row detail fetch:
+    //   joinedByMe   — approved membership, same meaning as the events flag;
+    //   memberStatus — 'approved' | 'pending' | null, because a pending
+    //                  request must render as "Requested", and a bare boolean
+    //                  cannot say so.
+    // One indexed query over the page's ids, not one per row.
+    const membershipByGroup = new Map<string, string>();
+    if (userId && page.items.length) {
+      const memberships = await this.memberModel
+        .find({
+          userId: new Types.ObjectId(userId),
+          groupId: { $in: page.items.map((item) => item._id) },
+        })
+        .select('groupId status')
+        .lean();
+      for (const row of memberships) {
+        membershipByGroup.set(String(row.groupId), row.status);
+      }
+    }
+
+    return {
+      ...page,
+      items: page.items.map((item) => {
+        const memberStatus = membershipByGroup.get(String(item._id)) ?? null;
+        return {
+          ...item,
+          joinedByMe: memberStatus === 'approved',
+          memberStatus,
+        };
+      }),
+    };
   }
 
   /**

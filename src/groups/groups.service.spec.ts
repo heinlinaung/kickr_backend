@@ -331,6 +331,65 @@ describe('GroupsService', () => {
       });
       expect(groupModel.find).not.toHaveBeenCalled();
     });
+
+    describe("the caller's standing on each card", () => {
+      const APPROVED_ID = new Types.ObjectId();
+      const PENDING_ID = new Types.ObjectId();
+      const STRANGER_ID = new Types.ObjectId();
+
+      beforeEach(() => {
+        groupModel.find.mockReturnValue(
+          q([
+            { _id: APPROVED_ID, name: 'Joined FC' },
+            { _id: PENDING_ID, name: 'Requested FC' },
+            { _id: STRANGER_ID, name: 'Other FC' },
+          ]),
+        );
+        memberModel.find.mockReturnValue(
+          q([
+            { groupId: APPROVED_ID, status: 'approved' },
+            { groupId: PENDING_ID, status: 'pending' },
+          ]),
+        );
+      });
+
+      it('flags joinedByMe and memberStatus per row', async () => {
+        const res = await service.search('fc', 20, undefined, USER_ID);
+
+        const byName = new Map(res.items.map((i: any) => [i.name, i]));
+        expect(byName.get('Joined FC')).toMatchObject({
+          joinedByMe: true,
+          memberStatus: 'approved',
+        });
+        // A pending request is NOT joined — the client renders "Requested".
+        expect(byName.get('Requested FC')).toMatchObject({
+          joinedByMe: false,
+          memberStatus: 'pending',
+        });
+        expect(byName.get('Other FC')).toMatchObject({
+          joinedByMe: false,
+          memberStatus: null,
+        });
+      });
+
+      it('resolves the whole page with ONE membership query', async () => {
+        await service.search('fc', 20, undefined, USER_ID);
+
+        expect(memberModel.find).toHaveBeenCalledTimes(1);
+        const filter = memberModel.find.mock.calls[0][0];
+        expect(String(filter.userId)).toBe(USER_ID);
+        expect(filter.groupId.$in).toHaveLength(3);
+      });
+
+      it('skips the membership lookup when no caller is supplied', async () => {
+        const res = await service.search('fc');
+
+        expect(memberModel.find).not.toHaveBeenCalled();
+        // The fields still exist so the response shape is stable.
+        expect((res.items[0] as any).joinedByMe).toBe(false);
+        expect((res.items[0] as any).memberStatus).toBeNull();
+      });
+    });
   });
 
   describe('remove — delete the group and everything it owns', () => {

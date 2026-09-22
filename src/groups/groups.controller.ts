@@ -58,7 +58,10 @@ export class GroupsController {
       'matching /users/search and /events/search. ' +
       'PRIVATE groups ARE included: a private group has to be discoverable ' +
       'for anyone to ask to join. Each row is a card — its events, members and ' +
-      'full detail stay gated. Sorted by _id; there is no relevance ranking.',
+      'full detail stay gated. Sorted by _id; there is no relevance ranking. ' +
+      'Each card carries the CALLER’s standing: `joinedByMe` (approved ' +
+      'member) and `memberStatus` (`approved` | `pending` | null), so the ' +
+      'client can render Join / Requested / Open without a detail fetch.',
   })
   @ApiQuery({ name: 'q', required: true, example: 'sunday' })
   @ApiQuery({
@@ -75,6 +78,7 @@ export class GroupsController {
       'response verbatim; omit for the first page. Invalid values give 400.',
   })
   search(
+    @CurrentUser() user: any,
     @Query('q') q: string,
     @Query('limit') limit?: string,
     @Query('cursor') cursor?: string,
@@ -83,6 +87,7 @@ export class GroupsController {
       q ?? '',
       limit === undefined ? undefined : Number(limit),
       cursor,
+      user._id.toString(),
     );
   }
 
