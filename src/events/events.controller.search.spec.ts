@@ -10,6 +10,9 @@ import { EventsService } from './events.service';
 describe('EventsController — search', () => {
   let controller: EventsController;
 
+  // The caller rides along so visibility can include their groups' private
+  // events, same as GET /events.
+  const CALLER = { _id: 'u1' };
   const svc = { search: jest.fn().mockResolvedValue([]) };
 
   beforeEach(async () => {
@@ -22,50 +25,50 @@ describe('EventsController — search', () => {
   });
 
   it('GET /events/search delegates the query', async () => {
-    await controller.searchEvents('friday night');
-    expect(svc.search).toHaveBeenCalledWith('friday night', false, undefined, undefined);
+    await controller.searchEvents(CALLER, 'friday night');
+    expect(svc.search).toHaveBeenCalledWith('friday night', false, undefined, undefined, 'u1');
   });
 
   it('coerces a missing query to an empty string', async () => {
-    await controller.searchEvents(undefined);
-    expect(svc.search).toHaveBeenCalledWith('', false, undefined, undefined);
+    await controller.searchEvents(CALLER, undefined);
+    expect(svc.search).toHaveBeenCalledWith('', false, undefined, undefined, 'u1');
   });
 
   describe('includeExpired', () => {
     it("is true only for the exact string 'true'", async () => {
-      await controller.searchEvents('friday', 'true');
-      expect(svc.search).toHaveBeenCalledWith('friday', true, undefined, undefined);
+      await controller.searchEvents(CALLER, 'friday', 'true');
+      expect(svc.search).toHaveBeenCalledWith('friday', true, undefined, undefined, 'u1');
     });
 
     it('defaults to false when absent', async () => {
-      await controller.searchEvents('friday', undefined);
-      expect(svc.search).toHaveBeenCalledWith('friday', false, undefined, undefined);
+      await controller.searchEvents(CALLER, 'friday', undefined);
+      expect(svc.search).toHaveBeenCalledWith('friday', false, undefined, undefined, 'u1');
     });
 
     it('is false for any other value, so a typo never widens visibility', async () => {
       // '1', 'yes', 'TRUE' must not silently unhide past/done events.
       for (const v of ['1', 'yes', 'TRUE', '']) {
         jest.clearAllMocks();
-        await controller.searchEvents('friday', v);
-        expect(svc.search).toHaveBeenCalledWith('friday', false, undefined, undefined);
+        await controller.searchEvents(CALLER, 'friday', v);
+        expect(svc.search).toHaveBeenCalledWith('friday', false, undefined, undefined, 'u1');
       }
     });
   });
 
   describe('limit', () => {
     it('passes a numeric limit through as a number', async () => {
-      await controller.searchEvents('friday', undefined, '35');
-      expect(svc.search).toHaveBeenCalledWith('friday', false, 35, undefined);
+      await controller.searchEvents(CALLER, 'friday', undefined, '35');
+      expect(svc.search).toHaveBeenCalledWith('friday', false, 35, undefined, 'u1');
     });
 
     it('stays undefined when absent, so the service default wins', async () => {
-      await controller.searchEvents('friday', undefined, undefined);
-      expect(svc.search).toHaveBeenCalledWith('friday', false, undefined, undefined);
+      await controller.searchEvents(CALLER, 'friday', undefined, undefined);
+      expect(svc.search).toHaveBeenCalledWith('friday', false, undefined, undefined, 'u1');
     });
 
     it('forwards the cursor verbatim', async () => {
       // Opaque to the controller — it must not parse or validate it.
-      await controller.searchEvents(
+      await controller.searchEvents(CALLER, 
         'friday',
         undefined,
         undefined,
@@ -76,12 +79,13 @@ describe('EventsController — search', () => {
         false,
         undefined,
         'eyJpIjoiYWJjIn0',
+        'u1',
       );
     });
 
     it('forwards a non-numeric limit as NaN for the service to reject', async () => {
       // clampLimit() owns the validation so the rule lives in one place.
-      await controller.searchEvents('friday', undefined, 'abc');
+      await controller.searchEvents(CALLER, 'friday', undefined, 'abc');
       const [, , limit] = svc.search.mock.calls[0];
       expect(Number.isNaN(limit)).toBe(true);
     });

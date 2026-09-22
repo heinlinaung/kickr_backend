@@ -138,14 +138,16 @@ export class EventsController {
    */
   @Get('search')
   @ApiOperation({
-    summary: 'Free-text search over public events',
+    summary: 'Free-text search over events the caller can see',
     description:
       'Case-insensitive substring match on title and description, soonest ' +
-      'first. Public events only — a private group event never surfaces ' +
-      'here, even to a member; use GET /events/group/:groupId for those. ' +
-      'Expired and `done` events are hidden unless includeExpired=true. ' +
-      'Returns a page: `{ items, nextCursor, hasMore }`. Ordered by date ' +
-      'ascending, not by relevance. An empty query returns an empty page.',
+      'first. Visibility matches GET /events: public events, events the ' +
+      'caller joined, and events of groups the caller is an approved member ' +
+      'of — so a private group event IS findable by its members (and only ' +
+      'them). Expired, `done` and `cancelled` events are hidden unless ' +
+      'includeExpired=true. Returns a page: `{ items, nextCursor, hasMore }`. ' +
+      'Ordered by date ascending, not by relevance. An empty query returns ' +
+      'an empty page.',
   })
   @ApiQuery({ name: 'q', required: true, example: 'friday night' })
   @ApiQuery({
@@ -168,6 +170,7 @@ export class EventsController {
       'response verbatim; omit for the first page. Invalid values give 400.',
   })
   searchEvents(
+    @CurrentUser() user: any,
     @Query('q') q?: string,
     @Query('includeExpired') includeExpired?: string,
     @Query('limit') limit?: string,
@@ -178,6 +181,7 @@ export class EventsController {
       includeExpired === 'true',
       limit === undefined ? undefined : Number(limit),
       cursor,
+      user._id.toString(),
     );
   }
 
