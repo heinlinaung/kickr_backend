@@ -154,13 +154,15 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
     });
   });
 
-  describe('search — free text over public events', () => {
+  describe('search — free text over events the caller can see', () => {
     const filter = () => eventModel.find.mock.calls[0][0];
+    // $and[0] is always the text match; $and[1] the visibility rule.
+    const textOr = () => filter().$and[0].$or;
 
     it('matches title and description case-insensitively', async () => {
       await service.search('friday');
 
-      const or = filter().$or;
+      const or = textOr();
       expect(or.map((c: any) => Object.keys(c)[0])).toEqual([
         'title',
         'description',
@@ -176,10 +178,33 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
       expect(eventModel.find).not.toHaveBeenCalled();
     });
 
-    it('only ever returns public events', async () => {
-      // A private group event must not surface here, member or not.
+    it('is public-only for a caller with no memberships or roster', async () => {
       await service.search('friday');
-      expect(filter().isPublic).toBe(true);
+      expect(filter().$and[1]).toEqual({ isPublic: true });
+    });
+
+    it("includes the caller's joined events and member groups' events", async () => {
+      // The bug this pins: 'Aura Bangkok Thurday' (isPublic: false) showed in
+      // GET /events for its group's members but /events/search?q=Aura came
+      // back empty — search never had the other two visibility arms.
+      const GROUP = new Types.ObjectId();
+      const JOINED = new Types.ObjectId();
+      playerModel.find = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([{ eventId: JOINED }]),
+      });
+      memberModel.find = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([{ groupId: GROUP }]),
+      });
+
+      await service.search('aura', false, 20, undefined, USER);
+
+      expect(filter().$and[1].$or).toEqual([
+        { isPublic: true },
+        { _id: { $in: [JOINED] } },
+        { groupId: { $in: [GROUP] } },
+      ]);
     });
 
     it('hides expired, done and cancelled events by default', async () => {
@@ -196,7 +221,7 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
 
     it('treats regex metacharacters as literal text', async () => {
       await service.search('a.c');
-      const rx = filter().$or[0].title;
+      const rx = textOr()[0].title;
       expect(rx.test('abc')).toBe(false);
       expect(rx.test('a.c')).toBe(true);
     });
@@ -290,7 +315,8 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
 
       it('adds no keyset predicate on the first page', async () => {
         await service.search('friday');
-        expect(filter().$and).toBeUndefined();
+        // $and carries text + visibility only — no third, keyset entry.
+        expect(filter().$and).toHaveLength(2);
       });
 
       it('resumes strictly after the cursor row', async () => {
@@ -301,7 +327,8 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
         await service.search('friday', false, 20, cursor);
 
         // Keyset, not skip: later date, OR same date with a greater _id.
-        const or = filter().$and[0].$or;
+        // It rides third in $and, after text and visibility.
+        const or = filter().$and[2].$or;
         expect(or[0].date.$gt).toEqual(DATE_A);
         expect(or[1].date).toEqual(DATE_A);
         expect(or[1]._id.$gt.toString()).toBe(ID_A);

@@ -366,8 +366,11 @@ export class EventsService {
    *
    * Separate from `list()` rather than a `?q=` on it, so the two stay easy to
    * reason about: this one is "find me an event by name", that one is "browse
-   * with filters". Both apply the same visibility rule — `isPublic: true` —
-   * because a private group's event must not surface to a non-member here.
+   * with filters". Both apply the same THREE-ARM visibility rule — public, OR
+   * joined by the caller, OR belonging to a group the caller is an approved
+   * member of. It used to be `isPublic: true` alone, which made a member's
+   * own group's private events unfindable by name while the discovery list
+   * showed them — the same bug list() had, one endpoint over.
    *
    * Matches `title` and `description` case-insensitively as a substring. No
    * text index: at this scale a regex scan is fine, and a $text index would
@@ -381,16 +384,38 @@ export class EventsService {
     includeExpired = false,
     limit = DEFAULT_PAGE_LIMIT,
     cursor?: string,
+    userId?: string,
   ) {
     const term = (q ?? '').trim();
     // An empty regex matches everything; that is a listing, not a search.
     if (!term) return { items: [], nextCursor: null, hasMore: false };
 
     const rx = new RegExp(escapeRegex(term), 'i');
-    const filter: Record<string, unknown> = {
-      isPublic: true,
-      $or: [{ title: rx }, { description: rx }],
-    };
+
+    // Same three routes to visibility as list() — public, joined, or a group
+    // the caller is an approved member of — so the two endpoints agree on
+    // what the caller may see and a member can FIND their group's private
+    // event by name, not just scroll to it.
+    const [joinedIds, memberGroupIds] = userId
+      ? await Promise.all([
+          this.joinedEventIds(userId),
+          this.approvedGroupIds(userId),
+        ])
+      : [[], []];
+    const visibility: Record<string, unknown>[] = [{ isPublic: true }];
+    if (joinedIds.length) visibility.push({ _id: { $in: joinedIds } });
+    if (memberGroupIds.length) {
+      visibility.push({ groupId: { $in: memberGroupIds } });
+    }
+
+    // Text match, visibility and (below) the keyset are ALL disjunctions or
+    // live alongside them, so each goes in $and — two top-level $or keys
+    // would overwrite each other.
+    const and: Record<string, unknown>[] = [
+      { $or: [{ title: rx }, { description: rx }] },
+      visibility.length > 1 ? { $or: visibility } : { isPublic: true },
+    ];
+    const filter: Record<string, unknown> = { $and: and };
 
     if (!includeExpired) {
       filter.date = { $gte: startOfToday() };
@@ -401,10 +426,8 @@ export class EventsService {
       filter.status = { $nin: ['done', 'cancelled'] };
     }
 
-    // The keyset goes in $and: the query already uses a top-level $or for the
-    // title/description match, and a second $or key would overwrite it.
     if (cursor) {
-      filter.$and = [keysetFilter(decodeCursor(cursor), 'date')];
+      and.push(keysetFilter(decodeCursor(cursor), 'date'));
     }
 
     const size = clampLimit(limit);
