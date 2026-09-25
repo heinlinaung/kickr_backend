@@ -1,6 +1,7 @@
 // src/events/events.fixtures.spec.ts
 import {
   MATCH_BUFFER_MINUTES,
+  MAX_CONSECUTIVE_MATCHES,
   MAX_TEAMS,
   TEAM_COLOURS,
   computeStandings,
@@ -82,6 +83,73 @@ describe('generateFixtures — double round-robin (spec §4.3.4)', () => {
 
   it('returns no fixtures for a single team', () => {
     expect(generateFixtures(['Red'])).toEqual([]);
+  });
+});
+
+describe('fixture order — no team plays more than 2 matches back to back', () => {
+  // Matches run sequentially on one pitch, so the fixture order IS the rest
+  // schedule: a third consecutive match means a team with no break at all.
+  const longestStreak = (
+    fixtures: readonly { teamA: string; teamB: string }[],
+  ): number => {
+    const running = new Map<string, number>();
+    let longest = 0;
+    for (const fixture of fixtures) {
+      const playing = new Set([fixture.teamA, fixture.teamB]);
+      for (const team of playing) {
+        const streak = (running.get(team) ?? 0) + 1;
+        running.set(team, streak);
+        longest = Math.max(longest, streak);
+      }
+      for (const team of running.keys()) {
+        if (!playing.has(team)) running.set(team, 0);
+      }
+    }
+    return longest;
+  };
+
+  it('reproduces the reported case: 4 teams no longer open with one team in 3 straight matches', () => {
+    // The old order was Red v Yellow, Red v Blue, Red v Black — Red played
+    // the first three matches with no rest.
+    const fixtures = generateFixtures(['Red', 'Yellow', 'Blue', 'Black']);
+    const openers = fixtures.slice(0, 3);
+    for (const team of ['Red', 'Yellow', 'Blue', 'Black']) {
+      const straight = openers.filter(
+        (f) => f.teamA === team || f.teamB === team,
+      );
+      expect(straight.length).toBeLessThanOrEqual(MAX_CONSECUTIVE_MATCHES);
+    }
+  });
+
+  it.each([[3], [4], [5], [6]])(
+    'holds across the whole double round-robin for %i teams',
+    (teamCount) => {
+      const teams = TEAM_COLOURS.slice(0, teamCount) as unknown as string[];
+      expect(longestStreak(generateFixtures(teams))).toBeLessThanOrEqual(
+        MAX_CONSECUTIVE_MATCHES,
+      );
+    },
+  );
+
+  it.each([[3], [4], [5], [6]])(
+    'holds across the repeat seam when the schedule fills a long slot (%i teams)',
+    (teamCount) => {
+      const teams = TEAM_COLOURS.slice(0, teamCount) as unknown as string[];
+      // Enough slots to wrap the base schedule at least twice, so the
+      // last-fixture -> first-fixture seam is exercised.
+      const filled = generateFixturesFilling(
+        teams,
+        teamCount * (teamCount - 1) * 2 + 3,
+      );
+      expect(longestStreak(filled)).toBeLessThanOrEqual(
+        MAX_CONSECUTIVE_MATCHES,
+      );
+    },
+  );
+
+  it('exempts two teams — both necessarily play every match', () => {
+    const filled = generateFixturesFilling(['Red', 'Blue'], 5);
+    expect(longestStreak(filled)).toBe(5);
   });
 });
 
