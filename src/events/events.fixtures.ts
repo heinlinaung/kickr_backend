@@ -53,6 +53,14 @@ export function matchCountFor(
   return Math.floor(playable / teamDuration);
 }
 
+/**
+ * The rest rule: no team plays more than this many matches back to back.
+ *
+ * Matches run sequentially on one pitch, so the fixture ORDER is also the
+ * rest schedule. Two teams are necessarily exempt — both play every match.
+ */
+export const MAX_CONSECUTIVE_MATCHES = 2;
+
 export interface Fixture {
   matchNumber: number;
   teamA: string;
@@ -70,6 +78,10 @@ export interface Fixture {
  * runs 1..N sequentially across leg 1 then leg 2.
  *
  * N teams yield N*(N-1) fixtures — 4 teams -> 12, each team playing 6.
+ *
+ * Fixtures are ordered so no team plays more than MAX_CONSECUTIVE_MATCHES
+ * back to back (see `roundRobinPairs`); with only 2 teams the rule cannot
+ * apply, since both play every match.
  *
  * Scores start `null`, never 0: a goalless draw is a real result, and standings
  * skip unplayed fixtures by testing for null (see `computeStandings`).
@@ -105,6 +117,9 @@ export function generateFixturesLimited(
  * round-robin would drop pairings entirely, which is the truncation this
  * replaced. A short event therefore overruns rather than losing fixtures — the
  * organizer can shorten the match duration or drop matches at the end.
+ *
+ * The base order's rest rule is cyclic, so repeating it keeps every streak
+ * within MAX_CONSECUTIVE_MATCHES across the seams too (3+ teams).
  */
 export function generateFixturesFilling(
   teamNames: string[],
@@ -122,7 +137,48 @@ export function generateFixturesFilling(
   }));
 }
 
+/**
+ * One leg's pairings via the circle method, ordered round by round.
+ *
+ * This ordering is what enforces MAX_CONSECUTIVE_MATCHES. A round's matches
+ * share no team, so any window of three consecutive fixtures contains two
+ * fixtures from the same round — a team can therefore appear in at most two
+ * of the three. The naive nested-pairs order this replaced opened a 4-team
+ * schedule with Red v Yellow, Red v Blue, Red v Black: three straight
+ * matches for Red with no rest.
+ *
+ * The guarantee is CYCLIC (it also holds treating the sequence as a loop),
+ * so it survives both seams built on top of this order: leg 2 replays the
+ * same team sequence, and `generateFixturesFilling` repeats the whole
+ * schedule. With three teams every round is a single match, but any three
+ * distinct pairs of three teams already satisfy the rule — a team is in
+ * exactly two of them.
+ *
+ * Odd counts get a bye slot; its pairings are skipped, never emitted.
+ */
+function roundRobinPairs(teamCount: number): [number, number][] {
+  if (teamCount < 2) return [];
+
+  const slotCount = teamCount % 2 === 0 ? teamCount : teamCount + 1;
+  const slots = Array.from({ length: slotCount }, (_, i) => i);
+  const pairs: [number, number][] = [];
+
+  for (let round = 0; round < slotCount - 1; round++) {
+    for (let k = 0; k < slotCount / 2; k++) {
+      const a = slots[k];
+      const b = slots[slotCount - 1 - k];
+      // A slot at or past teamCount is the bye added for an odd count.
+      if (a < teamCount && b < teamCount) pairs.push([a, b]);
+    }
+    // Rotate every slot but the first — the standard circle step.
+    slots.splice(1, 0, slots.pop()!);
+  }
+
+  return pairs;
+}
+
 export function generateFixtures(teamNames: string[]): Fixture[] {
+  const legOrder = roundRobinPairs(teamNames.length);
   const fixtures: Fixture[] = [];
   let matchNumber = 1;
 
@@ -133,18 +189,16 @@ export function generateFixtures(teamNames: string[]): Fixture[] {
     [0, 1],
     [1, 0],
   ] as const) {
-    for (let i = 0; i < teamNames.length; i++) {
-      for (let j = i + 1; j < teamNames.length; j++) {
-        const pair = [teamNames[i], teamNames[j]];
-        fixtures.push({
-          matchNumber: matchNumber++,
-          teamA: pair[homeIndex],
-          teamB: pair[awayIndex],
-          scoreA: null,
-          scoreB: null,
-          playedAt: null,
-        });
-      }
+    for (const [i, j] of legOrder) {
+      const pair = [teamNames[i], teamNames[j]];
+      fixtures.push({
+        matchNumber: matchNumber++,
+        teamA: pair[homeIndex],
+        teamB: pair[awayIndex],
+        scoreA: null,
+        scoreB: null,
+        playedAt: null,
+      });
     }
   }
 
