@@ -9,7 +9,8 @@ import { Event } from '../events/schemas/event.schema';
 import { GlobalFootballTeam } from '../global-football-teams/schemas/global-football-team.schema';
 import { ImageKitService } from '../common/upload/imagekit.service';
 import { SportTypesService } from '../sport-types/sport-types.service';
-import { sportTypesDouble } from '../events/events.test-providers';
+import { RatingsService } from '../ratings/ratings.service';
+import { sportTypesDouble, ratingsDouble } from '../events/events.test-providers';
 
 describe('UsersService', () => {
   let service: UsersService;
@@ -48,6 +49,7 @@ describe('UsersService', () => {
           useValue: globalTeamModel,
         },
         { provide: SportTypesService, useValue: sportTypesDouble() },
+        { provide: RatingsService, useValue: ratingsDouble() },
       ],
     }).compile();
     service = m.get(UsersService);

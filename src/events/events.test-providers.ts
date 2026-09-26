@@ -30,6 +30,16 @@ import { PlansService } from '../plans/plans.service';
 import { DEFAULT_PLAN_LIMITS } from '../plans/plans';
 import { BadRequestException } from '@nestjs/common';
 
+/**
+ * RatingsService double for consumers that only read aggregates (profile
+ * statistics). 0 is the unrated value the real service returns.
+ */
+export function ratingsDouble() {
+  return {
+    averageForPlayer: jest.fn().mockResolvedValue(0),
+  };
+}
+
 /** PlansService double answering every lookup with the default plan. */
 export function plansDouble() {
   return {
