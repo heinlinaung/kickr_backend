@@ -10,7 +10,8 @@ import { Event } from '../events/schemas/event.schema';
 import { GlobalFootballTeam } from '../global-football-teams/schemas/global-football-team.schema';
 import { ImageKitService } from '../common/upload/imagekit.service';
 import { SportTypesService } from '../sport-types/sport-types.service';
-import { sportTypesDouble } from '../events/events.test-providers';
+import { RatingsService } from '../ratings/ratings.service';
+import { sportTypesDouble, ratingsDouble } from '../events/events.test-providers';
 import { ConfigService } from '@nestjs/config';
 
 describe('UsersService.search', () => {
@@ -39,6 +40,7 @@ describe('UsersService.search', () => {
         { provide: getModelToken(GlobalFootballTeam.name), useValue: {} },
         { provide: ImageKitService, useValue: {} },
         { provide: SportTypesService, useValue: sportTypesDouble() },
+        { provide: RatingsService, useValue: ratingsDouble() },
         { provide: ConfigService, useValue: { get: jest.fn() } },
       ],
     }).compile();

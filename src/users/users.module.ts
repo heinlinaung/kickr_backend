@@ -14,6 +14,7 @@ import {
   GlobalFootballTeam,
   GlobalFootballTeamSchema,
 } from '../global-football-teams/schemas/global-football-team.schema';
+import { RatingsModule } from '../ratings/ratings.module';
 
 @Module({
   imports: [
@@ -33,6 +34,8 @@ import {
     // For profile sports/preferredSport validation against the `sporttypes`
     // collection. A leaf module, so no cycle risk.
     SportTypesModule,
+    // For profile statistics' avgRating (§4.10). Also a leaf — no cycle.
+    RatingsModule,
   ],
   controllers: [UsersController],
   providers: [UsersService],

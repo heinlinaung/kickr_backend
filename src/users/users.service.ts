@@ -17,6 +17,7 @@ import {
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ImageKitService } from '../common/upload/imagekit.service';
 import { SportTypesService } from '../sport-types/sport-types.service';
+import { RatingsService } from '../ratings/ratings.service';
 import {
   EventPlayer,
   EventPlayerDocument,
@@ -80,6 +81,7 @@ export class UsersService {
     @InjectModel(GlobalFootballTeam.name)
     private globalTeamModel: Model<GlobalFootballTeamDocument>,
     private readonly sportTypesService: SportTypesService,
+    private readonly ratingsService: RatingsService,
   ) {}
 
   /**
@@ -290,17 +292,20 @@ export class UsersService {
   }
 
   private async buildStatistics(userId: string) {
-    // matchesPlayed is real. wins/mvpCount/avgRating require Event after-match
-    // results (§4.5) and ratings (§4.10) which are not built yet — return 0.
-    const matchesPlayed = await this.playerModel.countDocuments({
-      userId: this.toUserIdFilter(userId),
-      status: 'joined',
-    });
+    // matchesPlayed and avgRating are real. wins/mvpCount require Event
+    // after-match results (§4.5) which are not built yet — return 0.
+    const [matchesPlayed, avgRating] = await Promise.all([
+      this.playerModel.countDocuments({
+        userId: this.toUserIdFilter(userId),
+        status: 'joined',
+      }),
+      this.ratingsService.averageForPlayer(userId),
+    ]);
     return {
       matchesPlayed,
       wins: 0, // TODO(§4.5)
       mvpCount: 0, // TODO(§4.5)
-      avgRating: 0, // TODO(§4.10)
+      avgRating,
     };
   }
 
