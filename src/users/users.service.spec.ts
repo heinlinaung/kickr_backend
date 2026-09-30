@@ -10,6 +10,8 @@ import { GlobalFootballTeam } from '../global-football-teams/schemas/global-foot
 import { ImageKitService } from '../common/upload/imagekit.service';
 import { SportTypesService } from '../sport-types/sport-types.service';
 import { RatingsService } from '../ratings/ratings.service';
+import { EventsService } from '../events/events.service';
+import { Group } from '../groups/schemas/group.schema';
 import { sportTypesDouble, ratingsDouble } from '../events/events.test-providers';
 
 describe('UsersService', () => {
@@ -50,6 +52,8 @@ describe('UsersService', () => {
         },
         { provide: SportTypesService, useValue: sportTypesDouble() },
         { provide: RatingsService, useValue: ratingsDouble() },
+        { provide: getModelToken(Group.name), useValue: {} },
+        { provide: EventsService, useValue: {} },
       ],
     }).compile();
     service = m.get(UsersService);
@@ -178,6 +182,24 @@ describe('UsersService', () => {
         NotFoundException,
       );
     });
+    it('404s a soft-deleted account exactly like a missing one', async () => {
+      // Announcing "deleted" would confirm the account existed.
+      userModel.findById = jest.fn().mockReturnValue({
+        select: () => ({
+          lean: () =>
+            Promise.resolve({
+              _id: 'u4',
+              name: 'Dana',
+              deletedAt: new Date(),
+              privacy: { profileVisibility: 'public' },
+            }),
+        }),
+      });
+      await expect(service.getPublicProfile('u4')).rejects.toThrow(
+        'User not found',
+      );
+    });
+
     it('returns filtered profile + stats + history for public users', async () => {
       userModel.findById = jest.fn().mockReturnValue({
         select: () => ({

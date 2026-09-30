@@ -13,6 +13,7 @@ describe('UsersController', () => {
     getQr: jest.fn().mockResolvedValue({ inviteCode: 'c', inviteLink: 'l' }),
     search: jest.fn().mockResolvedValue([]),
     getPublicProfile: jest.fn().mockResolvedValue({ _id: 'u2' }),
+    deleteAccount: jest.fn().mockResolvedValue({ message: 'Account deleted' }),
   };
 
   beforeEach(async () => {
@@ -33,6 +34,11 @@ describe('UsersController', () => {
     it('GET :id/profile delegates', async () => {
       await controller.getPublicProfile('u2');
       expect(svc.getPublicProfile).toHaveBeenCalledWith('u2');
+    });
+
+    it('DELETE /users/me deletes the CALLER, never a passed id', async () => {
+      await controller.deleteMe({ _id: 'u1' } as any);
+      expect(svc.deleteAccount).toHaveBeenCalledWith('u1');
     });
   });
 

@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { User, UserDocument } from '../users/schemas/user.schema';
@@ -66,6 +70,13 @@ export class AuthService {
     const email = dto.email.toLowerCase();
     const tokens = await this.cognito.login(email, dto.password);
     const user = await this.userModel.findOne({ email }).lean();
+    // Checked AFTER Cognito accepted the password, so the message cannot be
+    // used to probe which addresses exist. The JWT strategy would reject the
+    // tokens anyway; failing here just says why instead of handing out
+    // credentials that no request will accept.
+    if (user?.deletedAt) {
+      throw new UnauthorizedException('This account has been deleted');
+    }
     // `sub` is surfaced explicitly because POST /auth/refresh requires it —
     // the refresh flow cannot be driven by the email alone.
     return { ...tokens, sub: user?.cognitoSub, user };
