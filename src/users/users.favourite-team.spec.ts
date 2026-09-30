@@ -11,6 +11,8 @@ import { GlobalFootballTeam } from '../global-football-teams/schemas/global-foot
 import { ImageKitService } from '../common/upload/imagekit.service';
 import { SportTypesService } from '../sport-types/sport-types.service';
 import { RatingsService } from '../ratings/ratings.service';
+import { EventsService } from '../events/events.service';
+import { Group } from '../groups/schemas/group.schema';
 import { sportTypesDouble, ratingsDouble } from '../events/events.test-providers';
 import { ConfigService } from '@nestjs/config';
 
@@ -54,6 +56,8 @@ describe('UsersService — favourite team', () => {
         { provide: ImageKitService, useValue: {} },
         { provide: SportTypesService, useValue: sportTypesDouble() },
         { provide: RatingsService, useValue: ratingsDouble() },
+        { provide: getModelToken(Group.name), useValue: {} },
+        { provide: EventsService, useValue: {} },
         { provide: ConfigService, useValue: { get: () => '' } },
       ],
     }).compile();

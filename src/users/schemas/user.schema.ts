@@ -101,6 +101,19 @@ export class User {
   plan: string;
 
   /**
+   * Soft-delete flag — set by `DELETE /users/me`, never unset by any API.
+   *
+   * A timestamp rather than a boolean so "when" is answerable, and null
+   * rather than absent so one representation covers both live states.
+   * Everything the flag means happens at READ time: the JWT strategy and
+   * login reject the account, and public profile / user search hide it. The
+   * document itself — email included — stays, which keeps the address
+   * reserved and makes restoration a one-field update by hand.
+   */
+  @Prop({ type: Date, default: null })
+  deletedAt: Date | null;
+
+  /**
    * Registered push targets — one row per device, not one token per user.
    *
    * An array because a single account is routinely signed in on more than one

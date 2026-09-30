@@ -11,6 +11,8 @@ import { GlobalFootballTeam } from '../global-football-teams/schemas/global-foot
 import { ImageKitService } from '../common/upload/imagekit.service';
 import { SportTypesService } from '../sport-types/sport-types.service';
 import { RatingsService } from '../ratings/ratings.service';
+import { EventsService } from '../events/events.service';
+import { Group } from '../groups/schemas/group.schema';
 import { sportTypesDouble, ratingsDouble } from '../events/events.test-providers';
 import { ConfigService } from '@nestjs/config';
 
@@ -41,6 +43,8 @@ describe('UsersService.search', () => {
         { provide: ImageKitService, useValue: {} },
         { provide: SportTypesService, useValue: sportTypesDouble() },
         { provide: RatingsService, useValue: ratingsDouble() },
+        { provide: getModelToken(Group.name), useValue: {} },
+        { provide: EventsService, useValue: {} },
         { provide: ConfigService, useValue: { get: jest.fn() } },
       ],
     }).compile();
@@ -75,6 +79,13 @@ describe('UsersService.search', () => {
     // that cannot be opened.
     await service.search('hein');
     expect(filter()['privacy.profileVisibility']).toEqual({ $ne: 'private' });
+  });
+
+  it('excludes soft-deleted accounts', async () => {
+    // `null` also matches rows written before the field existed — only a
+    // stamped deletedAt hides an account.
+    await service.search('hein');
+    expect(filter().deletedAt).toBeNull();
   });
 
   it('treats regex metacharacters as literal text', async () => {

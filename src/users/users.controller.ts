@@ -1,5 +1,6 @@
 import {
   Controller,
+  Delete,
   Get,
   Patch,
   Post,
@@ -16,6 +17,7 @@ import {
   ApiBearerAuth,
   ApiOperation,
   ApiQuery,
+  ApiResponse,
 } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
@@ -39,6 +41,23 @@ export class UsersController {
   @Patch('me')
   updateProfile(@CurrentUser() user: any, @Body() dto: UpdateProfileDto) {
     return this.usersService.updateProfile(user._id.toString(), dto);
+  }
+
+  @Delete('me')
+  @ApiOperation({
+    summary: 'Delete (deactivate) your own account',
+    description:
+      'Soft delete: the account is flagged, every token and future login is ' +
+      'rejected, and the profile disappears from search and public profiles. ' +
+      'Unfinished events you organize are cancelled ("Organizer account ' +
+      "deleted\") and rosters still open for joining are left. Shared " +
+      'history — chats, payments, ratings, finished events — remains for ' +
+      'other members. Blocked with 400 while you still own groups: delete ' +
+      'or transfer them first.',
+  })
+  @ApiResponse({ status: 400, description: 'Caller still owns groups' })
+  deleteMe(@CurrentUser() user: any) {
+    return this.usersService.deleteAccount(user._id.toString());
   }
 
   @Post('me/avatar')

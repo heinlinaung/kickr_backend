@@ -18,6 +18,9 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { ImageKitService } from '../common/upload/imagekit.service';
 import { SportTypesService } from '../sport-types/sport-types.service';
 import { RatingsService } from '../ratings/ratings.service';
+import { EventsService } from '../events/events.service';
+import { Group, GroupDocument } from '../groups/schemas/group.schema';
+import { FINISHED_STATUSES } from '../events/events.lifecycle';
 import {
   EventPlayer,
   EventPlayerDocument,
@@ -82,6 +85,8 @@ export class UsersService {
     private globalTeamModel: Model<GlobalFootballTeamDocument>,
     private readonly sportTypesService: SportTypesService,
     private readonly ratingsService: RatingsService,
+    @InjectModel(Group.name) private groupModel: Model<GroupDocument>,
+    private readonly eventsService: EventsService,
   ) {}
 
   /**
@@ -346,6 +351,9 @@ export class UsersService {
       // `private` is stored; a user who never set privacy has the field
       // absent, so $ne also matches those — they default to public.
       'privacy.profileVisibility': { $ne: 'private' },
+      // Soft-deleted accounts are unlisted; null also matches rows written
+      // before the field existed.
+      deletedAt: null,
     };
     // Goes in $and: the match above already owns the top-level $or key.
     if (cursor) {
@@ -376,9 +384,13 @@ export class UsersService {
     // public endpoint even if the allowlist copy below is later changed.
     const user = await this.userModel
       .findById(targetUserId)
-      .select([...this.PUBLIC_FIELDS, 'privacy'].join(' '))
+      .select([...this.PUBLIC_FIELDS, 'privacy', 'deletedAt'].join(' '))
       .lean();
-    if (!user) throw new NotFoundException('User not found');
+    // A soft-deleted account answers exactly like a missing one — announcing
+    // "deleted" would confirm the account existed.
+    if (!user || (user as any).deletedAt) {
+      throw new NotFoundException('User not found');
+    }
     const privacy = (user as any).privacy ?? {
       profileVisibility: 'public',
       showStats: true,
@@ -397,5 +409,85 @@ export class UsersService {
     if (privacy.showMatchHistory)
       base.matchHistory = await this.getMatchHistory(targetUserId);
     return base;
+  }
+
+  /**
+   * Soft-delete the caller's account — `DELETE /users/me`.
+   *
+   * Sets `deletedAt` and destroys nothing: memberships, chat history,
+   * payments and ratings stay for the people they were shared with, and the
+   * JWT strategy / login / profile / search enforce what the flag means.
+   * Reversible by clearing the field by hand; the email stays reserved in
+   * Mongo and Cognito, so re-signup with the same address is a 409 until a
+   * restore happens.
+   *
+   * Guard FIRST, mutate after: a group owner cannot delete their account
+   * out from under the members — ownership has to be resolved before
+   * anything below runs, so a rejected request changes nothing.
+   *
+   * Then the account stops holding places it can no longer fill:
+   * - Unfinished events they ORGANIZE are cancelled through the normal
+   *   cancel flow (reason visible to players, chats archived, roster
+   *   notified). Finished ones stay as history.
+   * - Rosters they JOINED are left wherever leaving is still legal — events
+   *   in 'join' status, via the normal leave flow so `joinedCount` stays
+   *   right and their guests cascade. Past 'join' the roster is welded to
+   *   teams and fixtures, so the row stays, exactly as if they could not
+   *   leave themselves.
+   */
+  async deleteAccount(userId: string) {
+    const uid = new Types.ObjectId(userId);
+    const user = await this.userModel.findById(uid).select('deletedAt').lean();
+    if (!user) throw new NotFoundException('User not found');
+    if (user.deletedAt) {
+      throw new BadRequestException('This account has already been deleted');
+    }
+
+    const owned = await this.groupModel
+      .find({ ownerId: uid })
+      .select('name')
+      .lean();
+    if (owned.length > 0) {
+      const names = owned.map((group) => `'${group.name}'`).join(', ');
+      throw new BadRequestException(
+        `You still own ${owned.length} group(s): ${names}. Delete each group ` +
+          'or transfer ownership before deleting your account.',
+      );
+    }
+
+    const organized = await this.eventModel
+      .find({ createdBy: uid, status: { $nin: FINISHED_STATUSES } })
+      .select('_id')
+      .lean();
+    for (const event of organized) {
+      await this.eventsService.cancel(event._id.toString(), userId, {
+        reason: 'Organizer account deleted',
+      });
+    }
+
+    // Their organized events were cancelled above, so those are already out
+    // of 'join' and skipped here — only other people's open events are left.
+    const joinedRows = await this.playerModel
+      .find({ userId: uid, status: 'joined' })
+      .select('eventId')
+      .lean();
+    const joinedEventIds = joinedRows
+      .map((row) => row.eventId)
+      .filter(Boolean);
+    if (joinedEventIds.length > 0) {
+      const openEvents = await this.eventModel
+        .find({ _id: { $in: joinedEventIds }, status: 'join' })
+        .select('_id')
+        .lean();
+      for (const event of openEvents) {
+        await this.eventsService.leave(event._id.toString(), userId);
+      }
+    }
+
+    // Last, so any failure above leaves a fully functional account.
+    await this.userModel.findByIdAndUpdate(uid, {
+      $set: { deletedAt: new Date() },
+    });
+    return { message: 'Account deleted' };
   }
 }

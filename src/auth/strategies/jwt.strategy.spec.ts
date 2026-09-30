@@ -23,6 +23,23 @@ describe('JwtStrategy.validate (Cognito)', () => {
     expect(user).toEqual(expect.objectContaining({ cognitoSub: 'sub-1' }));
   });
 
+  it('rejects a soft-deleted user, revoking their still-valid tokens', async () => {
+    // Cognito access tokens are stateless — this per-request check is what
+    // actually cuts off a deleted account before the token expires.
+    const lean = jest.fn().mockResolvedValue({
+      _id: 'x',
+      cognitoSub: 'sub-1',
+      deletedAt: new Date(),
+    });
+    const userModel = {
+      findOne: jest.fn(() => ({ select: () => ({ lean }) })),
+    };
+    const strat = new JwtStrategy(verifier as any, userModel as any);
+    await expect(
+      strat.validate({ sub: 'sub-1', username: 'alice', token_use: 'access' }),
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+  });
+
   it('rejects when no user matches', async () => {
     const lean = jest.fn().mockResolvedValue(null);
     const userModel = {

@@ -36,6 +36,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       .select(USER_SENSITIVE_PROJECTION)
       .lean();
     if (!user) throw new UnauthorizedException();
+    // Soft-deleted accounts die HERE, not just at login: Cognito access
+    // tokens are stateless and stay verifiable until they expire, so this
+    // per-request check is what actually revokes a deleted account's access.
+    if (user.deletedAt) {
+      throw new UnauthorizedException('This account has been deleted');
+    }
     return user;
   }
 }

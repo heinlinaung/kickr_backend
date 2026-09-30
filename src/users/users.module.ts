@@ -15,6 +15,8 @@ import {
   GlobalFootballTeamSchema,
 } from '../global-football-teams/schemas/global-football-team.schema';
 import { RatingsModule } from '../ratings/ratings.module';
+import { EventsModule } from '../events/events.module';
+import { Group, GroupSchema } from '../groups/schemas/group.schema';
 
 @Module({
   imports: [
@@ -29,6 +31,10 @@ import { RatingsModule } from '../ratings/ratings.module';
         name: GlobalFootballTeam.name,
         schema: GlobalFootballTeamSchema,
       },
+      // For the owned-groups guard in account deletion — a read, so the
+      // schema is registered rather than importing GroupsModule (which
+      // imports EventsModule and would widen the graph for one query).
+      { name: Group.name, schema: GroupSchema },
     ]),
     UploadModule,
     // For profile sports/preferredSport validation against the `sporttypes`
@@ -36,6 +42,11 @@ import { RatingsModule } from '../ratings/ratings.module';
     SportTypesModule,
     // For profile statistics' avgRating (§4.10). Also a leaf — no cycle.
     RatingsModule,
+    // Account deletion cancels the user's unfinished events and leaves open
+    // rosters through the REAL cancel/leave flows (notifications, chat
+    // archiving, joinedCount). EventsModule does not import UsersModule, so
+    // this closes no cycle.
+    EventsModule,
   ],
   controllers: [UsersController],
   providers: [UsersService],

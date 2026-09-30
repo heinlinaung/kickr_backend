@@ -144,6 +144,22 @@ describe('AuthService (Cognito proxy)', () => {
     expect(res.sub).toBe('sub-uuid-1');
   });
 
+  it('login: rejects a soft-deleted account AFTER the password check', async () => {
+    // Order matters: failing before Cognito verified the password would let
+    // anyone probe which addresses exist. Here the credential was right and
+    // the account is simply gone.
+    cognito.login.mockResolvedValue({ accessToken: 'at' });
+    userModel.findOne.mockReturnValue({
+      lean: () =>
+        Promise.resolve({ email: 'alice@b.com', deletedAt: new Date() }),
+    });
+
+    await expect(
+      service.login({ email: 'alice@b.com', password: 'p' }),
+    ).rejects.toThrow('This account has been deleted');
+    expect(cognito.login).toHaveBeenCalled();
+  });
+
   it('confirmSignup: passes the lowercased email to Cognito', async () => {
     await service.confirmSignup({ email: 'A@b.com', code: '123456' });
     expect(cognito.confirmSignUp).toHaveBeenCalledWith('a@b.com', '123456');
