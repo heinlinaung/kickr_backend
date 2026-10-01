@@ -22,6 +22,7 @@ import { GlobalFootballTeamsModule } from './global-football-teams/global-footba
 import { PhotosModule } from './photos/photos.module';
 import { SportTypesModule } from './sport-types/sport-types.module';
 import { RatingsModule } from './ratings/ratings.module';
+import { FormationsModule } from './formations/formations.module';
 
 @Module({
   imports: [
@@ -73,6 +74,7 @@ import { RatingsModule } from './ratings/ratings.module';
     PhotosModule,
     SportTypesModule,
     RatingsModule,
+    FormationsModule,
   ],
   providers: [
     // Removed with ThrottlerModule above. It CANNOT be left registered on its

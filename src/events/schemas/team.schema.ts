@@ -105,6 +105,45 @@ export class Team {
    */
   @Prop({ default: 'pending', enum: ['pending', 'ready'] })
   status: string;
+
+  /**
+   * The team's tactical line-up, or null until someone sets one.
+   *
+   * Position arrays keep the SUBMITTED order — the order is the formation,
+   * so the left-back stays slot 0 of `defenders` however the read happens.
+   *
+   * The ids deliberately carry no `ref`: a slot may hold a User id (from
+   * `players`) or an EventPlayer roster-row id (from `guests` — a guest has
+   * no account), so a single ref would lie half the time. The read path
+   * resolves each id against the two membership arrays instead.
+   */
+  @Prop({
+    type: {
+      /** Optional label, e.g. "My 4-4-2". */
+      name: { type: String, default: null },
+      formation: { type: String, required: true },
+      playerCount: { type: Number, required: true },
+      goalkeeper: { type: Types.ObjectId, required: true },
+      defenders: { type: [Types.ObjectId], default: [] },
+      midfielders: { type: [Types.ObjectId], default: [] },
+      forwards: { type: [Types.ObjectId], default: [] },
+      setBy: { type: Types.ObjectId, ref: 'User', default: null },
+      setAt: { type: Date, default: null },
+      _id: false,
+    },
+    default: null,
+  })
+  formation: {
+    name: string | null;
+    formation: string;
+    playerCount: number;
+    goalkeeper: Types.ObjectId;
+    defenders: Types.ObjectId[];
+    midfielders: Types.ObjectId[];
+    forwards: Types.ObjectId[];
+    setBy: Types.ObjectId | null;
+    setAt: Date | null;
+  } | null;
 }
 
 export const TeamSchema = SchemaFactory.createForClass(Team);

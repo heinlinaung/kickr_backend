@@ -40,6 +40,7 @@ import { SetPaymentDto } from './dto/set-payment.dto';
 import { AddGuestDto } from './dto/add-guest.dto';
 import { SetGuestApprovalDto } from './dto/set-guest-approval.dto';
 import { SetTeamMemberRoleDto } from './dto/set-team-member-role.dto';
+import { SetTeamFormationDto } from './dto/set-team-formation.dto';
 
 @ApiTags('Events')
 @ApiBearerAuth()
@@ -633,6 +634,55 @@ export class EventsController {
       user._id.toString(),
       dto,
     );
+  }
+
+  @Put(':id/teams/:teamId/formation')
+  @ApiOperation({
+    summary: "Set a team's formation (owner/admin/creator/team captain)",
+    description:
+      'Sets or REPLACES the line-up in one call — no partial edits. ' +
+      "`formation` is free-form ('4-4-2', '2-2', …): its numbers must match " +
+      'the sizes of the non-empty position groups in defenders → midfielders ' +
+      '→ forwards order (which lines map to which group is the client\'s ' +
+      'choice), and segments + goalkeeper must equal `playerCount`. Everyone ' +
+      "placed must be on THIS team — `players` (user ids) or `guests` " +
+      '(roster-row ids). Array order is preserved; it IS the formation. ' +
+      'GET /formations serves the suggested shapes per player count.',
+  })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Layout arithmetic broken, duplicate player, someone not on the team, ' +
+      'or the event is archived',
+  })
+  @ApiResponse({ status: 403, description: 'Caller may not set this formation' })
+  @ApiResponse({ status: 404, description: 'Event or team not found' })
+  setTeamFormation(
+    @Param('id') id: string,
+    @Param('teamId') teamId: string,
+    @CurrentUser() user: any,
+    @Body() dto: SetTeamFormationDto,
+  ) {
+    return this.eventsService.setTeamFormation(
+      id,
+      user._id.toString(),
+      teamId,
+      dto,
+    );
+  }
+
+  @Get(':id/teams/:teamId/formation')
+  @ApiOperation({
+    summary: "A team's formation, slots resolved to names",
+    description:
+      'Position arrays come back in the exact order the setter submitted. ' +
+      'Each slot is `{ id, name, isGuest }` — a guest slot holds the roster ' +
+      "row's id and display name, since guests have no account. 404 until a " +
+      'formation has been set.',
+  })
+  @ApiResponse({ status: 404, description: 'Team or formation not found' })
+  getTeamFormation(@Param('id') id: string, @Param('teamId') teamId: string) {
+    return this.eventsService.getTeamFormation(id, teamId);
   }
 
   @Post(':id/matches')

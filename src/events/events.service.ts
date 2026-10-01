@@ -84,6 +84,9 @@ import { SetPaymentDto } from './dto/set-payment.dto';
 import { AddGuestDto } from './dto/add-guest.dto';
 import { SetGuestApprovalDto } from './dto/set-guest-approval.dto';
 import { SetTeamMemberRoleDto } from './dto/set-team-member-role.dto';
+import { SetTeamFormationDto } from './dto/set-team-formation.dto';
+import { placedIds, validateFormationLayout } from './events.formation';
+import { User, UserDocument } from '../users/schemas/user.schema';
 import {
   MATCH_BUFFER_MINUTES,
   MIN_TEAMS,
@@ -168,6 +171,11 @@ export class EventsService {
     private paymentModel: Model<EventPaymentDocument>,
     @InjectModel(Location.name)
     private locationModel: Model<LocationDocument>,
+    // For resolving formation slots to display names; registered as a schema
+    // only (like Group), not by importing UsersModule — which imports THIS
+    // module and would close a cycle.
+    @InjectModel(User.name)
+    private userModel: Model<UserDocument>,
     private readonly locationsService: LocationsService,
     private readonly imagekit: ImageKitService,
     private readonly photosService: PhotosService,
@@ -2868,6 +2876,203 @@ export class EventsService {
       teamId: String(team._id),
       userId: targetUserId,
       role: dto.role,
+    };
+  }
+
+  // --- Team formation -------------------------------------------------------
+
+  /** True when `userId` holds the captain role on this team. */
+  private isTeamCaptain(team: TeamDocument, userId: string): boolean {
+    return team.playerRoles.some(
+      (entry) =>
+        entry.userId.toString() === userId && entry.role === 'captain',
+    );
+  }
+
+  /**
+   * Set (or replace) a team's formation. Organizer or THIS team's captain.
+   *
+   * A full replace rather than a patch: a formation is one coherent picture —
+   * swapping the shape without restating who stands where has no sensible
+   * meaning, so partial edits would only invite layouts that disagree with
+   * their own arithmetic.
+   *
+   * The layout rules live in `events.formation.ts`; this method adds what
+   * needs the database — permission, the archived gate, and membership:
+   * everyone placed must already be ON the team, as a registered player
+   * (`players`) or a guest roster row (`guests`).
+   */
+  async setTeamFormation(
+    eventId: string,
+    requesterId: string,
+    teamId: string,
+    dto: SetTeamFormationDto,
+  ) {
+    if (!Types.ObjectId.isValid(teamId)) {
+      throw new BadRequestException('Invalid team id');
+    }
+    const event = await this.eventModel.findById(eventId);
+    if (!event) throw new NotFoundException('Event not found');
+    if (!canModify(event.status)) {
+      throw new BadRequestException(
+        'This event is archived; the formation can no longer be changed',
+      );
+    }
+
+    const team = await this.teamModel.findOne({
+      _id: new Types.ObjectId(teamId),
+      eventId: event._id,
+    });
+    if (!team) throw new NotFoundException('Team not found for this event');
+
+    // The captain outranks nobody outside their own line-up: captaincy on
+    // THIS team authorizes, anything else falls through to the organizer
+    // check (group owner/admin, or the event creator).
+    if (!this.isTeamCaptain(team, requesterId)) {
+      try {
+        await this.assertOrganizer(eventId, requesterId);
+      } catch (error) {
+        if (error instanceof ForbiddenException) {
+          throw new ForbiddenException(
+            'Only the group owner/admin, the event creator or this ' +
+              "team's captain can set the formation",
+          );
+        }
+        throw error;
+      }
+    }
+
+    const layoutError = validateFormationLayout(
+      dto.formation,
+      dto.players,
+      dto.playerCount,
+    );
+    if (layoutError) throw new BadRequestException(layoutError);
+
+    const members = new Set([
+      ...team.players.map((id) => id.toString()),
+      ...team.guests.map((id) => id.toString()),
+    ]);
+    for (const id of placedIds(dto.players)) {
+      if (!members.has(id)) {
+        throw new BadRequestException(
+          `'${id}' is not assigned to this team — assign them first`,
+        );
+      }
+    }
+
+    team.formation = {
+      name: dto.name ?? null,
+      formation: dto.formation,
+      playerCount: dto.playerCount,
+      goalkeeper: new Types.ObjectId(dto.players.goalkeeper),
+      defenders: dto.players.defenders.map((id) => new Types.ObjectId(id)),
+      midfielders: dto.players.midfielders.map(
+        (id) => new Types.ObjectId(id),
+      ),
+      forwards: dto.players.forwards.map((id) => new Types.ObjectId(id)),
+      setBy: new Types.ObjectId(requesterId),
+      setAt: new Date(),
+    };
+    await team.save();
+
+    return this.getTeamFormation(eventId, teamId);
+  }
+
+  /**
+   * A team's formation with each slot resolved to `{ id, name, isGuest }`,
+   * position arrays in the exact order the setter submitted — the order IS
+   * the formation.
+   *
+   * Names resolve from two places because a slot can hold either kind of
+   * member: a User id (looked up in `users`) or a guest's roster-row id
+   * (the guest's display name lives on the EventPlayer row — guests have no
+   * account). Readable by any authenticated user, like the team list.
+   */
+  async getTeamFormation(eventId: string, teamId: string) {
+    if (!Types.ObjectId.isValid(eventId)) {
+      throw new BadRequestException('Invalid event id');
+    }
+    if (!Types.ObjectId.isValid(teamId)) {
+      throw new BadRequestException('Invalid team id');
+    }
+
+    const team = await this.teamModel
+      .findOne({
+        _id: new Types.ObjectId(teamId),
+        eventId: new Types.ObjectId(eventId),
+      })
+      .lean();
+    if (!team) throw new NotFoundException('Team not found for this event');
+    if (!team.formation) {
+      throw new NotFoundException('No formation has been set for this team');
+    }
+
+    const layout = team.formation;
+    const guestRowIds = new Set(team.guests.map((id) => id.toString()));
+    const all = [
+      layout.goalkeeper,
+      ...layout.defenders,
+      ...layout.midfielders,
+      ...layout.forwards,
+    ].map(String);
+
+    const userIds = all.filter((id) => !guestRowIds.has(id));
+    const guestIds = all.filter((id) => guestRowIds.has(id));
+
+    const [users, guests] = await Promise.all([
+      userIds.length
+        ? this.userModel
+            .find({ _id: { $in: userIds } })
+            .select('name username displayName profileImage')
+            .lean()
+        : [],
+      guestIds.length
+        ? this.playerModel
+            .find({ _id: { $in: guestIds } })
+            .select('name')
+            .lean()
+        : [],
+    ]);
+
+    const resolved = new Map<string, { name: string | null; isGuest: boolean }>();
+    for (const user of users as any[]) {
+      resolved.set(user._id.toString(), {
+        name: user.name ?? user.displayName ?? user.username ?? null,
+        isGuest: false,
+      });
+    }
+    for (const guest of guests as any[]) {
+      resolved.set(guest._id.toString(), {
+        name: guest.name ?? null,
+        isGuest: true,
+      });
+    }
+
+    const entry = (id: Types.ObjectId) => {
+      const hit = resolved.get(id.toString());
+      return {
+        id: id.toString(),
+        // Null rather than dropping the slot: a since-removed member leaves
+        // a hole the client can show as "unknown", not a shifted line-up.
+        name: hit?.name ?? null,
+        isGuest: hit?.isGuest ?? guestRowIds.has(id.toString()),
+      };
+    };
+
+    return {
+      teamId: team._id.toString(),
+      name: layout.name ?? null,
+      formation: layout.formation,
+      playerCount: layout.playerCount,
+      setBy: layout.setBy,
+      setAt: layout.setAt,
+      players: {
+        goalkeeper: entry(layout.goalkeeper),
+        defenders: layout.defenders.map(entry),
+        midfielders: layout.midfielders.map(entry),
+        forwards: layout.forwards.map(entry),
+      },
     };
   }
 

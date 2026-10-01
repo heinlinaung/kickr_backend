@@ -11,6 +11,7 @@
  */
 import { getModelToken } from '@nestjs/mongoose';
 import { Event } from './schemas/event.schema';
+import { User } from '../users/schemas/user.schema';
 import { EventPlayer } from './schemas/event-player.schema';
 import { EventMatch } from './schemas/event-match.schema';
 import { Team } from './schemas/team.schema';
@@ -108,6 +109,7 @@ export interface EventsTestDoubles {
   templateModel?: any;
   paymentModel?: any;
   locationModel?: any;
+  userModel?: any;
   locations?: any;
   imagekit?: any;
   photosService?: any;
@@ -159,6 +161,14 @@ export function eventsProviders(doubles: EventsTestDoubles = {}) {
     templateModel = {},
     paymentModel = {},
     locationModel = {},
+    // getTeamFormation resolves slot names, so the default double answers a
+    // find().select().lean() chain with no users.
+    userModel = {
+      find: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([]),
+      }),
+    },
     locations = { assertOwnedBy: jest.fn(), assertCanEdit: jest.fn() },
     imagekit = { upload: jest.fn(), deleteFile: jest.fn() },
     // Event photos now live in the shared `photos` collection, so the service
@@ -187,6 +197,7 @@ export function eventsProviders(doubles: EventsTestDoubles = {}) {
     { provide: getModelToken(EventTemplate.name), useValue: templateModel },
     { provide: getModelToken(EventPayment.name), useValue: paymentModel },
     { provide: getModelToken(Location.name), useValue: locationModel },
+    { provide: getModelToken(User.name), useValue: userModel },
     { provide: LocationsService, useValue: locations },
     { provide: ImageKitService, useValue: imagekit },
     { provide: PhotosService, useValue: photosService },

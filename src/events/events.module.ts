@@ -8,6 +8,7 @@ import {
 } from './schemas/event-payment.schema';
 import { EventsService } from './events.service';
 import { Event, EventSchema } from './schemas/event.schema';
+import { User, UserSchema } from '../users/schemas/user.schema';
 import { EventPlayer, EventPlayerSchema } from './schemas/event-player.schema';
 import { EventMatch, EventMatchSchema } from './schemas/event-match.schema';
 import { Team, TeamSchema } from './schemas/team.schema';
@@ -55,6 +56,8 @@ import { PlansModule } from '../plans/plans.module';
       // Read directly for $geoNear — it must be the first aggregation stage,
       // so the geo query starts from locations rather than from events.
       { name: Location.name, schema: LocationSchema },
+      // For resolving formation slots to display names (see EventsService).
+      { name: User.name, schema: UserSchema },
     ]),
     LocationsModule,
     UploadModule,
