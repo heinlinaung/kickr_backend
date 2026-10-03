@@ -36,7 +36,8 @@ import { UpdateMatchScoreDto } from './dto/update-match-score.dto';
 import { SubmitResultDto } from './dto/submit-result.dto';
 import { SubmitMvpDto } from './dto/submit-mvp.dto';
 import { CancelEventDto } from './dto/cancel-event.dto';
-import { SetPaymentDto } from './dto/set-payment.dto';
+import { SubmitPaymentDto } from './dto/submit-payment.dto';
+import { ReviewPaymentDto } from './dto/review-payment.dto';
 import { AddGuestDto } from './dto/add-guest.dto';
 import { SetGuestApprovalDto } from './dto/set-guest-approval.dto';
 import { SetTeamMemberRoleDto } from './dto/set-team-member-role.dto';
@@ -529,10 +530,12 @@ export class EventsController {
   @ApiOperation({
     summary: 'Payment status for the event',
     description:
-      'Role-aware: an organizer gets every member, anyone else gets only ' +
-      'their own row. A member with no row yet is simply absent — that means ' +
-      '"not recorded", which is deliberately distinct from "recorded as ' +
-      'unpaid". The amount is not stored per member; it comes from the ' +
+      'Role-aware: the group cashier (or the creator for non-group events) ' +
+      'and the organizer get every member; anyone else gets only their own ' +
+      'row. Each row carries method (cash | bank_transfer), status ' +
+      '(submitted | approved | rejected), the bank-transfer proof image, the ' +
+      'reviewer and a reject reason. A member with no row has not submitted ' +
+      'anything. The amount is not stored per member; it comes from the ' +
       "event's `price` plus `additionalPrice` when `takeAdditionalPrice` is " +
       'set.',
   })
@@ -541,28 +544,67 @@ export class EventsController {
     return this.eventsService.listPayments(id, user._id.toString());
   }
 
-  @Patch(':id/payments/:memberId')
+  @Post(':id/payments')
+  @UseInterceptors(FileInterceptor('file', multerMemoryImageOptions))
   @ApiOperation({
-    summary: 'Mark a member paid or unpaid (organizer)',
+    summary: 'Submit YOUR payment for review (joined players)',
     description:
-      'Upserts, so the first call for a member creates their record. The ' +
-      'member must be on the roster. `paidAt` is stamped when isPaid becomes ' +
-      'true and cleared when a payment is reversed, so it never reads as a ' +
-      'payment date for someone currently unpaid.',
+      'Multipart. `method` is cash or bank_transfer; bank transfers must ' +
+      'attach the receipt screenshot as `file` (JPEG/PNG/WebP, 10MB max) — ' +
+      'cash is a bare claim the cashier confirms in person. Goes to the ' +
+      "group's cashier for review (event creator for non-group events). " +
+      'Resubmitting while `submitted` replaces your claim; after a rejection ' +
+      'it clears the verdict and goes back to review; an approved payment ' +
+      'refuses further submissions. This REPLACED the organizer mark-paid ' +
+      'endpoint (PATCH :id/payments/:memberId) on 2026-10-03.',
   })
-  @ApiResponse({ status: 400, description: 'Malformed member id' })
-  @ApiResponse({ status: 403, description: 'Caller is not the organizer' })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Not on the roster, missing bank-transfer proof, or already approved',
+  })
+  @ApiResponse({ status: 404, description: 'Event not found' })
+  submitPayment(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() dto: SubmitPaymentDto,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    return this.eventsService.submitPayment(
+      id,
+      user._id.toString(),
+      dto,
+      file,
+    );
+  }
+
+  @Patch(':id/payments/:memberId/review')
+  @ApiOperation({
+    summary: "Approve or reject a member's payment (cashier)",
+    description:
+      "Group events: only the group's CASHIER (group.cashierId — appointed " +
+      'by the owner via PATCH /groups/:id/cashier); blocked with 400 while ' +
+      'no cashier is appointed. Non-group events: the event creator. ' +
+      '`action` approve|reject; a rejection requires `reason`, which the ' +
+      'member sees. Re-reviewing is allowed so a mistaken verdict can be ' +
+      'corrected; every verdict stamps reviewedBy/reviewedAt.',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Malformed member id, missing reason, or no cashier appointed',
+  })
+  @ApiResponse({ status: 403, description: 'Caller is not the reviewer' })
   @ApiResponse({
     status: 404,
-    description: 'Unknown event, or that member has not joined',
+    description: 'Unknown event, or no submission from that member',
   })
-  setPayment(
+  reviewPayment(
     @Param('id') id: string,
     @Param('memberId') memberId: string,
     @CurrentUser() user: any,
-    @Body() dto: SetPaymentDto,
+    @Body() dto: ReviewPaymentDto,
   ) {
-    return this.eventsService.setPayment(
+    return this.eventsService.reviewPayment(
       id,
       user._id.toString(),
       memberId,

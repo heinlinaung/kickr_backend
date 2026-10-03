@@ -3,6 +3,7 @@ import {
   Post,
   Get,
   Patch,
+  Put,
   Delete,
   Body,
   Param,
@@ -27,6 +28,8 @@ import { CreateGroupDto } from './dto/create-group.dto';
 import { UpdateGroupDto } from './dto/update-group.dto';
 import { AttachLocationDto } from './dto/attach-location.dto';
 import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
+import { SetCashierDto } from './dto/set-cashier.dto';
+import { UpdatePaymentDetailsDto } from './dto/update-payment-details.dto';
 import { multerMemoryImageOptions } from '../common/upload/multer-memory.config';
 
 @ApiTags('Groups')
@@ -131,6 +134,79 @@ export class GroupsController {
   @Get(':id/qr')
   getQr(@Param('id') id: string) {
     return this.groupsService.getQr(id);
+  }
+
+  // --- Cashier & payment details --------------------------------------------
+
+  @Patch(':id/cashier')
+  @ApiOperation({
+    summary: "Appoint or remove the group's cashier (owner only)",
+    description:
+      'One cashier per group. The cashier reviews event payment submissions ' +
+      'and manages the receiving bank details; the owner may appoint ' +
+      'themself. Body `{ userId: null }` removes the cashier — payment ' +
+      'reviews are then BLOCKED until a new one is appointed. The appointee ' +
+      'must be an approved member (or the owner).',
+  })
+  @ApiResponse({ status: 400, description: 'Appointee is not an approved member' })
+  @ApiResponse({ status: 403, description: 'Caller is not the group owner' })
+  setCashier(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() dto: SetCashierDto,
+  ) {
+    return this.groupsService.setCashier(id, user._id.toString(), dto.userId);
+  }
+
+  @Get(':id/payment-details')
+  @ApiOperation({
+    summary: 'Bank account + payment QR members pay against (members)',
+    description:
+      'Approved members only — they need the account number and QR image to ' +
+      'make a transfer. Also returns `cashierId`. Both are null until the ' +
+      'cashier sets them.',
+  })
+  @ApiResponse({ status: 403, description: 'Caller is not a group member' })
+  getPaymentDetails(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.groupsService.getPaymentDetails(id, user._id.toString());
+  }
+
+  @Put(':id/payment-details')
+  @ApiOperation({
+    summary: 'Set the receiving bank account (cashier only)',
+    description:
+      'Account number, bank name and account holder. The QR image is ' +
+      'managed by PUT /groups/:id/payment-details/qr and survives this call.',
+  })
+  @ApiResponse({ status: 403, description: 'Caller is not the cashier' })
+  updatePaymentDetails(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() dto: UpdatePaymentDetailsDto,
+  ) {
+    return this.groupsService.updatePaymentDetails(
+      id,
+      user._id.toString(),
+      dto,
+    );
+  }
+
+  @Put(':id/payment-details/qr')
+  @UseInterceptors(FileInterceptor('file', multerMemoryImageOptions))
+  @ApiOperation({
+    summary: 'Upload or replace the payment QR image (cashier only)',
+    description:
+      'Multipart, field name `file`. JPEG/PNG/WebP, 10MB max. Replaces the ' +
+      'previous QR; members read it from GET /groups/:id/payment-details.',
+  })
+  @ApiResponse({ status: 403, description: 'Caller is not the cashier' })
+  uploadPaymentQr(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) throw new BadRequestException('File is required');
+    return this.groupsService.uploadPaymentQr(id, user._id.toString(), file);
   }
 
   // Group rules have no dedicated routes: they are just the `rules` field on

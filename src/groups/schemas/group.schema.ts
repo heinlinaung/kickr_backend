@@ -89,6 +89,43 @@ export class Group {
 
   @Prop()
   inviteCodeExpiry: Date;
+
+  /**
+   * The group's cashier — the ONE member who reviews payment submissions and
+   * manages the receiving bank details. Appointed by the owner
+   * (`PATCH /groups/:id/cashier`), who may appoint themself; null means no
+   * cashier yet, and payment reviews are BLOCKED until one is set.
+   *
+   * Deliberately on the group rather than a member-role value: "one cashier
+   * per group" is an invariant a single field enforces for free, where a role
+   * would need a uniqueness rule across the members collection.
+   */
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null })
+  cashierId: Types.ObjectId | null;
+
+  /**
+   * Where members send bank transfers: account details plus a payment QR
+   * image. Managed by the cashier, readable by any approved member (they
+   * need it to pay). Null until the cashier first sets it.
+   */
+  @Prop({
+    type: {
+      bankAccountNumber: { type: String, default: null },
+      bankName: { type: String, default: null },
+      accountHolderName: { type: String, default: null },
+      qrCodeUrl: { type: String, default: null },
+      qrCodeFileId: { type: String, default: null },
+      _id: false,
+    },
+    default: null,
+  })
+  paymentDetails: {
+    bankAccountNumber: string | null;
+    bankName: string | null;
+    accountHolderName: string | null;
+    qrCodeUrl: string | null;
+    qrCodeFileId: string | null;
+  } | null;
 }
 
 export const GroupSchema = SchemaFactory.createForClass(Group);

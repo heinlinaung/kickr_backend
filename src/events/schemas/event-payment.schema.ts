@@ -3,19 +3,33 @@ import { Document, Types } from 'mongoose';
 
 export type EventPaymentDocument = EventPayment & Document;
 
+export const PAYMENT_METHODS = ['cash', 'bank_transfer'] as const;
+export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
+
 /**
- * Whether one member has paid for one event.
+ * A row exists only once the member SUBMITS — "unpaid" is the absence of a
+ * row, same convention as before the submit/review flow replaced organizer
+ * marking (2026-10-03).
+ */
+export const PAYMENT_STATUSES = ['submitted', 'approved', 'rejected'] as const;
+export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
+
+/**
+ * One member's payment claim for one event, and what the cashier made of it.
  *
- * Its own collection rather than a field on `EventPlayer`, for two reasons:
- * a payment outlives the roster row (someone who pays and then leaves still
- * paid), and the roster row is rewritten by join/leave while a payment record
- * should not be.
+ * The flow: the member submits (cash: a bare claim; bank transfer: with a
+ * receipt screenshot), the group's cashier — or the event creator for
+ * non-group events — approves or rejects after checking. A rejected member
+ * may resubmit, which overwrites this same row; the unique index below is
+ * what makes "one claim per member per event" hold under concurrency.
  *
- * The amount is deliberately NOT stored here. It lives on the event
- * (`price` + `additionalPrice` when `takeAdditionalPrice` is set), so there is
- * one source of truth for what an event costs; copying it per member would
- * drift the moment an organizer edited the price. This row answers one
- * question only: has this member paid?
+ * Its own collection rather than a field on `EventPlayer`, for the original
+ * reasons: a payment outlives the roster row, and the roster row is
+ * rewritten by join/leave while a payment record should not be.
+ *
+ * The amount is deliberately NOT stored. It lives on the event (`price` +
+ * `additionalPrice` when `takeAdditionalPrice` is set), so there is one
+ * source of truth for what an event costs.
  */
 @Schema({ timestamps: true })
 export class EventPayment {
@@ -26,19 +40,35 @@ export class EventPayment {
   @Prop({ required: true, type: Types.ObjectId, ref: 'User', index: true })
   memberId: Types.ObjectId;
 
-  @Prop({ default: false })
-  isPaid: boolean;
+  @Prop({ required: true, enum: PAYMENT_METHODS })
+  method: string;
+
+  @Prop({ required: true, enum: PAYMENT_STATUSES, default: 'submitted' })
+  status: string;
 
   /**
-   * When `isPaid` last became true, for a receipt line.
-   * Null while unpaid, and cleared again if a payment is reversed.
+   * The bank-transfer receipt screenshot; always null for cash. Replaced
+   * (and the old file deleted) when the member resubmits.
    */
-  @Prop({ type: Date, default: null })
-  paidAt: Date | null;
+  @Prop({ type: String, default: null })
+  proofUrl: string | null;
 
-  /** The organizer who recorded the change — payments are marked, not taken. */
+  @Prop({ type: String, default: null })
+  proofFileId: string | null;
+
+  @Prop({ type: Date, default: null })
+  submittedAt: Date | null;
+
+  /** The cashier (or creator) who last reviewed; null while submitted. */
   @Prop({ type: Types.ObjectId, ref: 'User', default: null })
-  recordedBy: Types.ObjectId | null;
+  reviewedBy: Types.ObjectId | null;
+
+  @Prop({ type: Date, default: null })
+  reviewedAt: Date | null;
+
+  /** Why a rejection happened — shown to the member; null otherwise. */
+  @Prop({ type: String, default: null })
+  rejectReason: string | null;
 }
 
 export const EventPaymentSchema = SchemaFactory.createForClass(EventPayment);
@@ -46,7 +76,7 @@ export const EventPaymentSchema = SchemaFactory.createForClass(EventPayment);
 /**
  * One payment row per member per event.
  *
- * Unique rather than merely indexed: the endpoint upserts, and without this a
+ * Unique rather than merely indexed: submission upserts, and without this a
  * concurrent double-tap would create two rows for the same member and make
  * "has this member paid?" ambiguous.
  */

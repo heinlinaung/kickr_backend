@@ -80,7 +80,8 @@ import {
   TeamDocument,
   DEFAULT_TEAM_MEMBER_ROLE,
 } from './schemas/team.schema';
-import { SetPaymentDto } from './dto/set-payment.dto';
+import { SubmitPaymentDto } from './dto/submit-payment.dto';
+import { ReviewPaymentDto } from './dto/review-payment.dto';
 import { AddGuestDto } from './dto/add-guest.dto';
 import { SetGuestApprovalDto } from './dto/set-guest-approval.dto';
 import { SetTeamMemberRoleDto } from './dto/set-team-member-role.dto';
@@ -2731,21 +2732,27 @@ export class EventsService {
   /**
    * Payment rows for an event.
    *
-   * Role-aware rather than two routes: an organizer gets every member's status
-   * because they are the one collecting, and anyone else gets only their own
-   * row — a member has no business reading who else has paid.
+   * Role-aware rather than two routes: the CASHIER (who reviews) and the
+   * organizer (owner/admin/creator — oversight) get every member's status;
+   * anyone else gets only their own row — a member has no business reading
+   * who else has paid.
    *
    * Members with no row yet are absent rather than synthesised as unpaid. The
    * caller knows the roster from `GET /events/:id/players`; inventing rows here
    * would blur "not recorded" with "recorded as unpaid".
    */
   async listPayments(eventId: string, userId: string) {
-    const event = await this.eventModel.findById(eventId).select('_id').lean();
+    const event = await this.eventModel
+      .findById(eventId)
+      .select('_id groupId createdBy')
+      .lean();
     if (!event) throw new NotFoundException('Event not found');
 
-    const isOrganizer = await this.isOrganizer(eventId, userId);
+    const seesAll =
+      (await this.isOrganizer(eventId, userId)) ||
+      (await this.isPaymentReviewer(event, userId));
     const filter: Record<string, unknown> = { eventId: event._id };
-    if (!isOrganizer) filter.memberId = new Types.ObjectId(userId);
+    if (!seesAll) filter.memberId = new Types.ObjectId(userId);
 
     return this.paymentModel
       .find(filter)
@@ -2755,54 +2762,234 @@ export class EventsService {
   }
 
   /**
-   * Record whether one member has paid. Organizer only.
-   *
-   * Upserts, so the first call for a member creates the row — there is no
-   * separate "open the payment sheet" step, and a member who never appears
-   * simply has no record.
-   *
-   * `paidAt` tracks the transition rather than the write: it is stamped when
-   * `isPaid` becomes true and cleared when a payment is reversed, so it can
-   * never read as a payment date for someone currently unpaid.
+   * Who may review this event's payments: the group's cashier, or the event
+   * creator when the event has no group. Returns the reviewer check result —
+   * throws when a group has NO cashier, because that is an owner problem
+   * ("appoint one"), not a permission problem of the caller.
    */
-  async setPayment(
-    eventId: string,
-    requesterId: string,
-    memberId: string,
-    dto: SetPaymentDto,
+  private async assertPaymentReviewer(
+    event: { groupId?: Types.ObjectId | null; createdBy: Types.ObjectId },
+    userId: string,
   ) {
-    await this.assertOrganizer(eventId, requesterId);
-
-    if (!Types.ObjectId.isValid(memberId)) {
-      throw new BadRequestException('Invalid member id');
+    if (event.groupId) {
+      const group = await this.groupModel
+        .findById(event.groupId)
+        .select('cashierId')
+        .lean();
+      if (!group?.cashierId) {
+        throw new BadRequestException(
+          'This group has no cashier yet — ask the owner to appoint one ' +
+            '(PATCH /groups/:id/cashier)',
+        );
+      }
+      if (group.cashierId.toString() !== userId) {
+        throw new ForbiddenException(
+          'Only the group cashier can review payments',
+        );
+      }
+      return;
     }
+    if (event.createdBy.toString() !== userId) {
+      throw new ForbiddenException(
+        'Only the event creator can review payments for a non-group event',
+      );
+    }
+  }
+
+  /** True when `userId` is this event's payment reviewer, without throwing. */
+  private async isPaymentReviewer(
+    event: { groupId?: Types.ObjectId | null; createdBy: Types.ObjectId },
+    userId: string,
+  ): Promise<boolean> {
+    try {
+      await this.assertPaymentReviewer(event, userId);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * A member submits THEIR OWN payment for review (spec: Payment After
+   * Event). Cash is a bare claim; bank transfer must carry the receipt
+   * screenshot. This REPLACED organizer direct-marking (2026-10-03): every
+   * paid status now comes from a submission the cashier approved, so the
+   * trail — who claimed, with what proof, who verified — is complete.
+   *
+   * Resubmission is allowed from `submitted` (replace your own claim) and
+   * `rejected` (fix what the cashier flagged); an `approved` payment is
+   * settled and refuses further writes. The upsert plus the unique
+   * (eventId, memberId) index keep it one row per member throughout.
+   */
+  async submitPayment(
+    eventId: string,
+    userId: string,
+    dto: SubmitPaymentDto,
+    file?: Express.Multer.File,
+  ) {
+    const event = await this.eventModel
+      .findById(eventId)
+      .select('title groupId createdBy')
+      .lean();
+    if (!event) throw new NotFoundException('Event not found');
 
     // Only someone actually on the roster can owe for the event.
     const player = await this.playerModel.findOne({
       eventId: new Types.ObjectId(eventId),
-      userId: new Types.ObjectId(memberId),
+      userId: new Types.ObjectId(userId),
       status: 'joined',
     });
     if (!player) {
-      throw new NotFoundException('That member has not joined this event');
+      throw new BadRequestException(
+        'Only players who joined this event can submit a payment',
+      );
     }
 
-    const updated = await this.paymentModel.findOneAndUpdate(
+    if (dto.method === 'bank_transfer' && !file) {
+      throw new BadRequestException(
+        'A receipt image (`file`) is required for a bank transfer payment',
+      );
+    }
+
+    const existing = await this.paymentModel.findOne({
+      eventId: new Types.ObjectId(eventId),
+      memberId: new Types.ObjectId(userId),
+    });
+    if (existing?.status === 'approved') {
+      throw new BadRequestException(
+        'This payment is already approved — nothing left to submit',
+      );
+    }
+
+    // Proof only for bank transfers; a stray file on a cash claim is ignored
+    // rather than stored, so a cash row can never carry a misleading image.
+    let proofUrl: string | null = null;
+    let proofFileId: string | null = null;
+    if (dto.method === 'bank_transfer' && file) {
+      const uploaded = await this.imagekit.upload(
+        file.buffer,
+        `${eventId}-payment-${userId}-${Date.now()}`,
+        'payment-proofs',
+      );
+      proofUrl = uploaded.url;
+      proofFileId = uploaded.fileId;
+    }
+    // The replaced proof is deleted AFTER the new upload succeeded, so a
+    // failed resubmission never leaves the row pointing at a dead file.
+    if (existing?.proofFileId) {
+      try {
+        await this.imagekit.deleteFile(existing.proofFileId);
+      } catch (err) {
+        this.logger.warn(
+          `Failed to delete replaced payment proof ${existing.proofFileId}: ${err}`,
+        );
+      }
+    }
+
+    const row = await this.paymentModel.findOneAndUpdate(
       {
         eventId: new Types.ObjectId(eventId),
-        memberId: new Types.ObjectId(memberId),
+        memberId: new Types.ObjectId(userId),
       },
       {
         $set: {
-          isPaid: dto.isPaid,
-          paidAt: dto.isPaid ? new Date() : null,
-          recordedBy: new Types.ObjectId(requesterId),
+          method: dto.method,
+          status: 'submitted',
+          proofUrl,
+          proofFileId,
+          submittedAt: new Date(),
+          // A fresh submission voids the previous verdict.
+          reviewedBy: null,
+          reviewedAt: null,
+          rejectReason: null,
         },
       },
       { new: true, upsert: true },
     );
 
-    return updated;
+    // Tell whoever reviews — the cashier, or the creator for a non-group
+    // event. Best-effort: a notification failure must not lose the payment.
+    const reviewerId = event.groupId
+      ? (
+          await this.groupModel
+            .findById(event.groupId)
+            .select('cashierId')
+            .lean()
+        )?.cashierId?.toString()
+      : event.createdBy.toString();
+    if (reviewerId && reviewerId !== userId) {
+      try {
+        await this.notificationsService.create({
+          userId: reviewerId,
+          title: 'Payment submitted',
+          body:
+            `A ${dto.method === 'cash' ? 'cash' : 'bank transfer'} payment ` +
+            `for '${event.title}' is waiting for review`,
+          type: 'event',
+          refId: eventId,
+        });
+      } catch (err) {
+        this.logger.warn(`Payment-submitted notification failed: ${err}`);
+      }
+    }
+
+    return row;
+  }
+
+  /**
+   * The cashier's verdict on one member's submission.
+   *
+   * Cashier only for group events (BLOCKED — not falling back to anyone —
+   * while the group has no cashier); event creator for non-group events.
+   * Re-reviewing is allowed in both directions so a mistaken verdict can be
+   * corrected without a resubmission; every verdict stamps who and when.
+   */
+  async reviewPayment(
+    eventId: string,
+    requesterId: string,
+    memberId: string,
+    dto: ReviewPaymentDto,
+  ) {
+    const event = await this.eventModel.findById(eventId);
+    if (!event) throw new NotFoundException('Event not found');
+    await this.assertPaymentReviewer(event, requesterId);
+
+    if (!Types.ObjectId.isValid(memberId)) {
+      throw new BadRequestException('Invalid member id');
+    }
+    const row = await this.paymentModel.findOne({
+      eventId: new Types.ObjectId(eventId),
+      memberId: new Types.ObjectId(memberId),
+    });
+    if (!row) {
+      throw new NotFoundException(
+        'That member has not submitted a payment for this event',
+      );
+    }
+
+    row.status = dto.action === 'approve' ? 'approved' : 'rejected';
+    row.rejectReason = dto.action === 'reject' ? (dto.reason ?? null) : null;
+    row.reviewedBy = new Types.ObjectId(requesterId);
+    row.reviewedAt = new Date();
+    await row.save();
+
+    try {
+      await this.notificationsService.create({
+        userId: memberId,
+        title:
+          dto.action === 'approve' ? 'Payment approved' : 'Payment rejected',
+        body:
+          dto.action === 'approve'
+            ? `Your payment for '${event.title}' has been approved`
+            : `Your payment for '${event.title}' was rejected: ${dto.reason}`,
+        type: 'event',
+        refId: eventId,
+      });
+    } catch (err) {
+      this.logger.warn(`Payment-review notification failed: ${err}`);
+    }
+
+    return row;
   }
 
   // --- Team member roles ---------------------------------------------------
