@@ -19,6 +19,7 @@ import { CreateGroupDto } from './dto/create-group.dto';
 import { UpdateGroupDto } from './dto/update-group.dto';
 import { AttachLocationDto } from './dto/attach-location.dto';
 import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
+import { UpdatePaymentDetailsDto } from './dto/update-payment-details.dto';
 import { ImageKitService } from '../common/upload/imagekit.service';
 import { LocationsService } from '../locations/locations.service';
 import { EventsService } from '../events/events.service';
@@ -930,5 +931,193 @@ export class GroupsService {
       throw new ForbiddenException(
         'Only group owner or admin can perform this action',
       );
+  }
+
+  // --- Cashier & payment details --------------------------------------------
+
+  /**
+   * Appoint (or remove) the group's ONE cashier. Owner only — stricter than
+   * owner/admin on purpose: the cashier handles money, so only the person
+   * the group belongs to hands that out. The owner may appoint themself;
+   * nobody is cashier by default.
+   *
+   * null clears the seat, which BLOCKS event payment reviews until a new
+   * cashier is appointed (the deliberate design: no silent fallback).
+   */
+  async setCashier(groupId: string, requesterId: string, userId: string | null) {
+    const group = await this.groupModel
+      .findById(groupId)
+      .select('ownerId cashierId')
+      .lean();
+    if (!group) throw new NotFoundException('Group not found');
+    if (group.ownerId.toString() !== requesterId) {
+      throw new ForbiddenException(
+        'Only the group owner can appoint the cashier',
+      );
+    }
+
+    if (userId !== null && userId !== group.ownerId.toString()) {
+      const member = await this.memberModel.findOne({
+        groupId: new Types.ObjectId(groupId),
+        userId: new Types.ObjectId(userId),
+        status: 'approved',
+      });
+      if (!member) {
+        throw new BadRequestException(
+          'The cashier must be an approved member of this group',
+        );
+      }
+    }
+
+    await this.groupModel.findByIdAndUpdate(groupId, {
+      $set: { cashierId: userId === null ? null : new Types.ObjectId(userId) },
+    });
+
+    return {
+      message: userId === null ? 'Cashier removed' : 'Cashier appointed',
+      cashierId: userId,
+    };
+  }
+
+  /** Loads the group and asserts the caller holds the cashier seat. */
+  private async assertCashier(groupId: string, userId: string) {
+    const group = await this.groupModel
+      .findById(groupId)
+      .select('cashierId paymentDetails')
+      .lean();
+    if (!group) throw new NotFoundException('Group not found');
+    if (!group.cashierId || group.cashierId.toString() !== userId) {
+      throw new ForbiddenException(
+        'Only the group cashier can manage payment details',
+      );
+    }
+    return group;
+  }
+
+  /**
+   * Where members send their transfers. Readable by any approved member —
+   * they need the account number and QR to pay — plus the owner, who is a
+   * member by construction but checked explicitly for safety.
+   */
+  async getPaymentDetails(groupId: string, userId: string) {
+    const group = await this.groupModel
+      .findById(groupId)
+      .select('ownerId cashierId paymentDetails')
+      .lean();
+    if (!group) throw new NotFoundException('Group not found');
+
+    const isOwner = group.ownerId.toString() === userId;
+    const member = isOwner
+      ? null
+      : await this.memberModel.findOne({
+          groupId: new Types.ObjectId(groupId),
+          userId: new Types.ObjectId(userId),
+          status: 'approved',
+        });
+    if (!isOwner && !member) {
+      throw new ForbiddenException('Not a member of this group');
+    }
+
+    return {
+      cashierId: group.cashierId ?? null,
+      paymentDetails: group.paymentDetails ?? null,
+    };
+  }
+
+  /**
+   * Cashier sets the receiving account. The QR image is managed by its own
+   * endpoint and survives this update — overwriting it here would make every
+   * account edit silently drop the QR.
+   */
+  async updatePaymentDetails(
+    groupId: string,
+    requesterId: string,
+    dto: UpdatePaymentDetailsDto,
+  ) {
+    const group = await this.assertCashier(groupId, requesterId);
+
+    const current = group.paymentDetails ?? {
+      bankAccountNumber: null,
+      bankName: null,
+      accountHolderName: null,
+      qrCodeUrl: null,
+      qrCodeFileId: null,
+    };
+    const next = {
+      ...current,
+      bankAccountNumber: dto.bankAccountNumber,
+      bankName: dto.bankName ?? null,
+      accountHolderName: dto.accountHolderName ?? null,
+    };
+
+    const updated = await this.groupModel
+      .findByIdAndUpdate(
+        groupId,
+        { $set: { paymentDetails: next } },
+        { new: true },
+      )
+      .select('cashierId paymentDetails')
+      .lean();
+    return {
+      cashierId: updated?.cashierId ?? null,
+      paymentDetails: updated?.paymentDetails ?? null,
+    };
+  }
+
+  /**
+   * Cashier uploads/replaces the payment QR image members scan to transfer.
+   * The previous file is deleted only after the new upload succeeded.
+   */
+  async uploadPaymentQr(
+    groupId: string,
+    requesterId: string,
+    file: Express.Multer.File,
+  ) {
+    const group = await this.assertCashier(groupId, requesterId);
+
+    const uploaded = await this.imagekit.upload(
+      file.buffer,
+      `${groupId}-payment-qr-${Date.now()}`,
+      'payment-qr',
+    );
+
+    const prevFileId = group.paymentDetails?.qrCodeFileId;
+    if (prevFileId) {
+      try {
+        await this.imagekit.deleteFile(prevFileId);
+      } catch (err) {
+        this.logger.warn(
+          `Failed to delete previous payment QR ${prevFileId}: ${err}`,
+        );
+      }
+    }
+
+    const current = group.paymentDetails ?? {
+      bankAccountNumber: null,
+      bankName: null,
+      accountHolderName: null,
+      qrCodeUrl: null,
+      qrCodeFileId: null,
+    };
+    const updated = await this.groupModel
+      .findByIdAndUpdate(
+        groupId,
+        {
+          $set: {
+            paymentDetails: {
+              ...current,
+              qrCodeUrl: uploaded.url,
+              qrCodeFileId: uploaded.fileId,
+            },
+          },
+        },
+        { new: true },
+      )
+      .select('cashierId paymentDetails')
+      .lean();
+    return {
+      cashierId: updated?.cashierId ?? null,
+      paymentDetails: updated?.paymentDetails ?? null,
+    };
   }
 }
