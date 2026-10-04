@@ -193,6 +193,36 @@ describe('GroupsService — cashier & payment details', () => {
     });
   });
 
+  describe('findById → isCashier on group detail', () => {
+    beforeEach(() => {
+      // findById reads the member row through a select/lean chain.
+      memberModel.findOne = jest
+        .fn()
+        .mockReturnValue(chain({ role: 'member', status: 'approved' }));
+    });
+
+    it('is true for the cashier', async () => {
+      const res: any = await service.findById(GROUP_ID, CASHIER);
+      expect(res.isCashier).toBe(true);
+    });
+
+    it('is false for everyone else — the owner included', async () => {
+      const res: any = await service.findById(GROUP_ID, OWNER);
+      expect(res.isCashier).toBe(false);
+    });
+
+    it('is false while no cashier is appointed', async () => {
+      groupModel.findById.mockReturnValue(chain(groupRow({ cashierId: null })));
+      const res: any = await service.findById(GROUP_ID, CASHIER);
+      expect(res.isCashier).toBe(false);
+    });
+
+    it('is false — never undefined — without a caller', async () => {
+      const res: any = await service.findById(GROUP_ID);
+      expect(res.isCashier).toBe(false);
+    });
+  });
+
   describe('uploadPaymentQr', () => {
     const file = { buffer: Buffer.from('qr') } as Express.Multer.File;
 

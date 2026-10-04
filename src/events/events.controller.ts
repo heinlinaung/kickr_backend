@@ -290,7 +290,9 @@ export class EventsController {
       '(resolved venue object), `teams` (players populated), `matches`, ' +
       'derived `standings`, plus `userRole` (the caller\'s GROUP role), ' +
       '`joinedByMe` (whether the caller is on the ROSTER — not the same ' +
-      'thing) and `likedByMe`. `group` and `groupRules` are read-only ' +
+      'thing), `likedByMe` and `isCashier` (whether the caller is the parent ' +
+      "group's cashier — always false for standalone events, where the " +
+      'creator reviews payments). `group` and `groupRules` are read-only ' +
       'projections; edit them via PATCH /groups/:id. An invalid or unknown ' +
       'id is a 404, never a 500.',
   })
