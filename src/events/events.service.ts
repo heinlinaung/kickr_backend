@@ -904,14 +904,24 @@ export class EventsService {
       wallpaper: string | null;
     } | null = null;
 
+    // Whether the CALLER is the owning group's cashier — the one who reviews
+    // this event's payments. Always false for standalone events: they have no
+    // cashier (the creator reviews there, which `createdBy` already answers).
+    let isCashier = false;
+
     if (event.groupId) {
-      // One query for both: the rules projection was already here, so the
-      // branding fields ride along rather than costing a second round trip.
+      // One query for all three: the rules projection was already here, so
+      // the branding fields and cashier seat ride along rather than costing
+      // more round trips.
       const groupDoc = await this.groupModel
         .findById(event.groupId)
-        .select('rules name logo wallpaper')
+        .select('rules name logo wallpaper cashierId')
         .lean();
       groupRules = (groupDoc as { rules?: string } | null)?.rules ?? '';
+      isCashier =
+        !!userId &&
+        (groupDoc as { cashierId?: Types.ObjectId | null } | null)?.cashierId?.toString() ===
+          userId;
 
       if (groupDoc) {
         const g = groupDoc as {
@@ -1015,6 +1025,9 @@ export class EventsService {
       standings: computeStandings(matches, teamNames),
       likedByMe,
       joinedByMe,
+      // Whether the caller is the parent group's cashier, so the client can
+      // show payment-review controls without calling the groups API.
+      isCashier,
     };
   }
 

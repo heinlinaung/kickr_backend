@@ -71,6 +71,16 @@ sees only their own. Rows now carry `method`, `status`, `proofUrl`,
 stored — the event's `price` (+ `additionalPrice`) stays the one source
 of truth.
 
+## `isCashier` on detail responses (added 2026-10-04)
+
+- `GET /groups/:id` now returns `isCashier: boolean` — whether the CALLER
+  holds this group's cashier seat.
+- `GET /events/:id` now returns `isCashier: boolean` — whether the caller
+  is the parent group's cashier. Always `false` for standalone events:
+  they have no cashier, the event creator reviews there (`createdBy`).
+- Use these to show/hide the payment-review and bank-details UI without
+  extra requests.
+
 ## Mobile notes
 
 - Statuses to render: no row = not submitted; `submitted` = waiting for

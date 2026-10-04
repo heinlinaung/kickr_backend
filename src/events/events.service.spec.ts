@@ -1,5 +1,6 @@
 import { Test } from '@nestjs/testing';
 import { NotFoundException } from '@nestjs/common';
+import { Types } from 'mongoose';
 import { EventsService } from './events.service';
 import { eventsProviders } from './events.test-providers';
 
@@ -387,6 +388,68 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
     });
   });
 
+  describe('findById → isCashier', () => {
+    const groupedEvent = () =>
+      eventModel.findById.mockReturnValue(
+        q({ _id: EVENT_ID, groupId: GROUP_ID }),
+      );
+
+    beforeEach(() => {
+      memberModel.findOne = jest.fn().mockReturnValue(q(null));
+    });
+
+    it("is true when the caller holds the parent group's cashier seat", async () => {
+      groupedEvent();
+      groupModel.findById.mockReturnValue(
+        q({ rules: '', cashierId: new Types.ObjectId(CALLER) }),
+      );
+
+      const res: any = await service.findById(EVENT_ID, CALLER);
+
+      expect(res.isCashier).toBe(true);
+    });
+
+    it('is false when someone else is the cashier', async () => {
+      groupedEvent();
+      groupModel.findById.mockReturnValue(
+        q({ rules: '', cashierId: new Types.ObjectId(GROUP_ID) }),
+      );
+
+      const res: any = await service.findById(EVENT_ID, CALLER);
+
+      expect(res.isCashier).toBe(false);
+    });
+
+    it('is false while the group has no cashier appointed', async () => {
+      groupedEvent();
+      groupModel.findById.mockReturnValue(q({ rules: '', cashierId: null }));
+
+      const res: any = await service.findById(EVENT_ID, CALLER);
+
+      expect(res.isCashier).toBe(false);
+    });
+
+    it('is false for a standalone event — no group, no cashier seat', async () => {
+      // The creator reviews payments there, which `createdBy` already answers.
+      eventModel.findById.mockReturnValue(q({ _id: EVENT_ID, groupId: null }));
+
+      const res: any = await service.findById(EVENT_ID, CALLER);
+
+      expect(res.isCashier).toBe(false);
+    });
+
+    it('is false — never undefined — when there is no caller', async () => {
+      groupedEvent();
+      groupModel.findById.mockReturnValue(
+        q({ rules: '', cashierId: new Types.ObjectId(CALLER) }),
+      );
+
+      const res: any = await service.findById(EVENT_ID);
+
+      expect(res.isCashier).toBe(false);
+    });
+  });
+
   describe('findById → groupRules', () => {
     it("attaches the parent group's rules as text", async () => {
       const rules = 'No smoking\nArrive 15 min early\n(or tell the captain)';
@@ -460,7 +523,10 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
       await service.findById(EVENT_ID);
 
       expect(groupModel.findById).toHaveBeenCalledTimes(1);
-      expect(chain.select).toHaveBeenCalledWith('rules name logo wallpaper');
+      // cashierId rides along for the detail's isCashier flag — still ONE query.
+      expect(chain.select).toHaveBeenCalledWith(
+        'rules name logo wallpaper cashierId',
+      );
     });
 
     it('does NOT leak the internal ImageKit file ids', async () => {

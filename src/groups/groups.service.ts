@@ -233,7 +233,7 @@ export class GroupsService {
     const group = await this.groupModel.findById(groupId).lean();
     if (!group) throw new NotFoundException('Group not found');
 
-    if (!userId) return this.publicView(group, null);
+    if (!userId) return { ...this.publicView(group, null), isCashier: false };
 
     // Queried directly rather than via getMemberRole(), which filters to
     // approved rows and so cannot report a pending membership.
@@ -249,6 +249,9 @@ export class GroupsService {
       ...this.publicView(group, member?.status ?? null),
       userRole: member?.role ?? null,
       memberStatus: member?.status ?? null,
+      // Whether the CALLER holds this group's cashier seat, so the client can
+      // show payment-review and bank-details controls without extra calls.
+      isCashier: group.cashierId?.toString() === userId,
     };
   }
 
