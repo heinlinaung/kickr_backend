@@ -204,6 +204,8 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
         { isPublic: true },
         { _id: { $in: [JOINED] } },
         { groupId: { $in: [GROUP] } },
+        // Challenge events are findable by the opposing side's members too.
+        { opponentGroupId: { $in: [GROUP] } },
       ]);
     });
 
@@ -554,20 +556,24 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
       expect(filter().$or).toEqual([
         { isPublic: true },
         { groupId: { $in: [MEMBER_GROUP] } },
+        { opponentGroupId: { $in: [MEMBER_GROUP] } },
       ]);
       expect(filter().isPublic).toBeUndefined();
     });
 
-    it('carries all three visibility arms together', async () => {
+    it('carries every visibility arm together', async () => {
       roster([JOINED_A]);
       memberOf([MEMBER_GROUP]);
 
       await service.list(USER);
 
+      // The fourth arm is the group-challenge one: a member of the OPPOSING
+      // group sees the match too, even though it belongs to the other side.
       expect(filter().$or).toEqual([
         { isPublic: true },
         { _id: { $in: [JOINED_A] } },
         { groupId: { $in: [MEMBER_GROUP] } },
+        { opponentGroupId: { $in: [MEMBER_GROUP] } },
       ]);
     });
 

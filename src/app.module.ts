@@ -23,6 +23,7 @@ import { PhotosModule } from './photos/photos.module';
 import { SportTypesModule } from './sport-types/sport-types.module';
 import { RatingsModule } from './ratings/ratings.module';
 import { FormationsModule } from './formations/formations.module';
+import { ChallengesModule } from './challenges/challenges.module';
 
 @Module({
   imports: [
@@ -75,6 +76,7 @@ import { FormationsModule } from './formations/formations.module';
     SportTypesModule,
     RatingsModule,
     FormationsModule,
+    ChallengesModule,
   ],
   providers: [
     // Removed with ThrottlerModule above. It CANNOT be left registered on its

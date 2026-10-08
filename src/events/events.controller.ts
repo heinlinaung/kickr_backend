@@ -38,6 +38,8 @@ import { SubmitMvpDto } from './dto/submit-mvp.dto';
 import { CancelEventDto } from './dto/cancel-event.dto';
 import { SubmitPaymentDto } from './dto/submit-payment.dto';
 import { ReviewPaymentDto } from './dto/review-payment.dto';
+import { ReviewProposalDto } from './dto/review-proposal.dto';
+import { AssignPlayersDto } from './dto/assign-players.dto';
 import { AddGuestDto } from './dto/add-guest.dto';
 import { SetGuestApprovalDto } from './dto/set-guest-approval.dto';
 import { SetTeamMemberRoleDto } from './dto/set-team-member-role.dto';
@@ -611,6 +613,84 @@ export class EventsController {
       user._id.toString(),
       memberId,
       dto,
+    );
+  }
+
+  // --- Group challenge -------------------------------------------------------
+
+  @Patch(':id/proposal/review')
+  @ApiOperation({
+    summary: "Accept or reject a challenge event's proposal (opposing side)",
+    description:
+      "Owner/admin of the group that did NOT create the event — the proposer " +
+      'cannot accept their own terms. `action` accept|reject with an optional ' +
+      'reason ("date change need", "color conflict", …). Accept unlocks the ' +
+      'normal event lifecycle; reject sends the proposer back to edit and ' +
+      'POST /events/:id/proposal/resubmit.',
+  })
+  @ApiResponse({ status: 400, description: 'Not a challenge event, or already reviewed' })
+  @ApiResponse({ status: 403, description: 'Caller is not an opposing-side admin' })
+  reviewProposal(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() dto: ReviewProposalDto,
+  ) {
+    return this.eventsService.reviewProposal(id, user._id.toString(), dto);
+  }
+
+  @Post(':id/proposal/resubmit')
+  @ApiOperation({
+    summary: 'Re-propose a rejected challenge event after editing it',
+    description:
+      'Either side\'s organizer. Only a REJECTED proposal can be resubmitted ' +
+      '— edit the event first (PATCH /events/:id), then resubmit; the ' +
+      'opposing side is notified to review again.',
+  })
+  @ApiResponse({ status: 400, description: 'Proposal is not in rejected state' })
+  resubmitProposal(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.eventsService.resubmitProposal(id, user._id.toString());
+  }
+
+  @Post(':id/players/assign')
+  @ApiOperation({
+    summary: "Assign your group's members to a challenge event (side admins)",
+    description:
+      'Challenge events only — self-join is closed there. The caller must be ' +
+      'owner/admin of one of the two groups; every assignee must be an ' +
+      "approved member of the CALLER's side, and the roster row records that " +
+      'side. No minimum or maximum squad size. Already-assigned players are ' +
+      'skipped, assigned players are notified. Requires the proposal to be ' +
+      'accepted first.',
+  })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Not a challenge event, proposal not accepted, or an assignee is not ' +
+      "a member of the caller's group",
+  })
+  @ApiResponse({ status: 403, description: 'Caller is not an admin of either side' })
+  assignPlayers(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() dto: AssignPlayersDto,
+  ) {
+    return this.eventsService.assignPlayers(id, user._id.toString(), dto);
+  }
+
+  @Delete(':id/players/:userId/assign')
+  @ApiOperation({
+    summary: 'Unassign a player from a challenge event (organizers)',
+  })
+  @ApiResponse({ status: 404, description: 'That player is not assigned' })
+  unassignPlayer(
+    @Param('id') id: string,
+    @Param('userId') targetUserId: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.eventsService.unassignPlayer(
+      id,
+      user._id.toString(),
+      targetUserId,
     );
   }
 

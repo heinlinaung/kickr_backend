@@ -12,6 +12,7 @@
 import { getModelToken } from '@nestjs/mongoose';
 import { Event } from './schemas/event.schema';
 import { User } from '../users/schemas/user.schema';
+import { Challenge } from '../challenges/schemas/challenge.schema';
 import { EventPlayer } from './schemas/event-player.schema';
 import { EventMatch } from './schemas/event-match.schema';
 import { Team } from './schemas/team.schema';
@@ -110,6 +111,7 @@ export interface EventsTestDoubles {
   paymentModel?: any;
   locationModel?: any;
   userModel?: any;
+  challengeModel?: any;
   locations?: any;
   imagekit?: any;
   photosService?: any;
@@ -169,6 +171,7 @@ export function eventsProviders(doubles: EventsTestDoubles = {}) {
         lean: jest.fn().mockResolvedValue([]),
       }),
     },
+    challengeModel = { findById: jest.fn() },
     locations = { assertOwnedBy: jest.fn(), assertCanEdit: jest.fn() },
     imagekit = { upload: jest.fn(), deleteFile: jest.fn() },
     // Event photos now live in the shared `photos` collection, so the service
@@ -198,6 +201,7 @@ export function eventsProviders(doubles: EventsTestDoubles = {}) {
     { provide: getModelToken(EventPayment.name), useValue: paymentModel },
     { provide: getModelToken(Location.name), useValue: locationModel },
     { provide: getModelToken(User.name), useValue: userModel },
+    { provide: getModelToken(Challenge.name), useValue: challengeModel },
     { provide: LocationsService, useValue: locations },
     { provide: ImageKitService, useValue: imagekit },
     { provide: PhotosService, useValue: photosService },

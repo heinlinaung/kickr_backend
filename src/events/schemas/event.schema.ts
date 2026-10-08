@@ -195,6 +195,62 @@ export class Event {
   @Prop({ type: String, default: null })
   statusBeforeCancel: string | null;
 
+  // --- Group Challenge (spec: Group Challenge) ------------------------------
+
+  /**
+   * 'challenge' for the match event born of a group-vs-group challenge;
+   * 'normal' for everything that existed before. A challenge event is always
+   * private, players are ASSIGNED by the two sides' admins rather than
+   * self-joining, and teams/shuffle are locked to exactly two sides.
+   */
+  @Prop({ default: 'normal', enum: ['normal', 'challenge'] })
+  type: string;
+
+  /** The handshake this event settles; null for normal events. */
+  @Prop({ type: Types.ObjectId, ref: 'Challenge', default: null })
+  challengeId: Types.ObjectId | null;
+
+  /**
+   * The OTHER group of the challenge — `groupId` holds the proposer's side.
+   * Denormalised so visibility and the both-sides organizer check are one
+   * query instead of a challenge lookup each time.
+   */
+  @Prop({ type: Types.ObjectId, ref: 'Group', default: null })
+  opponentGroupId: Types.ObjectId | null;
+
+  /**
+   * Where the PROPOSAL stands — the event's own lifecycle `status` only
+   * means anything once this is 'accepted'. Null for normal events.
+   */
+  @Prop({
+    type: String,
+    enum: ['proposed', 'accepted', 'rejected', null],
+    default: null,
+  })
+  proposedStatus: string | null;
+
+  /** Why the reviewing side rejected the proposal; cleared on resubmit. */
+  @Prop({ type: String, default: null })
+  proposalRejectReason: string | null;
+
+  /**
+   * Each side's kit for this match, agreed in the proposal (the "color
+   * conflict" a reviewer may reject over). Doubles as the two team names at
+   * generation time.
+   */
+  @Prop({
+    type: {
+      challengerColor: { type: String, default: null },
+      challengedColor: { type: String, default: null },
+      _id: false,
+    },
+    default: null,
+  })
+  challengeColors: {
+    challengerColor: string | null;
+    challengedColor: string | null;
+  } | null;
+
   // --- Fields landed by build-order step 1, filled by steps 2-3 ------------
   // These ship empty so the status migration is the only pass over every
   // event document. Presence here does NOT mean the behaviour exists yet.

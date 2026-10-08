@@ -82,6 +82,13 @@ import {
 } from './schemas/team.schema';
 import { SubmitPaymentDto } from './dto/submit-payment.dto';
 import { ReviewPaymentDto } from './dto/review-payment.dto';
+import { CreateChallengeEventDto } from './dto/create-challenge-event.dto';
+import { ReviewProposalDto } from './dto/review-proposal.dto';
+import { AssignPlayersDto } from './dto/assign-players.dto';
+import {
+  Challenge,
+  ChallengeDocument,
+} from '../challenges/schemas/challenge.schema';
 import { AddGuestDto } from './dto/add-guest.dto';
 import { SetGuestApprovalDto } from './dto/set-guest-approval.dto';
 import { SetTeamMemberRoleDto } from './dto/set-team-member-role.dto';
@@ -177,6 +184,9 @@ export class EventsService {
     // module and would close a cycle.
     @InjectModel(User.name)
     private userModel: Model<UserDocument>,
+    // Schema-only for the same reason: ChallengesModule imports EventsModule.
+    @InjectModel(Challenge.name)
+    private challengeModel: Model<ChallengeDocument>,
     private readonly locationsService: LocationsService,
     private readonly imagekit: ImageKitService,
     private readonly photosService: PhotosService,
@@ -204,8 +214,16 @@ export class EventsService {
     if (!event) throw new NotFoundException('Event not found');
 
     if (event.groupId) {
+      // A challenge event has TWO organizing groups: the proposer's side owns
+      // `groupId`, the opponent rides on `opponentGroupId`, and the admins of
+      // BOTH run the match. One $in query covers both shapes — a normal event
+      // simply has one entry.
+      const organizerGroupIds = [
+        event.groupId,
+        ...(event.opponentGroupId ? [event.opponentGroupId] : []),
+      ];
       const member = await this.memberModel.findOne({
-        groupId: event.groupId,
+        groupId: { $in: organizerGroupIds },
         userId: new Types.ObjectId(userId),
         status: 'approved',
         role: { $in: [...allowedRoles] },
@@ -273,6 +291,9 @@ export class EventsService {
     if (joinedIds.length) visibility.push({ _id: { $in: joinedIds } });
     if (memberGroupIds.length) {
       visibility.push({ groupId: { $in: memberGroupIds } });
+      // A challenge event belongs to the PROPOSER's group but is both groups'
+      // match — the opposing side's members see it before anyone is assigned.
+      visibility.push({ opponentGroupId: { $in: memberGroupIds } });
     }
     const filter: Record<string, unknown> =
       visibility.length > 1
@@ -415,6 +436,8 @@ export class EventsService {
     if (joinedIds.length) visibility.push({ _id: { $in: joinedIds } });
     if (memberGroupIds.length) {
       visibility.push({ groupId: { $in: memberGroupIds } });
+      // Challenge events: the opposing side's members may find the match too.
+      visibility.push({ opponentGroupId: { $in: memberGroupIds } });
     }
 
     // Text match, visibility and (below) the keyset are ALL disjunctions or
@@ -1032,6 +1055,16 @@ export class EventsService {
   }
 
   async join(eventId: string, userId: string) {
+    // A challenge roster is CURATED: the two sides' admins assign players
+    // from their own groups, so self-join (and the invite link) is closed.
+    const gate = await this.eventModel.findById(eventId).select('type').lean();
+    if (!gate) throw new NotFoundException('Event not found');
+    if (gate.type === 'challenge') {
+      throw new BadRequestException(
+        "A challenge event's roster is assigned by the group admins — you cannot join it yourself",
+      );
+    }
+
     // Check existing player record first
     const existing = await this.playerModel.findOne({
       eventId: new Types.ObjectId(eventId),
@@ -1087,6 +1120,11 @@ export class EventsService {
     // being assigned, a silent departure would leave the fixtures wrong.
     const event = await this.eventModel.findById(eventId).lean();
     if (!event) throw new NotFoundException('Event not found');
+    if (event.type === 'challenge') {
+      throw new BadRequestException(
+        "A challenge event's roster is assigned by the group admins — ask your admin to unassign you",
+      );
+    }
     if (!canLeave(event.status)) {
       throw new BadRequestException(
         'Registration has closed for this event; ask the organizer to reopen it',
@@ -1184,6 +1222,8 @@ export class EventsService {
    */
   async setStatus(eventId: string, userId: string, to: string) {
     const event = await this.assertOrganizer(eventId, userId);
+    // A challenge match that is still only proposed has no lifecycle to run.
+    this.assertProposalAccepted(event);
 
     if (!isEventStatus(to)) {
       throw new BadRequestException(`Unknown status '${to}'`);
@@ -1639,6 +1679,8 @@ export class EventsService {
     { persistTeamCount = false }: { persistTeamCount?: boolean } = {},
   ) {
     const event = await this.assertOrganizer(eventId, userId);
+    // A challenge match that is still only proposed has no teams to build.
+    this.assertProposalAccepted(event);
     if (!canShuffle(event.status, event.sportType)) {
       throw new BadRequestException(
         `Teams can only be generated during ` +
@@ -1659,7 +1701,21 @@ export class EventsService {
     }
 
     const eventObjectId = event._id;
-    const names = this.resolveTeamNames(dto);
+    let names = this.resolveTeamNames(dto);
+    // A challenge is one group against another: exactly two teams, named by
+    // the jersey colors the two sides agreed in the proposal. Challenger's
+    // color first — the shuffle relies on this order to keep the sides.
+    if (event.type === 'challenge') {
+      if (dto.teamsCount !== 2) {
+        throw new BadRequestException(
+          'A challenge event always has exactly 2 teams',
+        );
+      }
+      names = [
+        event.challengeColors?.challengerColor ?? String(TEAM_COLOURS[0]),
+        event.challengeColors?.challengedColor ?? String(TEAM_COLOURS[1]),
+      ];
+    }
 
     // Record the organizer's choice on the event, so `event.teamCount` and the
     // teams that actually exist cannot disagree. Without this, generating 3
@@ -1956,6 +2012,7 @@ export class EventsService {
    */
   async shuffleTeams(eventId: string, userId: string) {
     const event = await this.assertOrganizer(eventId, userId);
+    this.assertProposalAccepted(event);
     if (!canShuffle(event.status, event.sportType)) {
       throw new BadRequestException(
         `Teams can only be shuffled during ` +
@@ -1976,10 +2033,16 @@ export class EventsService {
 
     // Cap at the player count: dealing 3 players into 4 teams leaves an empty
     // team, and an empty team still appears in fixtures it can never play.
-    const teamsCount = Math.max(
-      MIN_TEAMS,
-      Math.min(event.teamCount ?? 4, joined.length + guests.length),
-    );
+    //
+    // A challenge is ALWAYS two teams — one per group — whatever teamCount
+    // says and however small the roster is (1v1 is a valid challenge).
+    const teamsCount =
+      event.type === 'challenge'
+        ? 2
+        : Math.max(
+            MIN_TEAMS,
+            Math.min(event.teamCount ?? 4, joined.length + guests.length),
+          );
 
     // The shuffle takes no body, so it has no duration of its own — but it must
     // not invent one either. It used to derive `floor((event.duration - 10) / 3)`
@@ -2022,8 +2085,40 @@ export class EventsService {
     // land in different fields — `players` takes user ids, `guests` takes
     // roster-row ids — and mixing them would need the ids tagged and split
     // again at the far end.
-    const dealt = dealIntoTeams(shuffled(joined), teamsCount);
-    const dealtGuests = dealIntoTeams(shuffled(guests), teamsCount);
+    let dealt = dealIntoTeams(shuffled(joined), teamsCount);
+    let dealtGuests = dealIntoTeams(shuffled(guests), teamsCount);
+
+    // A challenge never mixes the clubs: each side's ASSIGNED players go to
+    // their own team, challenger first — the same order the team names were
+    // generated in (challengerColor, challengedColor). Guests cannot exist on
+    // a challenge event (addGuest is blocked), so that deal empties out.
+    if (event.type === 'challenge' && event.challengeId) {
+      const challenge = await this.challengeModel
+        .findById(event.challengeId)
+        .select('challengerGroupId')
+        .lean();
+      const rows = await this.playerModel
+        .find({ eventId: event._id, status: 'joined' })
+        .select('userId groupId')
+        .lean();
+
+      const challengerIds: string[] = [];
+      const challengedIds: string[] = [];
+      for (const row of rows) {
+        if (!row.userId) continue;
+        const isChallengerSide =
+          !!challenge &&
+          row.groupId?.toString() === challenge.challengerGroupId.toString();
+        (isChallengerSide ? challengerIds : challengedIds).push(
+          row.userId.toString(),
+        );
+      }
+      dealt = [
+        { name: '', playerIds: challengerIds },
+        { name: '', playerIds: challengedIds },
+      ];
+      dealtGuests = [];
+    }
     const teams: unknown[] = [];
     for (const [index, team] of generated.teams.entries()) {
       teams.push(
@@ -2465,6 +2560,13 @@ export class EventsService {
   async addGuest(eventId: string, sponsorId: string, dto: AddGuestDto) {
     const event = await this.eventModel.findById(eventId);
     if (!event) throw new NotFoundException('Event not found');
+    // No plus-ones on a challenge: both squads are assigned group members,
+    // and the shuffle's side-split relies on every player having a side.
+    if (event.type === 'challenge') {
+      throw new BadRequestException(
+        'A challenge event takes no guests — rosters are assigned by the group admins',
+      );
+    }
     if (!canJoin(event.status)) {
       throw new BadRequestException(
         'Guests can only be added while registration is open',
@@ -3003,6 +3105,378 @@ export class EventsService {
     }
 
     return row;
+  }
+
+  // --- Group challenge -------------------------------------------------------
+
+  /** Owner/admin gate on one specific group, with a caller-facing message. */
+  private async assertSideAdmin(
+    groupId: Types.ObjectId,
+    userId: string,
+    message: string,
+  ) {
+    const member = await this.memberModel.findOne({
+      groupId,
+      userId: new Types.ObjectId(userId),
+      status: 'approved',
+      role: { $in: ['owner', 'admin'] },
+    });
+    if (!member) throw new ForbiddenException(message);
+  }
+
+  /**
+   * The group (of the event's two sides) where the caller is owner/admin —
+   * their SIDE. Null when they hold neither seat.
+   */
+  private async callerSide(
+    event: EventDocument,
+    userId: string,
+  ): Promise<Types.ObjectId | null> {
+    const sides = [event.groupId, event.opponentGroupId].filter(
+      Boolean,
+    ) as Types.ObjectId[];
+    const member = await this.memberModel.findOne({
+      groupId: { $in: sides },
+      userId: new Types.ObjectId(userId),
+      status: 'approved',
+      role: { $in: ['owner', 'admin'] },
+    });
+    return member?.groupId ?? null;
+  }
+
+  /**
+   * 400 while a challenge event's proposal is not yet accepted — the match
+   * only exists on paper, so nothing downstream (roster, teams, shuffle,
+   * lifecycle) may run. A no-op for normal events.
+   */
+  private assertProposalAccepted(event: {
+    type?: string;
+    proposedStatus?: string | null;
+  }) {
+    if (event.type === 'challenge' && event.proposedStatus !== 'accepted') {
+      throw new BadRequestException(
+        'The match proposal has not been accepted by the other group yet',
+      );
+    }
+  }
+
+  /** Best-effort notification to every owner/admin of one group. */
+  private async notifySideAdmins(
+    groupId: Types.ObjectId,
+    title: string,
+    body: string,
+    eventId: string,
+  ) {
+    try {
+      const admins = await this.memberModel
+        .find({
+          groupId,
+          status: 'approved',
+          role: { $in: ['owner', 'admin'] },
+        })
+        .select('userId')
+        .lean();
+      await Promise.all(
+        admins.map((admin) =>
+          this.notificationsService.create({
+            userId: admin.userId.toString(),
+            title,
+            body,
+            type: 'event',
+            refId: eventId,
+          }),
+        ),
+      );
+    } catch (err) {
+      this.logger.warn(`Challenge event notification failed: ${err}`);
+    }
+  }
+
+  /**
+   * `POST /challenges/:id/event` — the proposal event for an ACCEPTED
+   * challenge. One challenge, one event: the challenge stamps `eventId` and
+   * refuses a second; a rematch is a new challenge.
+   *
+   * Either side's owner/admin may propose. The event belongs to the
+   * proposer's group (`groupId`) with the other side on `opponentGroupId`,
+   * is forced private, and starts with `proposedStatus: 'proposed'` — inert
+   * until the other side accepts. Reuses the normal create(), so sportType
+   * inheritance, validation and the weekly PLAN limit all apply (a challenge
+   * event counts like any other).
+   */
+  async createChallengeEvent(
+    challengeId: string,
+    userId: string,
+    dto: CreateChallengeEventDto,
+  ) {
+    if (!Types.ObjectId.isValid(challengeId)) {
+      throw new NotFoundException('Challenge not found');
+    }
+    const challenge = await this.challengeModel.findById(challengeId);
+    if (!challenge) throw new NotFoundException('Challenge not found');
+    if (challenge.status !== 'accepted') {
+      throw new BadRequestException(
+        challenge.status === 'proposed'
+          ? 'The challenge has not been accepted yet'
+          : 'This challenge was rejected',
+      );
+    }
+    if (challenge.eventId) {
+      throw new BadRequestException(
+        'This challenge already has its match event — one challenge, one match',
+      );
+    }
+
+    const side = await this.memberModel.findOne({
+      groupId: {
+        $in: [challenge.challengerGroupId, challenge.challengedGroupId],
+      },
+      userId: new Types.ObjectId(userId),
+      status: 'approved',
+      role: { $in: ['owner', 'admin'] },
+    });
+    if (!side) {
+      throw new ForbiddenException(
+        'Only an owner/admin of one of the two groups can propose the match event',
+      );
+    }
+    const proposerGroupId = side.groupId;
+    const opponentGroupId = proposerGroupId.equals(challenge.challengerGroupId)
+      ? challenge.challengedGroupId
+      : challenge.challengerGroupId;
+
+    const { challengerColor, challengedColor, ...eventDto } = dto;
+    const event = await this.create(userId, {
+      ...eventDto,
+      groupId: proposerGroupId.toString(),
+      // Forced regardless of what was sent — a challenge match is the two
+      // groups' business.
+      isPublic: false,
+    } as CreateEventDto);
+
+    event.type = 'challenge';
+    event.challengeId = challenge._id;
+    event.opponentGroupId = opponentGroupId;
+    event.proposedStatus = 'proposed';
+    event.proposalRejectReason = null;
+    event.challengeColors = { challengerColor, challengedColor };
+    event.isPublic = false;
+    await event.save();
+
+    challenge.eventId = event._id;
+    await challenge.save();
+
+    await this.notifySideAdmins(
+      opponentGroupId,
+      'Match proposal',
+      `A match has been proposed for your challenge: '${event.title}' — review it`,
+      event._id.toString(),
+    );
+
+    return event;
+  }
+
+  /**
+   * The OTHER side's verdict on the proposal. Review rights live with the
+   * opponent of the proposing group — the proposer cannot accept their own
+   * terms. Accept unlocks the normal event lifecycle; reject stores the
+   * reason the proposer will edit against.
+   */
+  async reviewProposal(eventId: string, userId: string, dto: ReviewProposalDto) {
+    const event = await this.eventModel.findById(eventId);
+    if (!event) throw new NotFoundException('Event not found');
+    if (event.type !== 'challenge' || !event.opponentGroupId) {
+      throw new BadRequestException(
+        'Only a challenge event has a proposal to review',
+      );
+    }
+    if (event.proposedStatus !== 'proposed') {
+      throw new BadRequestException(
+        `This proposal has already been ${event.proposedStatus}`,
+      );
+    }
+    await this.assertSideAdmin(
+      event.opponentGroupId,
+      userId,
+      'Only an owner/admin of the opposing group can review the proposal',
+    );
+
+    event.proposedStatus = dto.action === 'accept' ? 'accepted' : 'rejected';
+    event.proposalRejectReason =
+      dto.action === 'reject' ? (dto.reason ?? null) : null;
+    await event.save();
+
+    await this.notifySideAdmins(
+      event.groupId as Types.ObjectId,
+      dto.action === 'accept' ? 'Match proposal accepted' : 'Match proposal rejected',
+      dto.action === 'accept'
+        ? `'${event.title}' is on — assign your players`
+        : `The proposal for '${event.title}' was rejected` +
+            (dto.reason ? `: ${dto.reason}` : '') +
+            ' — adjust the event and propose again',
+      event._id.toString(),
+    );
+
+    return event;
+  }
+
+  /**
+   * After a rejection, the proposer edits the event (both sides' admins are
+   * organizers) and resubmits — EXPLICITLY, so an ordinary edit after
+   * acceptance never silently reopens review.
+   */
+  async resubmitProposal(eventId: string, userId: string) {
+    const event = await this.eventModel.findById(eventId);
+    if (!event) throw new NotFoundException('Event not found');
+    if (event.type !== 'challenge' || !event.opponentGroupId) {
+      throw new BadRequestException('Only a challenge event has a proposal');
+    }
+    if (event.proposedStatus !== 'rejected') {
+      throw new BadRequestException(
+        event.proposedStatus === 'accepted'
+          ? 'The proposal is already accepted'
+          : 'The proposal is still awaiting review',
+      );
+    }
+    await this.assertOrganizer(eventId, userId);
+
+    event.proposedStatus = 'proposed';
+    event.proposalRejectReason = null;
+    await event.save();
+
+    await this.notifySideAdmins(
+      event.opponentGroupId,
+      'Match proposal updated',
+      `The proposal for '${event.title}' has been revised — review it again`,
+      event._id.toString(),
+    );
+
+    return event;
+  }
+
+  /**
+   * A challenge event's roster is ASSIGNED, side by side: each group's
+   * owner/admin places their own approved members, and the row records which
+   * group the player plays for. No minimum, no maximum — the spec leaves
+   * squad size to the admins. Already-joined players are skipped rather than
+   * erred, so assigning a corrected list is idempotent.
+   */
+  async assignPlayers(eventId: string, userId: string, dto: AssignPlayersDto) {
+    const event = await this.eventModel.findById(eventId);
+    if (!event) throw new NotFoundException('Event not found');
+    if (event.type !== 'challenge') {
+      throw new BadRequestException(
+        'Players are assigned only on challenge events — this event uses POST /events/:id/join',
+      );
+    }
+    this.assertProposalAccepted(event);
+    if (!canJoin(event.status)) {
+      throw new BadRequestException(
+        'This event is no longer open for roster changes',
+      );
+    }
+
+    const sideGroupId = await this.callerSide(event, userId);
+    if (!sideGroupId) {
+      throw new ForbiddenException(
+        'Only an owner/admin of one of the two groups can assign players',
+      );
+    }
+
+    const assigned: string[] = [];
+    const skipped: string[] = [];
+    for (const targetId of dto.userIds) {
+      const member = await this.memberModel.findOne({
+        groupId: sideGroupId,
+        userId: new Types.ObjectId(targetId),
+        status: 'approved',
+      });
+      if (!member) {
+        throw new BadRequestException(
+          `'${targetId}' is not an approved member of your group`,
+        );
+      }
+
+      const existing = await this.playerModel.findOne({
+        eventId: event._id,
+        userId: new Types.ObjectId(targetId),
+      });
+      if (existing?.status === 'joined') {
+        skipped.push(targetId);
+        continue;
+      }
+      if (existing) {
+        existing.status = 'joined';
+        existing.joinedAt = new Date();
+        existing.groupId = sideGroupId;
+        await existing.save();
+      } else {
+        await this.playerModel.create({
+          eventId: event._id,
+          userId: new Types.ObjectId(targetId),
+          status: 'joined',
+          joinedAt: new Date(),
+          groupId: sideGroupId,
+        });
+      }
+      assigned.push(targetId);
+
+      try {
+        await this.notificationsService.create({
+          userId: targetId,
+          title: 'You are on the squad',
+          body: `You have been assigned to the challenge match '${event.title}'`,
+          type: 'event',
+          refId: event._id.toString(),
+        });
+      } catch (err) {
+        this.logger.warn(`Assignment notification failed: ${err}`);
+      }
+    }
+
+    if (assigned.length) {
+      await this.eventModel.updateOne(
+        { _id: event._id },
+        { $inc: { joinedCount: assigned.length } },
+      );
+    }
+
+    return {
+      message: `${assigned.length} player(s) assigned`,
+      assigned,
+      skipped,
+    };
+  }
+
+  /** The mirror of assignPlayers, for corrections. Either side's organizer. */
+  async unassignPlayer(eventId: string, userId: string, targetUserId: string) {
+    const event = await this.assertOrganizer(eventId, userId);
+    if (event.type !== 'challenge') {
+      throw new BadRequestException(
+        'Players are unassigned only on challenge events',
+      );
+    }
+    if (!Types.ObjectId.isValid(targetUserId)) {
+      throw new BadRequestException('Invalid user id');
+    }
+
+    const row = await this.playerModel.findOne({
+      eventId: event._id,
+      userId: new Types.ObjectId(targetUserId),
+      status: 'joined',
+    });
+    if (!row) {
+      throw new NotFoundException('That player is not assigned to this event');
+    }
+
+    row.status = 'cancelled';
+    await row.save();
+    await this.eventModel.updateOne(
+      { _id: event._id, joinedCount: { $gt: 0 } },
+      { $inc: { joinedCount: -1 } },
+    );
+
+    return { message: 'Player unassigned' };
   }
 
   // --- Team member roles ---------------------------------------------------
