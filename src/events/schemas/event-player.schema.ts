@@ -89,6 +89,14 @@ export class EventPlayer {
 
   @Prop()
   checkInTime: Date;
+
+  /**
+   * Which SIDE of a challenge event this player plays for — set when a
+   * group's admin assigns them (`POST /events/:id/players/assign`). Null on
+   * normal events, where a roster row has no side.
+   */
+  @Prop({ type: Types.ObjectId, ref: 'Group', default: null })
+  groupId: Types.ObjectId | null;
 }
 
 export const EventPlayerSchema = SchemaFactory.createForClass(EventPlayer);

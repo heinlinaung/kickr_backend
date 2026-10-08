@@ -479,7 +479,15 @@ describe('EventsService — lifecycle', () => {
   });
 
   describe('join / leave gating', () => {
+    /** join() now gates on event.type first — findById().select().lean(). */
+    const normalEventGate = () =>
+      eventModel.findById.mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue({ type: 'normal' }),
+      });
+
     it('joins only while the atomic guard matches status join', async () => {
+      normalEventGate();
       playerModel.findOne.mockResolvedValue(null);
       eventModel.findOneAndUpdate.mockResolvedValue({
         joinedCount: 1,
@@ -495,6 +503,7 @@ describe('EventsService — lifecycle', () => {
     });
 
     it('never flips status to full at capacity', async () => {
+      normalEventGate();
       playerModel.findOne.mockResolvedValue(null);
       eventModel.findOneAndUpdate.mockResolvedValue({
         joinedCount: 12,
@@ -513,15 +522,19 @@ describe('EventsService — lifecycle', () => {
       playerModel.findOne.mockResolvedValue(null);
       eventModel.findOneAndUpdate.mockResolvedValue(null);
 
+      // One mock serves both reads: the type gate (select().lean()) and the
+      // "why did the guard miss" fallback (bare lean()).
       eventModel.findById.mockReturnValue({
-        lean: () => Promise.resolve({ status: 'preparation' }),
+        select: jest.fn().mockReturnThis(),
+        lean: () => Promise.resolve({ type: 'normal', status: 'preparation' }),
       });
       await expect(service.join(EVENT_ID, STRANGER)).rejects.toThrow(
         /not open for joining/,
       );
 
       eventModel.findById.mockReturnValue({
-        lean: () => Promise.resolve({ status: 'join' }),
+        select: jest.fn().mockReturnThis(),
+        lean: () => Promise.resolve({ type: 'normal', status: 'join' }),
       });
       await expect(service.join(EVENT_ID, STRANGER)).rejects.toThrow(/full/);
     });
