@@ -595,10 +595,27 @@ export class GroupsService {
   async listMembers(groupId: string, requesterId: string) {
     await this.assertCanSeeGroupContents(groupId, requesterId);
 
-    return this.memberModel
-      .find({ groupId: new Types.ObjectId(groupId), status: 'approved' })
-      .populate('userId', 'name username displayName profileImage')
-      .lean();
+    const [group, members] = await Promise.all([
+      this.groupModel.findById(groupId).select('cashierId').lean(),
+      this.memberModel
+        .find({ groupId: new Types.ObjectId(groupId), status: 'approved' })
+        .populate('userId', 'name username displayName profileImage')
+        .lean(),
+    ]);
+
+    // The cashier's card carries `isCashier: true`; everyone else's card has
+    // NO isCashier key at all (per spec — role alone), so the one flagged row
+    // stands out and clients need no false-vs-absent distinction. The seat is
+    // a group field, not a member role, so it is joined in here at read time.
+    const cashierId = group?.cashierId?.toString();
+    return members.map((member) => {
+      const memberUserId =
+        (member.userId as { _id?: unknown })?._id?.toString?.() ??
+        String(member.userId);
+      return cashierId && memberUserId === cashierId
+        ? { ...member, isCashier: true }
+        : member;
+    });
   }
 
   /**

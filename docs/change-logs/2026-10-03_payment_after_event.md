@@ -81,6 +81,19 @@ of truth.
 - Use these to show/hide the payment-review and bank-details UI without
   extra requests.
 
+## `isCashier` on the member list (added 2026-10-11)
+
+`GET /groups/:id/members` — the cashier's card now carries
+`"isCashier": true`; every other card keeps its `role` with NO `isCashier`
+key at all (absent, not false):
+
+```json
+[
+  { "userId": { "_id": "…", "name": "…" }, "role": "owner" },
+  { "userId": { "_id": "…", "name": "…" }, "role": "member", "isCashier": true }
+]
+```
+
 ## Mobile notes
 
 - Statuses to render: no row = not submitted; `submitted` = waiting for

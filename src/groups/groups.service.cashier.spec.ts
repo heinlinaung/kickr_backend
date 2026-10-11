@@ -44,6 +44,7 @@ describe('GroupsService — cashier & payment details', () => {
 
   const chain = (result: any) => ({
     select: jest.fn().mockReturnThis(),
+    populate: jest.fn().mockReturnThis(),
     lean: jest.fn().mockResolvedValue(result),
   });
 
@@ -190,6 +191,47 @@ describe('GroupsService — cashier & payment details', () => {
       await expect(
         service.getPaymentDetails(GROUP_ID, OWNER),
       ).resolves.toMatchObject({ cashierId: expect.anything() });
+    });
+  });
+
+  describe('listMembers → isCashier on the member cards', () => {
+    const memberRow = (userId: string, role: string) => ({
+      userId: { _id: new Types.ObjectId(userId), name: `u-${role}` },
+      role,
+      status: 'approved',
+    });
+
+    beforeEach(() => {
+      memberModel.find = jest
+        .fn()
+        .mockReturnValue(
+          chain([memberRow(OWNER, 'owner'), memberRow(CASHIER, 'member')]),
+        );
+    });
+
+    it("flags ONLY the cashier's card; everyone else has no isCashier key", async () => {
+      const rows: any[] = await service.listMembers(GROUP_ID, MEMBER);
+
+      const ownerRow = rows.find((row) => row.role === 'owner');
+      const cashierRow = rows.find(
+        (row) => row.userId._id.toString() === CASHIER,
+      );
+
+      expect(cashierRow.isCashier).toBe(true);
+      // Absent, not false — per spec the key only exists on the cashier.
+      expect(ownerRow).not.toHaveProperty('isCashier');
+      // The role still rides along for every card.
+      expect(ownerRow.role).toBe('owner');
+    });
+
+    it('no cashier appointed → no card carries the key', async () => {
+      groupModel.findById.mockReturnValue(chain(groupRow({ cashierId: null })));
+
+      const rows: any[] = await service.listMembers(GROUP_ID, MEMBER);
+
+      for (const row of rows) {
+        expect(row).not.toHaveProperty('isCashier');
+      }
     });
   });
 
