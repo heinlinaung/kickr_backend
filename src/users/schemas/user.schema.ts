@@ -60,11 +60,17 @@ export class User {
   @Prop({ type: [String], default: [] })
   sports: string[];
 
-  @Prop()
-  preferredSport: string;
+  /**
+   * Arrays since 2026-10-11 (were single strings): a player prefers more
+   * than one sport and covers more than one position. Existing documents
+   * are wrapped by `scripts/migrate-user-profile-arrays.ts`.
+   */
+  @Prop({ type: [String], default: [] })
+  preferredSport: string[];
 
-  @Prop({ enum: [...FOOTBALL_POSITIONS] })
-  footballPosition: string;
+  /** Each entry validated against FOOTBALL_POSITIONS. */
+  @Prop({ type: [String], enum: [...FOOTBALL_POSITIONS], default: [] })
+  footballPosition: string[];
 
   /**
    * The real-world club this user supports, referencing
