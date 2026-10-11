@@ -105,19 +105,31 @@ export class UpdateProfileDto {
 
   @ApiProperty({
     required: false,
-    example: 'football',
+    type: [String],
+    example: ['football', 'futsal'],
     description:
-      'One of the values from GET /sport-types — checked against that ' +
-      'collection in the service.',
+      'Values from GET /sport-types — each entry checked against that ' +
+      'collection in the service. An array since 2026-10-11; send the full ' +
+      'list, it replaces the stored one.',
   })
   @IsOptional()
-  @IsString()
-  preferredSport?: string;
+  @IsArray()
+  @IsString({ each: true })
+  preferredSport?: string[];
 
-  @ApiProperty({ required: false, enum: FOOTBALL_POSITIONS })
+  @ApiProperty({
+    required: false,
+    type: [String],
+    enum: FOOTBALL_POSITIONS,
+    example: ['defender', 'midfielder'],
+    description:
+      'An array since 2026-10-11; send the full list, it replaces the ' +
+      'stored one.',
+  })
   @IsOptional()
-  @IsIn([...FOOTBALL_POSITIONS])
-  footballPosition?: string;
+  @IsArray()
+  @IsIn([...FOOTBALL_POSITIONS], { each: true })
+  footballPosition?: string[];
 
   @ApiProperty({
     required: false,

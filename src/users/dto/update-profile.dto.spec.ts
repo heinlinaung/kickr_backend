@@ -4,15 +4,39 @@ import { validateSync } from 'class-validator';
 import { UpdateProfileDto } from './update-profile.dto';
 
 describe('UpdateProfileDto whitelist + validation', () => {
-  it('accepts a valid footballPosition and rejects an invalid one', () => {
+  it('accepts valid footballPosition entries and rejects an invalid one', () => {
+    // Arrays since 2026-10-11 — a player covers more than one position.
     expect(
       validateSync(
-        plainToInstance(UpdateProfileDto, { footballPosition: 'goalkeeper' }),
+        plainToInstance(UpdateProfileDto, {
+          footballPosition: ['goalkeeper', 'defender'],
+        }),
       ),
     ).toHaveLength(0);
     expect(
       validateSync(
-        plainToInstance(UpdateProfileDto, { footballPosition: 'striker' }),
+        plainToInstance(UpdateProfileDto, { footballPosition: ['striker'] }),
+      ).length,
+    ).toBeGreaterThan(0);
+    // The old single-string shape is no longer accepted.
+    expect(
+      validateSync(
+        plainToInstance(UpdateProfileDto, { footballPosition: 'goalkeeper' }),
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it('preferredSport is an array of strings now', () => {
+    expect(
+      validateSync(
+        plainToInstance(UpdateProfileDto, {
+          preferredSport: ['football', 'futsal'],
+        }),
+      ),
+    ).toHaveLength(0);
+    expect(
+      validateSync(
+        plainToInstance(UpdateProfileDto, { preferredSport: 'football' }),
       ).length,
     ).toBeGreaterThan(0);
   });
@@ -30,7 +54,7 @@ describe('UpdateProfileDto whitelist + validation', () => {
         emailVerified: true,
         inviteCode: 'y',
         biography: 'ok',
-        footballPosition: 'goalkeeper',
+        footballPosition: ['goalkeeper'],
       },
       { type: 'body', metatype: UpdateProfileDto },
     );
@@ -39,6 +63,6 @@ describe('UpdateProfileDto whitelist + validation', () => {
     expect(out.emailVerified).toBeUndefined();
     expect(out.inviteCode).toBeUndefined();
     expect(out.biography).toBe('ok');
-    expect(out.footballPosition).toBe('goalkeeper');
+    expect(out.footballPosition).toEqual(['goalkeeper']);
   });
 });

@@ -165,7 +165,7 @@ export class UsersService {
     // same source as group/event sportType — the DTO only checks they are
     // strings. One findAll covers the whole array; per-value assertValid
     // would re-query for every entry.
-    if (dto.sports?.length || dto.preferredSport) {
+    if (dto.sports?.length || dto.preferredSport?.length) {
       const valid = new Set(
         (await this.sportTypesService.findAll()).map((row) => row.value),
       );
@@ -175,9 +175,12 @@ export class UsersService {
           `Unknown sport '${unknown}'. Valid values: ${[...valid].join(', ')}`,
         );
       }
-      if (dto.preferredSport && !valid.has(dto.preferredSport)) {
+      const unknownPreferred = (dto.preferredSport ?? []).find(
+        (sport) => !valid.has(sport),
+      );
+      if (unknownPreferred) {
         throw new BadRequestException(
-          `Unknown preferredSport '${dto.preferredSport}'. ` +
+          `Unknown preferredSport '${unknownPreferred}'. ` +
             `Valid values: ${[...valid].join(', ')}`,
         );
       }

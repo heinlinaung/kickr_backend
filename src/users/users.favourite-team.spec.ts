@@ -210,7 +210,7 @@ describe('UsersService — favourite team', () => {
       await expect(
         service.updateProfile(USER, {
           sports: ['football', 'badminton'],
-          preferredSport: 'badminton',
+          preferredSport: ['badminton'],
         } as any),
       ).resolves.toBeDefined();
     });
@@ -229,7 +229,7 @@ describe('UsersService — favourite team', () => {
       await expect(
         service.updateProfile(USER, {
           sports: ['football'],
-          preferredSport: 'cricket',
+          preferredSport: ['cricket'],
         } as any),
       ).rejects.toThrow(/Unknown preferredSport 'cricket'/);
     });
