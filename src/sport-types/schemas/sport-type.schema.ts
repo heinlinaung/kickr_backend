@@ -9,9 +9,9 @@ export type SportTypeDocument = HydratedDocument<SportType>;
  * hardcoded (and mutually inconsistent) sportType enums that used to live on
  * the group schema, the event schema and the event DTOs.
  *
- * Read-only from the API's point of view. Rows are seeded by
- * `scripts/seed-sport-types.ts`, not created by users, so there is no
- * create/update/delete endpoint and no owner field.
+ * Seeded by `scripts/seed-sport-types.ts` and maintained through the
+ * superadmin-only write endpoints on /sport-types — never by end users, so
+ * there is no owner field.
  *
  * Groups and events store the `value` string directly — deliberately NOT an
  * ObjectId ref. The value is the datum; this collection only says which values
@@ -43,6 +43,15 @@ export class SportType {
    */
   @Prop({ required: true })
   sortOrder: number;
+
+  /**
+   * Whether an event of this sport is played as a match. Clients use it to
+   * decide whether the event detail screen shows the match timeline (kick-off,
+   * score entry, result). Defaults to true — every seeded sport is played as
+   * a match, so existing rows keep the timeline they already showed.
+   */
+  @Prop({ default: true })
+  matchProvided: boolean;
 }
 
 export const SportTypeSchema = SchemaFactory.createForClass(SportType);

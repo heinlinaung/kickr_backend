@@ -43,8 +43,8 @@ export const DEFAULT_PLAN = 'default';
  * enforcement. `scripts/seed-plans.ts` is the authority; keep the two equal.
  */
 export const DEFAULT_PLAN_LIMITS: PlanLimits = {
-  maxGroupsOwned: 2,
-  maxEventsPerWeek: 3,
+  maxGroupsOwned: 5,
+  maxEventsPerWeek: 10,
   maxGalleryPhotosPerGroup: 50,
 };
 
