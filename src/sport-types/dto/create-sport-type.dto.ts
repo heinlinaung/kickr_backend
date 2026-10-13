@@ -8,7 +8,9 @@ import {
   IsOptional,
   IsString,
   Matches,
+  MaxLength,
   Min,
+  MinLength,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 
@@ -27,6 +29,9 @@ const slug = (v: unknown): unknown =>
 export const normaliseSlug = ({ value }: { value: unknown }): unknown =>
   slug(value);
 
+export const trimString = ({ value }: { value: unknown }): unknown =>
+  typeof value === 'string' ? value.trim() : value;
+
 export const normaliseSlugs = ({ value }: { value: unknown }): unknown =>
   Array.isArray(value) ? (value as unknown[]).map(slug) : value;
 
@@ -34,13 +39,26 @@ export class CreateSportTypeDto {
   @ApiProperty({
     example: 'tennis',
     description:
-      'The value groups/events/users will store. Unique, lowercased. ' +
-      'Immutable once created — it is the datum other documents carry.',
+      "The sport's ID — the value groups/events/users will store. Unique, " +
+      'lowercased. Immutable once created; rename via PATCH `name` instead.',
   })
   @Transform(normaliseSlug)
   @IsString()
   @Matches(SPORT_SLUG, { message: `value ${SPORT_SLUG_MESSAGE}` })
   value: string;
+
+  @ApiProperty({
+    example: 'Tennis',
+    required: false,
+    description:
+      'Display label. Unique (case-insensitive). Defaults to `value`.',
+  })
+  @IsOptional()
+  @Transform(trimString)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(50)
+  name?: string;
 
   @ApiProperty({
     type: [String],

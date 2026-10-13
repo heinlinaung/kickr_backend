@@ -18,10 +18,10 @@ order) can change.
 | Method | Path | Auth | What |
 | --- | --- | --- | --- |
 | GET | `/regions` | public | `{ regions: { myanmar: [{ id, name }], thailand: [...] } }`, countries in display order |
-| GET | `/countries` | public | All countries with regions, in display order |
-| GET | `/countries/:id` | public | One country |
+| GET | `/countries` | superadmin | All countries with regions, in display order |
+| GET | `/countries/:id` | superadmin | One country |
 | POST | `/countries` | superadmin | `{ id?, name, sortOrder?, regions?: [{ id?, name }] }` |
-| PATCH | `/countries/:id` | superadmin | `{ name?, sortOrder?, regions? }`. `regions` replaces the whole list |
+| PATCH | `/countries/:id` | superadmin | `{ id?, name?, sortOrder?, regions?: [{ id?, name }] }`. `regions` replaces the whole list; `id` must equal the path id |
 | DELETE | `/countries/:id` | superadmin | 409 while any group/user has this `country` |
 | POST | `/countries/:id/regions` | superadmin | `{ id?, name }`, appended. 409 on duplicate id |
 | PATCH | `/countries/:id/regions/:regionId` | superadmin | `{ name }`. Display name only |
@@ -34,7 +34,11 @@ order) can change.
 - Ids: lowercase letters/digits separated by single spaces, `-` or `_`. A name
   that cannot become an id (e.g. Burmese script) needs an explicit `id` → 400.
 - Region ids are unique within a country (400 in a body, 409 on add).
+- A `PATCH /countries/:id` body `id` that differs from the path id is a 400.
+  `id` in a `PATCH /countries/:id/regions/:regionId` body is a 400. Neither a
+  country id nor a region id can change after creation.
 - Dropping a region via PATCH `regions` is refused (409) while it is in use.
+  The list is replaced as a whole, so two concurrent PATCHes: the last wins.
 
 Group/user `country` / `city` writes are **not** validated against this list
 yet. They are still free text.

@@ -1,6 +1,5 @@
 // src/countries/countries.controller.ts
 import {
-  applyDecorators,
   Body,
   Controller,
   Delete,
@@ -12,6 +11,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
+  ApiExcludeEndpoint,
   ApiOperation,
   ApiParam,
   ApiResponse,
@@ -29,23 +29,20 @@ import {
   CountryListEnvelope,
 } from './dto/country-response.dto';
 
-/**
- * Reads are public (no token). The apps load regions through
- * GET /configuration. Writes: superadmin only.
- */
-const SuperadminOnly = applyDecorators(
-  UseGuards(JwtAuthGuard, SuperadminGuard),
-  ApiBearerAuth(),
-  ApiResponse({ status: 401, description: 'Missing or invalid token' }),
-  ApiResponse({ status: 403, description: 'Caller is not a superadmin' }),
-);
-
 const IdParam = ApiParam({ name: 'id', example: 'myanmar' });
 const RegionIdParam = ApiParam({ name: 'regionId', example: 'yangon' });
 
 const ROW = '`{ id, name, sortOrder, regions: [{ id, name }] }`';
 
+/**
+ * Every route — reads included — requires the caller's `role` to be
+ * 'superadmin'. The apps load regions through public GET /configuration.
+ */
 @ApiTags('Countries & regions')
+@UseGuards(JwtAuthGuard, SuperadminGuard)
+@ApiBearerAuth()
+@ApiResponse({ status: 401, description: 'Missing or invalid token' })
+@ApiResponse({ status: 403, description: 'Caller is not a superadmin' })
 @Controller('countries')
 export class CountriesController {
   constructor(private readonly service: CountriesService) {}
@@ -56,7 +53,9 @@ export class CountriesController {
     type: CountryListEnvelope,
     description: `Array of ${ROW}, in display order`,
   })
-  @ApiOperation({ summary: 'List countries with their regions' })
+  @ApiOperation({
+    summary: 'List countries with their regions (superadmin)',
+  })
   findAll() {
     return this.service.findAll();
   }
@@ -69,13 +68,14 @@ export class CountriesController {
     description: `The country as ${ROW}`,
   })
   @ApiResponse({ status: 404, description: 'Country not found' })
-  @ApiOperation({ summary: 'One country by id, e.g. myanmar' })
+  @ApiOperation({
+    summary: 'One country by id, e.g. myanmar (superadmin)',
+  })
   findOne(@Param('id') id: string) {
     return this.service.findOne(id);
   }
 
   @Post()
-  @SuperadminOnly
   @ApiResponse({
     status: 201,
     type: CountryEnvelope,
@@ -97,14 +97,17 @@ export class CountriesController {
   }
 
   @Patch(':id')
-  @SuperadminOnly
   @IdParam
   @ApiResponse({
     status: 200,
     type: CountryEnvelope,
     description: `The updated country as ${ROW}`,
   })
-  @ApiResponse({ status: 400, description: 'Invalid field' })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Invalid field, body id differs from the path id, or duplicate region id',
+  })
   @ApiResponse({ status: 404, description: 'Country not found' })
   @ApiResponse({
     status: 409,
@@ -114,14 +117,15 @@ export class CountriesController {
     summary: 'Update a country (superadmin)',
     description:
       'Changes `name` / `sortOrder`, and/or replaces the whole `regions` ' +
-      'list. The id cannot change.',
+      'list. `id` may be sent but must equal the path id — it cannot change. ' +
+      'To add, rename, reorder or remove regions, send the full new list: ' +
+      'regions left out are dropped (409 while still in use).',
   })
   update(@Param('id') id: string, @Body() dto: UpdateCountryDto) {
     return this.service.update(id, dto);
   }
 
   @Delete(':id')
-  @SuperadminOnly
   @IdParam
   @ApiResponse({
     status: 200,
@@ -139,7 +143,7 @@ export class CountriesController {
   }
 
   @Post(':id/regions')
-  @SuperadminOnly
+  @ApiExcludeEndpoint()
   @IdParam
   @ApiResponse({
     status: 201,
@@ -154,7 +158,7 @@ export class CountriesController {
   }
 
   @Patch(':id/regions/:regionId')
-  @SuperadminOnly
+  @ApiExcludeEndpoint()
   @IdParam
   @RegionIdParam
   @ApiResponse({
@@ -176,7 +180,7 @@ export class CountriesController {
   }
 
   @Delete(':id/regions/:regionId')
-  @SuperadminOnly
+  @ApiExcludeEndpoint()
   @IdParam
   @RegionIdParam
   @ApiResponse({
