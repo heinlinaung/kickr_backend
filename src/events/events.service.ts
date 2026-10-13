@@ -1675,15 +1675,20 @@ export class EventsService {
    * and `type` instead. Branch on `type`, not on the presence of `userId`.
    */
   async listPlayers(eventId: string) {
-    return this.playerModel
-      .find({
-        eventId: new Types.ObjectId(eventId),
-        status: 'joined',
-        approval: PLAYABLE_APPROVAL,
-      })
-      .populate('userId', 'name profileImage')
-      .populate('addedByUserId', 'name profileImage')
-      .lean();
+    return (
+      this.playerModel
+        .find({
+          eventId: new Types.ObjectId(eventId),
+          status: 'joined',
+          approval: PLAYABLE_APPROVAL,
+        })
+        // footballPosition rides along so a team-builder can see each
+        // player's position(s) without a profile call per row. Guests have
+        // no user document — their card simply lacks the field.
+        .populate('userId', 'name profileImage footballPosition')
+        .populate('addedByUserId', 'name profileImage')
+        .lean()
+    );
   }
 
   // --- Step 2: teams, fixtures, scores, standings -------------------------

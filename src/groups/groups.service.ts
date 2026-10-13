@@ -599,7 +599,12 @@ export class GroupsService {
       this.groupModel.findById(groupId).select('cashierId').lean(),
       this.memberModel
         .find({ groupId: new Types.ObjectId(groupId), status: 'approved' })
-        .populate('userId', 'name username displayName profileImage')
+        // footballPosition (the player's pitch positions) lives INSIDE the
+        // populated user card — the row's own `role` stays the GROUP role.
+        .populate(
+          'userId',
+          'name username displayName profileImage footballPosition',
+        )
         .lean(),
     ]);
 
