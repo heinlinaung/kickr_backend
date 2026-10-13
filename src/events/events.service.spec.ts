@@ -512,6 +512,24 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
     });
   });
 
+  describe('listPlayers → profile position on the card', () => {
+    it('populates footballPosition for registered players, never the email', async () => {
+      const chain = {
+        populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([]),
+      };
+      playerModel.find = jest.fn().mockReturnValue(chain);
+
+      await service.listPlayers(EVENT_ID);
+
+      const userCall = chain.populate.mock.calls.find(
+        (call: any[]) => call[0] === 'userId',
+      ) as [string, string];
+      expect(userCall[1].split(' ')).toContain('footballPosition');
+      expect(userCall[1].split(' ')).not.toContain('email');
+    });
+  });
+
   describe('findById → groupRules', () => {
     it("attaches the parent group's rules as text", async () => {
       const rules = 'No smoking\nArrive 15 min early\n(or tell the captain)';

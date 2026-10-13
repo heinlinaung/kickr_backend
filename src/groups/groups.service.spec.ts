@@ -599,6 +599,21 @@ describe('GroupsService', () => {
         );
       });
 
+      it("carries each member's footballPosition on the user card, never the email", async () => {
+        // The pitch position(s) from the profile — distinct from the row's
+        // own `role`, which stays the GROUP role (owner/admin/member).
+        publicGroup();
+        memberModel.findOne.mockResolvedValue(null);
+        const chain = q([]);
+        memberModel.find.mockReturnValue(chain);
+
+        await service.listMembers(GROUP_ID, USER_ID);
+
+        const [, projection] = chain.populate.mock.calls[0];
+        expect(projection.split(' ')).toContain('footballPosition');
+        expect(projection.split(' ')).not.toContain('email');
+      });
+
       it('404s an unknown group rather than 403', async () => {
         groupModel.findById.mockReturnValue(q(null));
         await expect(
