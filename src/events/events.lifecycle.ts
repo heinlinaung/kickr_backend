@@ -64,6 +64,34 @@ export const NON_FOOTBALL_EVENT_STATUSES = [
 ] as const satisfies readonly EventStatus[];
 
 /**
+ * The lifecycle for CHALLENGE events (2026-10-14): the football list with
+ * `preparation` cut out.
+ *
+ * A challenge match skips the build stage because its teams are not built —
+ * they are the two groups, locked to two sides from the moment the proposal
+ * is accepted; there is nothing to assemble that `ready_to_play` does not
+ * already cover.
+ *
+ * Deliberately its OWN copy rather than an alias of
+ * `NON_FOOTBALL_EVENT_STATUSES`, even though the lists coincide today: a
+ * challenge is a different thing from a non-football sport, and the two
+ * must be free to diverge without a find-and-replace.
+ */
+export const CHALLENGE_EVENT_STATUSES = [
+  'join',
+  'ready_to_play',
+  'playing',
+  'after_match',
+  'done',
+  'cancelled',
+] as const satisfies readonly EventStatus[];
+
+/** True when `eventType` runs the challenge lifecycle. */
+export function isChallenge(eventType: unknown): boolean {
+  return eventType === 'challenge';
+}
+
+/**
  * True when `sportType` runs the football lifecycle.
  *
  * A missing value (undefined/null) counts as football: the schema default is
@@ -75,8 +103,18 @@ export function isFootball(sportType: unknown): boolean {
   return sportType == null || sportType === 'football';
 }
 
-/** The status list for a sport, in lifecycle order. */
-export function statusesFor(sportType: unknown): readonly EventStatus[] {
+/**
+ * The status list for an event, in lifecycle order.
+ *
+ * `eventType` outranks the sport: a challenge match is football by sport but
+ * runs the no-`preparation` table — its teams are the two groups, so there
+ * is no build stage to pass through.
+ */
+export function statusesFor(
+  sportType: unknown,
+  eventType?: unknown,
+): readonly EventStatus[] {
+  if (isChallenge(eventType)) return CHALLENGE_EVENT_STATUSES;
   return isFootball(sportType)
     ? FOOTBALL_EVENT_STATUSES
     : NON_FOOTBALL_EVENT_STATUSES;
@@ -148,10 +186,32 @@ const NON_FOOTBALL_TRANSITIONS: Readonly<
   cancelled: [],
 };
 
-/** The transition table for a sport. */
+/**
+ * Challenge table — the football edges with `preparation` cut out, its own
+ * copy for the same reason `CHALLENGE_EVENT_STATUSES` is one.
+ *
+ * `preparation` keeps EXIT rows even though a challenge event can never
+ * enter it: the rows cost nothing and guarantee no stored status is ever
+ * stranded, whatever history a document carries.
+ */
+const CHALLENGE_TRANSITIONS: Readonly<
+  Record<EventStatus, readonly EventStatus[]>
+> = {
+  join: ['ready_to_play', 'cancelled'],
+  preparation: ['ready_to_play', 'join', 'cancelled'],
+  ready_to_play: ['playing', 'join', 'cancelled'],
+  playing: ['after_match', 'cancelled'],
+  after_match: ['done'],
+  done: [],
+  cancelled: [],
+};
+
+/** The transition table for an event. `eventType` outranks the sport. */
 function transitionsFor(
   sportType: unknown,
+  eventType?: unknown,
 ): Readonly<Record<EventStatus, readonly EventStatus[]>> {
+  if (isChallenge(eventType)) return CHALLENGE_TRANSITIONS;
   return isFootball(sportType) ? FOOTBALL_TRANSITIONS : NON_FOOTBALL_TRANSITIONS;
 }
 
@@ -200,17 +260,19 @@ export function canTransition(
   from: unknown,
   to: unknown,
   sportType?: unknown,
+  eventType?: unknown,
 ): boolean {
   if (!isEventStatus(from) || !isEventStatus(to)) return false;
-  return transitionsFor(sportType)[from].includes(to);
+  return transitionsFor(sportType, eventType)[from].includes(to);
 }
 
 /** The states reachable from `from`; empty for terminal or unknown states. */
 export function allowedTransitions(
   from: unknown,
   sportType?: unknown,
+  eventType?: unknown,
 ): readonly EventStatus[] {
-  return isEventStatus(from) ? transitionsFor(sportType)[from] : [];
+  return isEventStatus(from) ? transitionsFor(sportType, eventType)[from] : [];
 }
 
 // --- Action gates (spec §4.1) -------------------------------------------
@@ -239,12 +301,24 @@ export function canLeave(status: unknown): boolean {
  * build role — it is the only state between registration and kick-off, and
  * gating on a state the sport cannot reach would make teams impossible.
  */
-export function canShuffle(status: unknown, sportType?: unknown): boolean {
-  return status === buildStageFor(sportType);
+export function canShuffle(
+  status: unknown,
+  sportType?: unknown,
+  eventType?: unknown,
+): boolean {
+  return status === buildStageFor(sportType, eventType);
 }
 
-/** The state a sport builds teams in — for gate checks and error messages. */
-export function buildStageFor(sportType: unknown): EventStatus {
+/**
+ * The state an event builds teams in — for gate checks and error messages.
+ * A CHALLENGE event has no `preparation` whatever its sport, so its two
+ * side-teams are generated in `ready_to_play`, like a non-football sport.
+ */
+export function buildStageFor(
+  sportType: unknown,
+  eventType?: unknown,
+): EventStatus {
+  if (isChallenge(eventType)) return 'ready_to_play';
   return isFootball(sportType) ? 'preparation' : 'ready_to_play';
 }
 
