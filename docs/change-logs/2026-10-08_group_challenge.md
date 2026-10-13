@@ -306,6 +306,54 @@ assigned to this event".
   `/events/search` (new `opponentGroupId` visibility arm). It is never
   public; roster rows carry each player's side as `groupId`.
 
+## Updates (2026-10-14)
+
+### Assignment is now an INVITATION
+
+`POST /events/:id/players/assign` no longer puts players straight on the
+roster: each assignee gets an `invited` row and a notification, and must
+answer:
+
+**`POST /events/:id/invitation/respond`** (the invited player)
+
+```json
+{ "action": "accept" }
+{ "action": "reject", "reason": "Injured this week" }   // reason optional
+```
+
+- Accept → roster (`status: "joined"`, counted, dealt into teams) and the
+  event appears in their lists.
+- Reject → row cancelled, reason kept, the side's admins notified so they
+  can refill the slot. A declined player can be re-invited.
+- The assign response now reads `{ message, invited: [...], skipped: [...] }`
+  (was `assigned`). Unassign also withdraws a still-pending invitation.
+- Errors: `400` normal event · `404` "You have no pending invitation".
+
+### Visibility tightened
+
+A challenge event is now visible in `GET /events` / `/events/search` ONLY
+to each side's **owner/admins** and to players who **accepted** their
+invitation. Plain group members no longer see it; an invited player sees it
+once they accept.
+
+### `proposedStatus` is admin-only on detail
+
+`GET /events/:id` includes `proposedStatus` / `proposalRejectReason` only
+when the caller is an owner/admin of either group (or the creator). Everyone
+else gets the event without those keys — the negotiation is the admins'
+business.
+
+### Resubmit accepts a date fix
+
+`POST /events/:id/proposal/resubmit` takes an optional body:
+
+```json
+{ "date": "2026-10-27T13:00:00.000Z" }
+```
+
+"date change need" is the archetypal rejection, so the fix rides the
+resubmission; any other edit still goes through `PATCH /events/:id` first.
+
 ## Permissions model
 
 Organizer rights are DERIVED, not stamped: owner/admin of either group

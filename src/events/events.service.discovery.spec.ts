@@ -203,8 +203,10 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
       expect(filter().$and[1].$or).toEqual([
         { isPublic: true },
         { _id: { $in: [JOINED] } },
+        { groupId: { $in: [GROUP] }, type: { $ne: 'challenge' } },
+        // Admin-only arms: challenge events are findable by each side's
+        // owner/admins (the mock reports the same group for both queries).
         { groupId: { $in: [GROUP] } },
-        // Challenge events are findable by the opposing side's members too.
         { opponentGroupId: { $in: [GROUP] } },
       ]);
     });
@@ -553,8 +555,12 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
 
       await service.list(USER);
 
+      // The member arm excludes challenge events (2026-10-14); the admin arms
+      // appear too because this spec's member mock answers the admin-role
+      // query with the same groups.
       expect(filter().$or).toEqual([
         { isPublic: true },
+        { groupId: { $in: [MEMBER_GROUP] }, type: { $ne: 'challenge' } },
         { groupId: { $in: [MEMBER_GROUP] } },
         { opponentGroupId: { $in: [MEMBER_GROUP] } },
       ]);
@@ -567,11 +573,13 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
 
       await service.list(USER);
 
-      // The fourth arm is the group-challenge one: a member of the OPPOSING
-      // group sees the match too, even though it belongs to the other side.
+      // Member arm minus challenge events, then the admin-only arms that
+      // carry challenge events for BOTH sides (this spec's mock reports the
+      // same groups for the member and admin queries).
       expect(filter().$or).toEqual([
         { isPublic: true },
         { _id: { $in: [JOINED_A] } },
+        { groupId: { $in: [MEMBER_GROUP] }, type: { $ne: 'challenge' } },
         { groupId: { $in: [MEMBER_GROUP] } },
         { opponentGroupId: { $in: [MEMBER_GROUP] } },
       ]);

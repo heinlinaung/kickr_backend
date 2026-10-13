@@ -313,32 +313,136 @@ describe('EventsService — group challenge', () => {
       );
     });
 
-    it('creates side-tagged roster rows, bumps the count, notifies', async () => {
+    it('creates side-tagged INVITED rows — nobody counts until they accept', async () => {
       const res = await assign(ADMIN_A, [PLAYER_A]);
 
       const [row] = playerModel.create.mock.calls[0];
       expect(row.userId.toString()).toBe(PLAYER_A);
       expect(row.groupId.toString()).toBe(GROUP_A);
-      expect(row.status).toBe('joined');
+      // Assignment is an invitation, not a roster entry.
+      expect(row.status).toBe('invited');
 
+      expect(eventModel.updateOne).not.toHaveBeenCalled();
+      expect(notifications.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: PLAYER_A,
+          title: 'Challenge match invitation',
+        }),
+      );
+      expect(res).toMatchObject({ invited: [PLAYER_A], skipped: [] });
+    });
+
+    it('an already-invited or joined player is skipped, not an error', async () => {
+      playerModel.findOne.mockResolvedValue({ status: 'invited' });
+
+      const res = await assign(ADMIN_A, [PLAYER_A]);
+
+      expect(res).toMatchObject({ invited: [], skipped: [PLAYER_A] });
+      expect(playerModel.create).not.toHaveBeenCalled();
+      expect(eventModel.updateOne).not.toHaveBeenCalled();
+    });
+
+    it('a declined player can be invited again, reason cleared', async () => {
+      const row: any = {
+        status: 'cancelled',
+        inviteRejectReason: 'was injured',
+        save: jest.fn().mockResolvedValue(undefined),
+      };
+      playerModel.findOne.mockResolvedValue(row);
+
+      await assign(ADMIN_A, [PLAYER_A]);
+
+      expect(row.status).toBe('invited');
+      expect(row.inviteRejectReason).toBeNull();
+      expect(row.save).toHaveBeenCalled();
+    });
+  });
+
+  describe('respondInvitation — the player answers', () => {
+    const invitedRow = () => ({
+      status: 'invited',
+      groupId: new Types.ObjectId(GROUP_A),
+      inviteRejectReason: null,
+      joinedAt: null,
+      save: jest.fn().mockResolvedValue(undefined),
+    });
+
+    it('404s without a pending invitation', async () => {
+      playerModel.findOne.mockResolvedValue(null);
+      await expect(
+        service.respondInvitation(EVENT_ID, PLAYER_A, { action: 'accept' } as any),
+      ).rejects.toThrow(/no pending invitation/);
+    });
+
+    it('accept joins the roster and bumps the count', async () => {
+      const row = invitedRow();
+      playerModel.findOne.mockResolvedValue(row);
+
+      await service.respondInvitation(EVENT_ID, PLAYER_A, {
+        action: 'accept',
+      } as any);
+
+      expect(row.status).toBe('joined');
+      expect(row.joinedAt).toBeInstanceOf(Date);
       expect(eventModel.updateOne).toHaveBeenCalledWith(
         { _id: expect.anything() },
         { $inc: { joinedCount: 1 } },
       );
-      expect(notifications.create).toHaveBeenCalledWith(
-        expect.objectContaining({ userId: PLAYER_A, title: 'You are on the squad' }),
-      );
-      expect(res).toMatchObject({ assigned: [PLAYER_A], skipped: [] });
     });
 
-    it('an already-assigned player is skipped, not an error', async () => {
-      playerModel.findOne.mockResolvedValue({ status: 'joined' });
+    it("decline keeps the reason and tells the side's admins", async () => {
+      const row = invitedRow();
+      playerModel.findOne.mockResolvedValue(row);
 
-      const res = await assign(ADMIN_A, [PLAYER_A]);
+      await service.respondInvitation(EVENT_ID, PLAYER_A, {
+        action: 'reject',
+        reason: 'Injured this week',
+      } as any);
 
-      expect(res).toMatchObject({ assigned: [], skipped: [PLAYER_A] });
-      expect(playerModel.create).not.toHaveBeenCalled();
+      expect(row.status).toBe('cancelled');
+      expect(row.inviteRejectReason).toBe('Injured this week');
       expect(eventModel.updateOne).not.toHaveBeenCalled();
+      expect(notifications.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: 'Invitation declined',
+          body: expect.stringContaining('Injured this week'),
+        }),
+      );
+    });
+
+    it('rejects on a normal event — no invitations there', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc({ type: 'normal' }));
+      await expect(
+        service.respondInvitation(EVENT_ID, PLAYER_A, { action: 'accept' } as any),
+      ).rejects.toThrow(/Only challenge events/);
+    });
+  });
+
+  describe('resubmitProposal — with a date fix', () => {
+    it('updates the date in the same call when provided', async () => {
+      const doc = eventDoc({
+        proposedStatus: 'rejected',
+        proposalRejectReason: 'date change need',
+        date: new Date('2026-10-20T13:00:00Z'),
+      });
+      eventModel.findById.mockResolvedValue(doc);
+
+      await service.resubmitProposal(EVENT_ID, ADMIN_A, {
+        date: '2026-10-27T13:00:00.000Z',
+      } as any);
+
+      expect(doc.date).toEqual(new Date('2026-10-27T13:00:00.000Z'));
+      expect(doc.proposedStatus).toBe('proposed');
+    });
+
+    it('leaves the date alone when the body is empty', async () => {
+      const original = new Date('2026-10-20T13:00:00Z');
+      const doc = eventDoc({ proposedStatus: 'rejected', date: original });
+      eventModel.findById.mockResolvedValue(doc);
+
+      await service.resubmitProposal(EVENT_ID, ADMIN_A);
+
+      expect(doc.date).toBe(original);
     });
   });
 

@@ -1556,14 +1556,14 @@ describe('GroupsService', () => {
     });
   });
 
-  // The default plan allows owning at most 2 groups (src/plans/plans.ts).
+  // The default plan allows owning at most 5 groups (src/plans/plans.ts).
   describe('the groups-owned plan cap', () => {
-    it('rejects a third owned group, before writing anything', async () => {
-      groupModel.countDocuments.mockResolvedValue(2);
+    it('rejects a sixth owned group, before writing anything', async () => {
+      groupModel.countDocuments.mockResolvedValue(5);
 
       await expect(
-        service.create(USER_ID, { name: 'Third FC' }),
-      ).rejects.toThrow(/at most 2 groups/);
+        service.create(USER_ID, { name: 'Sixth FC' }),
+      ).rejects.toThrow(/at most 5 groups/);
       expect(groupModel.create).not.toHaveBeenCalled();
       expect(memberModel.create).not.toHaveBeenCalled();
     });

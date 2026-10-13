@@ -178,13 +178,13 @@ describe('EventsService — location handling on create', () => {
     });
   });
 
-  // The default plan allows 3 events per calendar week (src/plans/plans.ts).
+  // The default plan allows 10 events per calendar week (src/plans/plans.ts).
   describe('the events-per-week plan cap', () => {
-    it('rejects a 4th event scheduled in the same week, before writing', async () => {
-      eventModel.countDocuments.mockResolvedValue(3);
+    it('rejects an 11th event scheduled in the same week, before writing', async () => {
+      eventModel.countDocuments.mockResolvedValue(10);
 
       await expect(service.create(USER_ID, baseDto)).rejects.toThrow(
-        /at most 3 events per week/,
+        /at most 10 events per week/,
       );
       expect(eventModel.create).not.toHaveBeenCalled();
     });
@@ -447,6 +447,68 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
       const res: any = await service.findById(EVENT_ID);
 
       expect(res.isCashier).toBe(false);
+    });
+  });
+
+  describe('findById → proposedStatus is admin-only on challenge events', () => {
+    const OPPONENT_GROUP = '507f1f77bcf86cd79943909a';
+    const challengeEvent = () =>
+      eventModel.findById.mockReturnValue(
+        q({
+          _id: EVENT_ID,
+          type: 'challenge',
+          groupId: GROUP_ID,
+          opponentGroupId: OPPONENT_GROUP,
+          createdBy: OPPONENT_GROUP, // not the caller
+          proposedStatus: 'proposed',
+          proposalRejectReason: 'color conflict',
+        }),
+      );
+
+    beforeEach(() => {
+      groupModel.findById.mockReturnValue(q({ rules: '' }));
+    });
+
+    it("includes the proposal fields for a side's owner/admin", async () => {
+      challengeEvent();
+      // The userRole lookup is a select/lean chain; the admin-role proposal
+      // check is a plain awaited findOne — the filter's `role` key tells
+      // them apart.
+      memberModel.findOne = jest.fn().mockImplementation((filter: any) =>
+        filter.role
+          ? Promise.resolve({ role: 'admin' })
+          : q({ role: 'admin', status: 'approved' }),
+      );
+
+      const res: any = await service.findById(EVENT_ID, CALLER);
+
+      expect(res.proposedStatus).toBe('proposed');
+      expect(res.proposalRejectReason).toBe('color conflict');
+    });
+
+    it('strips the proposal fields for a plain member or player', async () => {
+      challengeEvent();
+      // Member row exists (role 'member') but the admin-role query misses.
+      memberModel.findOne = jest.fn().mockImplementation((filter: any) =>
+        filter.role
+          ? Promise.resolve(null)
+          : q({ role: 'member', status: 'approved' }),
+      );
+
+      const res: any = await service.findById(EVENT_ID, CALLER);
+
+      expect(res).not.toHaveProperty('proposedStatus');
+      expect(res).not.toHaveProperty('proposalRejectReason');
+    });
+
+    it('normal events keep their (null) proposal fields untouched', async () => {
+      eventModel.findById.mockReturnValue(
+        q({ _id: EVENT_ID, groupId: null, type: 'normal', proposedStatus: null }),
+      );
+
+      const res: any = await service.findById(EVENT_ID, CALLER);
+
+      expect(res).toHaveProperty('proposedStatus', null);
     });
   });
 

@@ -84,7 +84,13 @@ export class EventPlayer {
   @Prop()
   position: string;
 
-  @Prop({ default: 'joined', enum: ['joined', 'cancelled'] })
+  /**
+   * `invited` exists only on CHALLENGE events: an admin's assignment is an
+   * INVITATION the player must answer, so the row starts `invited` and
+   * becomes `joined` on accept or `cancelled` on reject. An invited row is
+   * not on the roster — it counts toward nothing and plays in nothing.
+   */
+  @Prop({ default: 'joined', enum: ['joined', 'cancelled', 'invited'] })
   status: string;
 
   @Prop()
@@ -97,6 +103,10 @@ export class EventPlayer {
    */
   @Prop({ type: Types.ObjectId, ref: 'Group', default: null })
   groupId: Types.ObjectId | null;
+
+  /** Why a challenge invitation was declined — optional, shown to admins. */
+  @Prop({ type: String, default: null })
+  inviteRejectReason: string | null;
 }
 
 export const EventPlayerSchema = SchemaFactory.createForClass(EventPlayer);
