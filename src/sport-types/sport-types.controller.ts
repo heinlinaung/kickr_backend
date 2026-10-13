@@ -7,6 +7,8 @@ import {
   Param,
   Patch,
   Post,
+  Put,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -23,15 +25,18 @@ import { CreateSportTypeDto } from './dto/create-sport-type.dto';
 import { UpdateSportTypeDto } from './dto/update-sport-type.dto';
 import { AddSubTypeDto } from './dto/add-sub-type.dto';
 import { RenameSubTypeDto } from './dto/rename-sub-type.dto';
+import { ReorderSubTypesDto } from './dto/reorder-sub-types.dto';
+import { RemoveSportTypeQueryDto } from './dto/remove-sport-type.dto';
 
 /** The `:value` path param, shared by every per-sport route. */
 const ValueParam = ApiParam({
   name: 'value',
-  description: 'The sport type value, e.g. `football` (case-insensitive)',
+  description:
+    'The sport type ID (`value`), e.g. `football` (case-insensitive)',
   example: 'football',
 });
 
-const ROW = '`{ value, subTypes, sortOrder, matchProvided }`';
+const ROW = '`{ value, name, subTypes, sortOrder, matchProvided }`';
 
 /**
  * Every route — reads included — requires the caller's `role` to be
@@ -46,6 +51,22 @@ const ROW = '`{ value, subTypes, sortOrder, matchProvided }`';
 @Controller('sport-types')
 export class SportTypesController {
   constructor(private readonly service: SportTypesService) {}
+
+  @Get()
+  @ApiResponse({
+    status: 200,
+    description: `Array of ${ROW}, in display order`,
+  })
+  @ApiOperation({
+    summary: 'List sport types (superadmin)',
+    description:
+      'The values `sportType` accepts on group and event create/update, in ' +
+      'display order, each with its `subTypes`. The apps read the same list ' +
+      'from GET /configuration.',
+  })
+  findAll() {
+    return this.service.findAll();
+  }
 
   @Get(':value')
   @ValueParam
@@ -66,12 +87,13 @@ export class SportTypesController {
   })
   @ApiResponse({
     status: 409,
-    description: 'A sport with this value already exists',
+    description: 'A sport with this value or name already exists',
   })
   @ApiOperation({
     summary: 'Create a sport type (superadmin)',
     description:
-      '`value` is lowercased and must be unique (409 otherwise). Omit ' +
+      '`value` is the ID: lowercased, unique (409 otherwise) and never ' +
+      'changes. `name` is the display label, defaulting to `value`. Omit ' +
       '`sortOrder` to append to the end of the list.',
   })
   create(@Body() dto: CreateSportTypeDto) {
@@ -83,19 +105,20 @@ export class SportTypesController {
   @ApiResponse({ status: 200, description: `The updated sport as ${ROW}` })
   @ApiResponse({
     status: 400,
-    description: 'A subType is not a lowercase slug, or `value` was sent',
+    description: '`value` or `subTypes` was sent',
   })
   @ApiResponse({ status: 404, description: 'Sport type not found' })
   @ApiResponse({
     status: 409,
-    description: 'A dropped subType is still used by an event or template',
+    description: 'Another sport already has this `name`',
   })
   @ApiOperation({
     summary: 'Update a sport type (superadmin)',
     description:
-      'Changes `sortOrder` and/or `matchProvided`, and/or replaces the whole `subTypes` list. ' +
-      '`value` cannot be renamed. Dropping a subType still used by an event ' +
-      'or event template is refused with 409.',
+      'Changes `name`, `sortOrder` and/or `matchProvided`. `value` is the ' +
+      'ID stored on groups, events and users and never changes — renaming ' +
+      'only changes the display `name`. `subTypes` are managed through the ' +
+      '`/sub-types` endpoints.',
   })
   update(@Param('value') value: string, @Body() dto: UpdateSportTypeDto) {
     return this.service.update(value, dto);
@@ -103,21 +126,35 @@ export class SportTypesController {
 
   @Delete(':value')
   @ValueParam
-  @ApiResponse({ status: 200, description: '`{ deleted: true, value }`' })
+  @ApiResponse({
+    status: 200,
+    description: '`{ deleted: true, value, replacedWith? }`',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'replaceWith is unknown or the sport being deleted',
+  })
   @ApiResponse({ status: 404, description: 'Sport type not found' })
   @ApiResponse({
     status: 409,
     description:
-      'Still stored on groups, events, templates or user profiles — the message gives the counts',
+      'No replaceWith, and still stored on groups, events, templates or user profiles — the message gives the counts',
   })
   @ApiOperation({
     summary: 'Delete a sport type (superadmin)',
     description:
-      'Refused with 409 while any group, event, event template or user ' +
-      'profile still stores this value.',
+      'Without `replaceWith`, refused with 409 while any group, event, ' +
+      'event template or user profile still stores this value. With ' +
+      '`?replaceWith=football`, all of them are moved to football first. ' +
+      'Moved events and templates take this value as their subType when the ' +
+      "replacement lists it (futsal → football + subType 'futsal'); " +
+      'otherwise a subType the replacement does not list is cleared.',
   })
-  remove(@Param('value') value: string) {
-    return this.service.remove(value);
+  remove(
+    @Param('value') value: string,
+    @Query() query: RemoveSportTypeQueryDto,
+  ) {
+    return this.service.remove(value, query.replaceWith);
   }
 
   @Post(':value/sub-types')
@@ -139,6 +176,30 @@ export class SportTypesController {
   })
   addSubType(@Param('value') value: string, @Body() dto: AddSubTypeDto) {
     return this.service.addSubType(value, dto.subType);
+  }
+
+  @Put(':value/sub-types/order')
+  @ValueParam
+  @ApiResponse({
+    status: 200,
+    description: `The sport, with subTypes in the new order, as ${ROW}`,
+  })
+  @ApiResponse({
+    status: 400,
+    description: "subTypes is not exactly the sport's current subTypes",
+  })
+  @ApiResponse({ status: 404, description: 'Sport type not found' })
+  @ApiOperation({
+    summary: 'Reorder the subTypes of a sport type (superadmin)',
+    description:
+      'Send every current subType exactly once, in the new display order. ' +
+      'Use the add, rename and remove routes to change which subTypes exist.',
+  })
+  reorderSubTypes(
+    @Param('value') value: string,
+    @Body() dto: ReorderSubTypesDto,
+  ) {
+    return this.service.reorderSubTypes(value, dto.subTypes);
   }
 
   @Patch(':value/sub-types/:subType')

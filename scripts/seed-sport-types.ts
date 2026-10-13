@@ -23,8 +23,8 @@
  * Matches on `value` and upserts, so re-running:
  *   - inserts anything missing,
  *   - refreshes `subTypes`/`sortOrder` on rows that exist,
- *   - backfills `matchProvided: true` where a row has no value yet, but never
- *     overwrites one a superadmin has set,
+ *   - backfills `matchProvided: true` and `name` where a row has no value
+ *     yet, but never overwrites one a superadmin has set,
  *   - never duplicates a sport (`value` is uniquely indexed).
  *
  * Sports in the collection but NOT in this list are reported and left alone —
@@ -48,14 +48,23 @@ loadEnv();
 
 const APPLY = process.argv.includes('--apply');
 
-const SPORT_TYPES: { value: string; subTypes: string[]; sortOrder: number }[] =
-  [
-    { value: 'football', subTypes: ['futsal', 'stadium'], sortOrder: 1 },
-    { value: 'futsal', subTypes: [], sortOrder: 2 },
-    { value: 'badminton', subTypes: [], sortOrder: 3 },
-    { value: 'padel', subTypes: [], sortOrder: 4 },
-    { value: 'basketball', subTypes: [], sortOrder: 5 },
-  ];
+const SPORT_TYPES: {
+  value: string;
+  name: string;
+  subTypes: string[];
+  sortOrder: number;
+}[] = [
+  {
+    value: 'football',
+    name: 'Football',
+    subTypes: ['futsal', 'stadium'],
+    sortOrder: 1,
+  },
+  { value: 'futsal', name: 'Futsal', subTypes: [], sortOrder: 2 },
+  { value: 'badminton', name: 'Badminton', subTypes: [], sortOrder: 3 },
+  { value: 'padel', name: 'Padel', subTypes: [], sortOrder: 4 },
+  { value: 'basketball', name: 'Basketball', subTypes: [], sortOrder: 5 },
+];
 
 function sameStringArray(a: unknown, b: string[]): boolean {
   return (
@@ -113,16 +122,19 @@ async function main() {
     }
 
     const backfillMatch = typeof current.matchProvided !== 'boolean';
+    const backfillName = typeof current.name !== 'string';
     if (
       current.sortOrder !== sport.sortOrder ||
       !sameStringArray(current.subTypes, sport.subTypes) ||
-      backfillMatch
+      backfillMatch ||
+      backfillName
     ) {
       console.log(
         `~ update  ${sport.value}: subTypes [${String(current.subTypes)}] -> ` +
           `[${sport.subTypes.join(', ')}], sortOrder ` +
           `${String(current.sortOrder)} -> ${sport.sortOrder}` +
-          (backfillMatch ? ', matchProvided -> true' : ''),
+          (backfillMatch ? ', matchProvided -> true' : '') +
+          (backfillName ? `, name -> ${sport.name}` : ''),
       );
       if (APPLY) {
         await col.updateOne(
@@ -132,6 +144,7 @@ async function main() {
               subTypes: sport.subTypes,
               sortOrder: sport.sortOrder,
               ...(backfillMatch && { matchProvided: true }),
+              ...(backfillName && { name: sport.name }),
               updatedAt: new Date(),
             },
           },

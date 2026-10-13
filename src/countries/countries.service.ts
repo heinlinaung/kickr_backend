@@ -99,12 +99,17 @@ export class CountriesService {
   }
 
   /**
-   * Updates `name` and/or `sortOrder`, and/or replaces `regions`. Replacing
-   * the list may drop a region — refused while a group or user still has it
-   * as their city.
+   * Updates `name` and/or `sortOrder`, and/or replaces `regions`. A body `id`
+   * must match — ids never change. Replacing the list may drop a region —
+   * refused while a group or user still has it as their city.
    */
   async update(id: string, dto: UpdateCountryDto) {
     const country = await this.findOne(id);
+    if (dto.id !== undefined && dto.id !== country.id) {
+      throw new BadRequestException(
+        `Body id '${dto.id}' does not match '${country.id}' — ids cannot change`,
+      );
+    }
 
     const $set: Partial<Country> = {};
     if (dto.name !== undefined) $set.name = dto.name;

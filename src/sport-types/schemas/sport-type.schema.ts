@@ -20,13 +20,25 @@ export type SportTypeDocument = HydratedDocument<SportType>;
 @Schema({ timestamps: true, collection: 'sporttypes' })
 export class SportType {
   /**
-   * The value groups/events store, e.g. 'football'. Unique so a re-run of the
-   * seeder cannot create a second 'football' — the uniqueness is what makes
-   * the seed idempotent. Lowercased to match how the values have always been
-   * stored on groups and events.
+   * The sport's ID — the value groups/events/users store, e.g. 'football'.
+   * Unique so a re-run of the seeder cannot create a second 'football' — the
+   * uniqueness is what makes the seed idempotent. Lowercased to match how the
+   * values have always been stored on groups and events.
+   *
+   * Immutable once created: renaming the sport changes `name` only, so no
+   * document holding this value ever has to move.
    */
   @Prop({ required: true, unique: true, trim: true, lowercase: true })
   value: string;
+
+  /**
+   * Display label, e.g. 'Football'. Free to change — nothing stores it.
+   * Unique case-insensitively (checked in the service, not by an index, so
+   * rows from before this field existed don't collide on a missing name).
+   * Rows without one read as their `value`.
+   */
+  @Prop({ trim: true })
+  name: string;
 
   /**
    * The formats this sport can be played in, e.g. football's

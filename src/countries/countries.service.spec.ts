@@ -140,6 +140,41 @@ describe('CountriesService', () => {
   });
 
   describe('update', () => {
+    it('replaces the regions list', async () => {
+      await service.update('myanmar', {
+        id: 'myanmar',
+        name: 'Myanmar',
+        sortOrder: 1,
+        regions: [
+          { id: 'yangon', name: 'Yangon' },
+          { id: 'mandalay', name: 'Mandalay' },
+          { name: 'Bago' },
+        ],
+      });
+
+      expect(countryModel.updateOne).toHaveBeenCalledWith(
+        { id: 'myanmar' },
+        {
+          $set: {
+            name: 'Myanmar',
+            sortOrder: 1,
+            regions: [
+              { id: 'yangon', name: 'Yangon' },
+              { id: 'mandalay', name: 'Mandalay' },
+              { id: 'bago', name: 'Bago' },
+            ],
+          },
+        },
+      );
+    });
+
+    it('400s when the body id differs from the path id', async () => {
+      await expect(
+        service.update('myanmar', { id: 'burma' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(countryModel.updateOne).not.toHaveBeenCalled();
+    });
+
     it('refuses to drop a region still used as a city', async () => {
       groupModel.countDocuments.mockResolvedValueOnce(2);
 

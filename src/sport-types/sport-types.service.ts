@@ -18,7 +18,7 @@ import { User, UserDocument } from '../users/schemas/user.schema';
 import { CreateSportTypeDto } from './dto/create-sport-type.dto';
 import { UpdateSportTypeDto } from './dto/update-sport-type.dto';
 
-const PUBLIC_FIELDS = 'value subTypes sortOrder matchProvided';
+const PUBLIC_FIELDS = 'value name subTypes sortOrder matchProvided';
 
 @Injectable()
 export class SportTypesService {
@@ -103,8 +103,8 @@ export class SportTypesService {
   //
   // Guarded by SuperadminGuard in the controller: this is reference data that
   // every group/event/user write validates against, not something end users
-  // own. `value` is never changed after create — groups, events and users
-  // store the string itself, so a rename would strand them.
+  // own. Groups, events and users store `value` itself — the sport's ID — so
+  // it never changes; a rename touches the display `name` only.
 
   /** One sport by value for the API: 404 instead of null. */
   async findOne(value: string) {
@@ -120,6 +120,8 @@ export class SportTypesService {
     if (await this.sportTypeModel.exists({ value: dto.value })) {
       throw new ConflictException(`Sport type '${dto.value}' already exists`);
     }
+    const name = dto.name ?? dto.value;
+    await this.assertNameFree(name);
 
     // Omitted sortOrder appends: one past the current last row.
     let sortOrder = dto.sortOrder;
@@ -134,6 +136,7 @@ export class SportTypesService {
 
     const created = await this.sportTypeModel.create({
       value: dto.value,
+      name,
       subTypes: unique(dto.subTypes ?? []),
       sortOrder,
       matchProvided: dto.matchProvided ?? true,
@@ -142,8 +145,9 @@ export class SportTypesService {
   }
 
   /**
-   * Updates `sortOrder` and/or `matchProvided`, and/or replaces `subTypes`. Replacing the list may
-   * drop a subType — refused while any event or template still carries it.
+   * Updates `name`, `sortOrder` and/or `matchProvided`. `value` is the ID
+   * other documents store and never changes, so a rename is a single write.
+   * SubTypes are changed through the dedicated sub-type methods below.
    */
   async update(value: string, dto: UpdateSportTypeDto) {
     const sport = await this.findOne(value);
@@ -153,13 +157,9 @@ export class SportTypesService {
     if (dto.matchProvided !== undefined) {
       $set.matchProvided = dto.matchProvided;
     }
-    if (dto.subTypes !== undefined) {
-      const next = unique(dto.subTypes);
-      const dropped = sport.subTypes.filter((st) => !next.includes(st));
-      for (const subType of dropped) {
-        await this.assertSubTypeUnused(sport.value, subType);
-      }
-      $set.subTypes = next;
+    if (dto.name !== undefined && dto.name !== sport.name) {
+      await this.assertNameFree(dto.name, sport.value);
+      $set.name = dto.name;
     }
 
     if (Object.keys($set).length) {
@@ -168,12 +168,110 @@ export class SportTypesService {
     return this.findOne(sport.value);
   }
 
-  /** Deletes a sport — refused while anything still stores its value. */
-  async remove(value: string) {
+  /**
+   * Deletes a sport. Without `replaceWith`, refused while anything still
+   * stores its value. With it, every holder is moved to that sport first,
+   * e.g. futsal → football.
+   */
+  async remove(value: string, replaceWith?: string) {
     const sport = await this.findOne(value);
-    await this.assertSportUnused(sport.value);
+    if (replaceWith === undefined) {
+      await this.assertSportUnused(sport.value);
+    } else {
+      if (replaceWith === sport.value) {
+        throw new BadRequestException(
+          `replaceWith must differ from the sport type being deleted`,
+        );
+      }
+      const target = await this.sportTypeModel
+        .findOne({ value: replaceWith })
+        .select(PUBLIC_FIELDS)
+        .lean();
+      if (!target) {
+        throw new BadRequestException(
+          `replaceWith sport type '${replaceWith}' not found`,
+        );
+      }
+      await this.reassignSport(sport.value, target);
+    }
     await this.sportTypeModel.deleteOne({ value: sport.value });
-    return { deleted: true, value: sport.value };
+    return replaceWith === undefined
+      ? { deleted: true, value: sport.value }
+      : { deleted: true, value: sport.value, replacedWith: replaceWith };
+  }
+
+  /**
+   * Moves every group, event, template and user profile from sport `from` to
+   * `to`. Each step is idempotent and the sport row is deleted only after,
+   * so a failed request can simply be retried.
+   *
+   * An event's subType must be valid for its new sport: when `to` lists
+   * `from` as a format (football lists 'futsal'), moved events and templates
+   * take that format; otherwise a subType `to` does not list is cleared.
+   */
+  private async reassignSport(
+    from: string,
+    to: { value: string; subTypes: string[] },
+  ) {
+    const scoped = { sportType: from };
+    const eventsAndTemplates = [this.eventModel, this.templateModel] as Model<
+      EventDocument | EventTemplateDocument
+    >[];
+    if (to.subTypes.includes(from)) {
+      await Promise.all(
+        eventsAndTemplates.map((m) =>
+          m.updateMany(scoped, {
+            $set: { sportType: to.value, subType: from },
+          }),
+        ),
+      );
+    } else {
+      await Promise.all(
+        eventsAndTemplates.map((m) =>
+          m.updateMany(
+            { ...scoped, subType: { $nin: [...to.subTypes, null] } },
+            { $set: { subType: null } },
+          ),
+        ),
+      );
+      await Promise.all(
+        eventsAndTemplates.map((m) =>
+          m.updateMany(scoped, { $set: { sportType: to.value } }),
+        ),
+      );
+    }
+
+    await this.groupModel.updateMany(scoped, {
+      $set: { sportType: to.value },
+    });
+
+    // User arrays: drop `from` where `to` is already listed, else swap it in
+    // place so the user's ordering is kept.
+    for (const field of ['sports', 'preferredSport'] as const) {
+      await this.userModel.updateMany(
+        { [field]: { $all: [from, to.value] } },
+        { $pull: { [field]: from } },
+      );
+      await this.userModel.updateMany(
+        { [field]: from },
+        { $set: { [`${field}.$`]: to.value } },
+      );
+    }
+  }
+
+  /**
+   * 409 when another sport already has this display name, ignoring case —
+   * 'Football' and 'football' would be indistinguishable in a picker.
+   * `except` is the sport being renamed, so changing only its case is allowed.
+   */
+  private async assertNameFree(name: string, except?: string) {
+    const taken = await this.sportTypeModel.exists({
+      name: { $regex: `^${escapeRegex(name)}$`, $options: 'i' },
+      ...(except && { value: { $ne: except } }),
+    });
+    if (taken) {
+      throw new ConflictException(`Sport type name '${name}' already exists`);
+    }
   }
 
   /** Adds one format to a sport, e.g. 'beach' to football. A duplicate is a 409. */
@@ -225,6 +323,33 @@ export class SportTypesService {
     await this.sportTypeModel.updateOne(
       { value: sport.value, subTypes: current },
       { $set: { 'subTypes.$': next } },
+    );
+    return this.findOne(sport.value);
+  }
+
+  /**
+   * Re-sorts a sport's formats, e.g. football's ['futsal', 'stadium'] →
+   * ['stadium', 'futsal']. The list must hold exactly the current subTypes —
+   * adding, dropping and renaming have their own routes with their own
+   * in-use checks, so a reorder never touches events or templates.
+   */
+  async reorderSubTypes(value: string, order: string[]) {
+    const sport = await this.findOne(value);
+    const missing = sport.subTypes.filter((st) => !order.includes(st));
+    const unknown = order.filter((st) => !sport.subTypes.includes(st));
+    if (
+      missing.length ||
+      unknown.length ||
+      order.length !== sport.subTypes.length
+    ) {
+      throw new BadRequestException(
+        `subTypes must list each of '${sport.value}'s current subTypes ` +
+          `exactly once: ${sport.subTypes.join(', ')}`,
+      );
+    }
+    await this.sportTypeModel.updateOne(
+      { value: sport.value },
+      { $set: { subTypes: order } },
     );
     return this.findOne(sport.value);
   }
@@ -284,11 +409,22 @@ export class SportTypesService {
 }
 
 /**
- * `.lean()` skips schema defaults, so a row stored before `matchProvided`
- * existed would read as undefined. Every such row is a match sport.
+ * `.lean()` skips schema defaults, so a row stored before `matchProvided` or
+ * `name` existed would read them as undefined. Every such row is a match
+ * sport, and is labelled by its value until a name is set.
  */
-function withDefaults<T extends { matchProvided?: boolean }>(row: T): T {
-  return { ...row, matchProvided: row.matchProvided ?? true };
+function withDefaults<
+  T extends { value: string; name?: string; matchProvided?: boolean },
+>(row: T): T & { name: string; matchProvided: boolean } {
+  return {
+    ...row,
+    name: row.name ?? row.value,
+    matchProvided: row.matchProvided ?? true,
+  };
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /** Order-preserving dedupe. */

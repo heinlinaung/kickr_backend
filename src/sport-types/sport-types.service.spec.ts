@@ -77,7 +77,9 @@ describe('SportTypesService', () => {
     it('returns the collection in display order', async () => {
       const out = await service.findAll();
 
-      expect(out).toEqual(ROWS.map((r) => ({ ...r, matchProvided: true })));
+      expect(out).toEqual(
+        ROWS.map((r) => ({ ...r, name: r.value, matchProvided: true })),
+      );
       const query = sportTypeModel.find.mock.results[0].value;
       expect(query.sort).toHaveBeenCalledWith({ sortOrder: 1, value: 1 });
     });
@@ -155,6 +157,7 @@ describe('SportTypesService', () => {
 
       expect(sportTypeModel.create).toHaveBeenCalledWith({
         value: 'tennis',
+        name: 'tennis',
         subTypes: ['singles'],
         sortOrder: 4,
         matchProvided: true,
@@ -173,6 +176,16 @@ describe('SportTypesService', () => {
       );
     });
 
+    it('409s a name another sport has', async () => {
+      sportTypeModel.exists
+        .mockResolvedValueOnce(null) // value is free
+        .mockResolvedValueOnce({ _id: 'x' }); // name is taken
+      await expect(
+        service.create({ value: 'soccer', name: 'Football' }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(sportTypeModel.create).not.toHaveBeenCalled();
+    });
+
     it('409s a duplicate value', async () => {
       sportTypeModel.exists.mockResolvedValue({ _id: 'x' });
       await expect(
@@ -183,19 +196,6 @@ describe('SportTypesService', () => {
   });
 
   describe('update', () => {
-    it('replaces subTypes when none being dropped are in use', async () => {
-      await service.update('football', { subTypes: ['futsal', 'beach'] });
-
-      expect(eventModel.countDocuments).toHaveBeenCalledWith({
-        sportType: 'football',
-        subType: 'stadium',
-      });
-      expect(sportTypeModel.updateOne).toHaveBeenCalledWith(
-        { value: 'football' },
-        { $set: { subTypes: ['futsal', 'beach'] } },
-      );
-    });
-
     it('sets matchProvided', async () => {
       await service.update('badminton', { matchProvided: false });
 
@@ -205,12 +205,47 @@ describe('SportTypesService', () => {
       );
     });
 
-    it('refuses to drop a subType an event still uses', async () => {
-      eventModel.countDocuments.mockResolvedValue(2);
-      await expect(
-        service.update('football', { subTypes: ['futsal'] }),
-      ).rejects.toThrow(/'stadium'.*still in use \(2 events\)/);
-      expect(sportTypeModel.updateOne).not.toHaveBeenCalled();
+    describe('rename via name', () => {
+      beforeEach(() => {
+        for (const m of [groupModel, eventModel, templateModel, userModel]) {
+          m.updateMany = jest.fn();
+        }
+      });
+
+      it('changes the name only — value (the ID) and holders stay put', async () => {
+        await service.update('badminton', { name: 'Shuttle', sortOrder: 3 });
+
+        expect(sportTypeModel.updateOne).toHaveBeenCalledWith(
+          { value: 'badminton' },
+          { $set: { sortOrder: 3, name: 'Shuttle' } },
+        );
+        for (const m of [groupModel, eventModel, templateModel, userModel]) {
+          expect(m.updateMany).not.toHaveBeenCalled();
+        }
+      });
+
+      it('checks the name case-insensitively against the other sports', async () => {
+        await service.update('badminton', { name: 'Shuttle' });
+        expect(sportTypeModel.exists).toHaveBeenCalledWith({
+          name: { $regex: '^Shuttle$', $options: 'i' },
+          value: { $ne: 'badminton' },
+        });
+      });
+
+      it('409s a name another sport has, touching nothing', async () => {
+        sportTypeModel.exists.mockResolvedValue({ _id: 'x' });
+        await expect(
+          service.update('badminton', { name: 'football' }),
+        ).rejects.toBeInstanceOf(ConflictException);
+        expect(sportTypeModel.updateOne).not.toHaveBeenCalled();
+      });
+
+      it('is a no-op when the name is unchanged', async () => {
+        // Rows without a stored name read as their value.
+        await service.update('badminton', { name: 'badminton' });
+        expect(sportTypeModel.exists).not.toHaveBeenCalled();
+        expect(sportTypeModel.updateOne).not.toHaveBeenCalled();
+      });
     });
   });
 
@@ -232,6 +267,70 @@ describe('SportTypesService', () => {
         /'futsal' is still in use \(3 groups, 1 users\)/,
       );
       expect(sportTypeModel.deleteOne).not.toHaveBeenCalled();
+    });
+
+    describe('with replaceWith', () => {
+      beforeEach(() => {
+        for (const m of [groupModel, eventModel, templateModel, userModel]) {
+          m.updateMany = jest.fn().mockResolvedValue({});
+        }
+        groupModel.countDocuments.mockResolvedValue(3);
+        eventModel.countDocuments.mockResolvedValue(28);
+      });
+
+      it('moves futsal holders to football, then deletes', async () => {
+        await expect(service.remove('futsal', 'football')).resolves.toEqual({
+          deleted: true,
+          value: 'futsal',
+          replacedWith: 'football',
+        });
+
+        // football lists 'futsal' as a format, so moved events keep it there.
+        for (const m of [eventModel, templateModel]) {
+          expect(m.updateMany).toHaveBeenCalledWith(
+            { sportType: 'futsal' },
+            { $set: { sportType: 'football', subType: 'futsal' } },
+          );
+        }
+        expect(groupModel.updateMany).toHaveBeenCalledWith(
+          { sportType: 'futsal' },
+          { $set: { sportType: 'football' } },
+        );
+        expect(userModel.updateMany).toHaveBeenCalledWith(
+          { sports: { $all: ['futsal', 'football'] } },
+          { $pull: { sports: 'futsal' } },
+        );
+        expect(userModel.updateMany).toHaveBeenCalledWith(
+          { preferredSport: 'futsal' },
+          { $set: { 'preferredSport.$': 'football' } },
+        );
+        expect(sportTypeModel.deleteOne).toHaveBeenCalledWith({
+          value: 'futsal',
+        });
+      });
+
+      it('clears subTypes the replacement does not list', async () => {
+        await service.remove('football', 'badminton');
+        expect(eventModel.updateMany).toHaveBeenCalledWith(
+          { sportType: 'football', subType: { $nin: [null] } },
+          { $set: { subType: null } },
+        );
+        expect(eventModel.updateMany).toHaveBeenCalledWith(
+          { sportType: 'football' },
+          { $set: { sportType: 'badminton' } },
+        );
+      });
+
+      it.each([
+        ['an unknown replacement', 'cricket'],
+        ['itself', 'futsal'],
+      ])('400s %s, touching nothing', async (_, replaceWith) => {
+        await expect(
+          service.remove('futsal', replaceWith),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expect(groupModel.updateMany).not.toHaveBeenCalled();
+        expect(sportTypeModel.deleteOne).not.toHaveBeenCalled();
+      });
     });
   });
 
@@ -270,6 +369,33 @@ describe('SportTypesService', () => {
         /still in use \(1 templates\)/,
       );
       expect(sportTypeModel.updateOne).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('reorderSubTypes', () => {
+    it('stores the new order', async () => {
+      await service.reorderSubTypes('football', ['stadium', 'futsal']);
+      expect(sportTypeModel.updateOne).toHaveBeenCalledWith(
+        { value: 'football' },
+        { $set: { subTypes: ['stadium', 'futsal'] } },
+      );
+    });
+
+    it.each([
+      ['a missing subType', ['stadium']],
+      ['an unknown subType', ['stadium', 'futsal', 'beach']],
+      ['a duplicate', ['stadium', 'stadium']],
+    ])('400s %s, touching nothing', async (_, order) => {
+      await expect(
+        service.reorderSubTypes('football', order),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(sportTypeModel.updateOne).not.toHaveBeenCalled();
+    });
+
+    it('404s an unknown sport', async () => {
+      await expect(
+        service.reorderSubTypes('cricket', []),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 
