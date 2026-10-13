@@ -94,7 +94,7 @@ export class UpdateProfileDto {
     type: [String],
     example: ['football', 'badminton'],
     description:
-      'Values from GET /sport-types — checked against that collection in ' +
+      'Values from GET /configuration `sportTypes` — checked against that collection in ' +
       'the service, not a hardcoded list here, same as group/event ' +
       'sportType.',
   })
@@ -108,7 +108,7 @@ export class UpdateProfileDto {
     type: [String],
     example: ['football', 'futsal'],
     description:
-      'Values from GET /sport-types — each entry checked against that ' +
+      'Values from GET /configuration `sportTypes` — each entry checked against that ' +
       'collection in the service. An array since 2026-10-11; send the full ' +
       'list, it replaces the stored one.',
   })

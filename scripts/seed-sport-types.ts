@@ -23,6 +23,8 @@
  * Matches on `value` and upserts, so re-running:
  *   - inserts anything missing,
  *   - refreshes `subTypes`/`sortOrder` on rows that exist,
+ *   - backfills `matchProvided: true` where a row has no value yet, but never
+ *     overwrites one a superadmin has set,
  *   - never duplicates a sport (`value` is uniquely indexed).
  *
  * Sports in the collection but NOT in this list are reported and left alone —
@@ -99,20 +101,28 @@ async function main() {
       );
       if (APPLY) {
         const now = new Date();
-        await col.insertOne({ ...sport, createdAt: now, updatedAt: now });
+        await col.insertOne({
+          ...sport,
+          matchProvided: true,
+          createdAt: now,
+          updatedAt: now,
+        });
       }
       inserted += 1;
       continue;
     }
 
+    const backfillMatch = typeof current.matchProvided !== 'boolean';
     if (
       current.sortOrder !== sport.sortOrder ||
-      !sameStringArray(current.subTypes, sport.subTypes)
+      !sameStringArray(current.subTypes, sport.subTypes) ||
+      backfillMatch
     ) {
       console.log(
         `~ update  ${sport.value}: subTypes [${String(current.subTypes)}] -> ` +
           `[${sport.subTypes.join(', ')}], sortOrder ` +
-          `${String(current.sortOrder)} -> ${sport.sortOrder}`,
+          `${String(current.sortOrder)} -> ${sport.sortOrder}` +
+          (backfillMatch ? ', matchProvided -> true' : ''),
       );
       if (APPLY) {
         await col.updateOne(
@@ -121,6 +131,7 @@ async function main() {
             $set: {
               subTypes: sport.subTypes,
               sortOrder: sport.sortOrder,
+              ...(backfillMatch && { matchProvided: true }),
               updatedAt: new Date(),
             },
           },

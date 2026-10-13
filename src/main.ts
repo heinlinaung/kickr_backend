@@ -33,6 +33,15 @@ async function bootstrap() {
     .addBearerAuth()
     .build();
   const document = SwaggerModule.createDocument(app, config);
+  // Swagger UI orders tags by first appearance in `paths`, which follows Nest's
+  // module discovery. SportTypesModule is imported by Users/Groups/Events, so
+  // it's discovered early — move its paths to sit right after App config.
+  const isSportTypes = (p: string) => p.startsWith('/sport-types');
+  const otherPaths = Object.entries(document.paths).filter(([p]) => !isSportTypes(p));
+  const sportTypePaths = Object.entries(document.paths).filter(([p]) => isSportTypes(p));
+  const lastAppConfig = otherPaths.map(([p]) => p.startsWith('/app-config')).lastIndexOf(true);
+  otherPaths.splice(lastAppConfig + 1, 0, ...sportTypePaths);
+  document.paths = Object.fromEntries(otherPaths);
   SwaggerModule.setup('api-docs', app, document);
 
   app.enableShutdownHooks();

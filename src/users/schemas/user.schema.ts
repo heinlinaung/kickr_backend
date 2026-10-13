@@ -8,6 +8,10 @@ export type UserDocument = HydratedDocument<User>;
 export const DEVICE_PLATFORMS = ['ios', 'android', 'web'] as const;
 export type DevicePlatform = (typeof DEVICE_PLATFORMS)[number];
 
+/** Platform-wide roles — unrelated to per-group member roles. */
+export const USER_ROLES = ['user', 'superadmin'] as const;
+export type UserRole = (typeof USER_ROLES)[number];
+
 @Schema({ timestamps: true })
 export class User {
   @Prop({ required: true, unique: true, index: true })
@@ -105,6 +109,14 @@ export class User {
    */
   @Prop({ default: 'default' })
   plan: string;
+
+  /**
+   * Platform role. 'superadmin' may edit reference data such as sport types
+   * (see SuperadminGuard). No API writes this — promote an account by hand,
+   * same as `plan`.
+   */
+  @Prop({ type: String, enum: [...USER_ROLES], default: 'user' })
+  role: UserRole;
 
   /**
    * Soft-delete flag — set by `DELETE /users/me`, never unset by any API.

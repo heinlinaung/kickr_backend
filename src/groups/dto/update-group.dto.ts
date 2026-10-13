@@ -33,7 +33,7 @@ export class UpdateGroupDto {
     example: 'football',
     required: false,
     description:
-      'One of the values from GET /sport-types — checked against that ' +
+      'One of the values from GET /configuration `sportTypes` — checked against that ' +
       'collection in the service, not a hardcoded list here. Changing it ' +
       "propagates to every event under the group: a grouped event's " +
       "sportType is always its group's.",

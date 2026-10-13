@@ -85,7 +85,7 @@ export class CreateEventTemplateDto {
   @ApiProperty({
     required: false,
     example: 'football',
-    description: 'One of the values from GET /sport-types.',
+    description: 'One of the values from GET /configuration `sportTypes`.',
   })
   @IsOptional()
   // Validated against the `sporttypes` collection in the service, same as
@@ -98,7 +98,7 @@ export class CreateEventTemplateDto {
     example: 'stadium',
     description:
       'Format of the event, e.g. a FOOTBALL event is `futsal` or `stadium`. ' +
-      'Must be one of the `subTypes` the sportType lists on GET /sport-types.',
+      'Must be one of the `subTypes` the sportType lists on GET /configuration `sportTypes`.',
   })
   @IsOptional()
   @IsString()
