@@ -1,6 +1,5 @@
 // src/sport-types/sport-types.controller.ts
 import {
-  applyDecorators,
   Body,
   Controller,
   Delete,
@@ -25,20 +24,6 @@ import { UpdateSportTypeDto } from './dto/update-sport-type.dto';
 import { AddSubTypeDto } from './dto/add-sub-type.dto';
 import { RenameSubTypeDto } from './dto/rename-sub-type.dto';
 
-/**
- * Reads are for any signed-in user (JWT). Writes change the reference list
- * every group/event/user write validates against, so they also require the
- * caller's `role` to be 'superadmin'.
- * Guards are per-route rather than on the class because the two differ.
- */
-const AdminWrite = () =>
-  applyDecorators(
-    UseGuards(JwtAuthGuard, SuperadminGuard),
-    ApiBearerAuth(),
-    ApiResponse({ status: 401, description: 'Missing or invalid token' }),
-    ApiResponse({ status: 403, description: 'Caller is not a superadmin' }),
-  );
-
 /** The `:value` path param, shared by every per-sport route. */
 const ValueParam = ApiParam({
   name: 'value',
@@ -48,43 +33,32 @@ const ValueParam = ApiParam({
 
 const ROW = '`{ value, subTypes, sortOrder, matchProvided }`';
 
+/**
+ * Every route — reads included — requires the caller's `role` to be
+ * 'superadmin'. Group/event/user writes still validate sportType through
+ * SportTypesService directly, so they do not depend on these routes.
+ */
 @ApiTags('Sport types')
+@UseGuards(JwtAuthGuard, SuperadminGuard)
+@ApiBearerAuth()
+@ApiResponse({ status: 401, description: 'Missing or invalid token' })
+@ApiResponse({ status: 403, description: 'Caller is not a superadmin' })
 @Controller('sport-types')
 export class SportTypesController {
   constructor(private readonly service: SportTypesService) {}
 
-  @Get()
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
-  @ApiResponse({
-    status: 200,
-    description: `Array of ${ROW}, in display order`,
-  })
-  @ApiOperation({
-    summary: 'List allowed sport types (reference data)',
-    description:
-      'The values `sportType` accepts on group and event create/update, in ' +
-      'display order. Each row carries its `subTypes` — the formats an EVENT ' +
-      'of that sport may set as `subType` (football: futsal, stadium); a ' +
-      'sport with an empty list takes no subType at all.',
-  })
-  findAll() {
-    return this.service.findAll();
-  }
-
   @Get(':value')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
   @ValueParam
   @ApiResponse({ status: 200, description: `The sport as ${ROW}` })
   @ApiResponse({ status: 404, description: 'Sport type not found' })
-  @ApiOperation({ summary: 'One sport type by its value, e.g. football' })
+  @ApiOperation({
+    summary: 'One sport type by its value, e.g. football (superadmin)',
+  })
   findOne(@Param('value') value: string) {
     return this.service.findOne(value);
   }
 
   @Post()
-  @AdminWrite()
   @ApiResponse({ status: 201, description: `The created sport as ${ROW}` })
   @ApiResponse({
     status: 400,
@@ -105,7 +79,6 @@ export class SportTypesController {
   }
 
   @Patch(':value')
-  @AdminWrite()
   @ValueParam
   @ApiResponse({ status: 200, description: `The updated sport as ${ROW}` })
   @ApiResponse({
@@ -129,7 +102,6 @@ export class SportTypesController {
   }
 
   @Delete(':value')
-  @AdminWrite()
   @ValueParam
   @ApiResponse({ status: 200, description: '`{ deleted: true, value }`' })
   @ApiResponse({ status: 404, description: 'Sport type not found' })
@@ -149,7 +121,6 @@ export class SportTypesController {
   }
 
   @Post(':value/sub-types')
-  @AdminWrite()
   @ValueParam
   @ApiResponse({
     status: 201,
@@ -171,7 +142,6 @@ export class SportTypesController {
   }
 
   @Patch(':value/sub-types/:subType')
-  @AdminWrite()
   @ValueParam
   @ApiParam({
     name: 'subType',
@@ -207,7 +177,6 @@ export class SportTypesController {
   }
 
   @Delete(':value/sub-types/:subType')
-  @AdminWrite()
   @ValueParam
   @ApiParam({
     name: 'subType',

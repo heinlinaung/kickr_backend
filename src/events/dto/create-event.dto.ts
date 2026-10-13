@@ -54,7 +54,7 @@ export class CreateEventDto {
     example: 'football',
     required: false,
     description:
-      'One of the values from GET /sport-types — checked against that ' +
+      'One of the values from GET /configuration `sportTypes` — checked against that ' +
       'collection in the service, not a hardcoded list here. Ignored on a ' +
       'GROUP event unless it matches: an event with a groupId always takes ' +
       "its group's sportType, and sending a different value is a 400. Only " +
@@ -70,7 +70,7 @@ export class CreateEventDto {
     description:
       'Format of the event, e.g. a FOOTBALL event is `futsal` or `stadium`. ' +
       'Only valid when the resolved sportType lists it in its `subTypes` on ' +
-      'GET /sport-types — sending it for a sport with no formats is a 400, ' +
+      'GET /configuration `sportTypes` — sending it for a sport with no formats is a 400, ' +
       'since it would mean nothing there. Omit it for "unspecified"; that is ' +
       'what every event created before this field existed reads as, and it ' +
       'is NOT a synonym for stadium.',

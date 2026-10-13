@@ -24,6 +24,9 @@ import { SportTypesModule } from './sport-types/sport-types.module';
 import { RatingsModule } from './ratings/ratings.module';
 import { FormationsModule } from './formations/formations.module';
 import { ChallengesModule } from './challenges/challenges.module';
+import { AppConfigModule } from './app-config/app-config.module';
+import { CountriesModule } from './countries/countries.module';
+import { ConfigurationModule } from './configuration/configuration.module';
 
 @Module({
   imports: [
@@ -77,6 +80,9 @@ import { ChallengesModule } from './challenges/challenges.module';
     RatingsModule,
     FormationsModule,
     ChallengesModule,
+    AppConfigModule,
+    CountriesModule,
+    ConfigurationModule,
   ],
   providers: [
     // Removed with ThrottlerModule above. It CANNOT be left registered on its

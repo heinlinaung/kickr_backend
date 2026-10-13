@@ -109,7 +109,7 @@ export class UpdateEventDto {
     example: 'football',
     required: false,
     description:
-      'One of the values from GET /sport-types — checked against that ' +
+      'One of the values from GET /configuration `sportTypes` — checked against that ' +
       'collection in the service, not a hardcoded list here. On a GROUP ' +
       'event it cannot change: an event with a groupId always carries its ' +
       "group's sportType, so any other value is a 400 (change the group's " +
@@ -126,7 +126,7 @@ export class UpdateEventDto {
     description:
       'Format of the event, e.g. a FOOTBALL event is `futsal` or `stadium`. ' +
       'Only valid when the resolved sportType lists it in its `subTypes` on ' +
-      'GET /sport-types — sending it for a sport with no formats is a 400, ' +
+      'GET /configuration `sportTypes` — sending it for a sport with no formats is a 400, ' +
       'since it would mean nothing there. Omit it for "unspecified"; that is ' +
       'what every event created before this field existed reads as, and it ' +
       'is NOT a synonym for stadium.',
