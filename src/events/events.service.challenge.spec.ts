@@ -478,8 +478,10 @@ describe('EventsService — group challenge', () => {
       // The heavy generation path is pinned by its own specs; here the spies
       // isolate WHAT the challenge shuffle decides: team count and who lands
       // on which side.
-      // Shuffling is legal during preparation.
-      eventModel.findById.mockResolvedValue(eventDoc({ status: 'preparation' }));
+      // Challenge events build teams in ready_to_play — no preparation stage.
+      eventModel.findById.mockResolvedValue(
+        eventDoc({ status: 'ready_to_play' }),
+      );
       // The side-split reads the challenge through a select/lean chain.
       challengeModel.findById.mockReturnValue(
         chain({ challengerGroupId: new Types.ObjectId(GROUP_A) }),
@@ -533,7 +535,9 @@ describe('EventsService — group challenge', () => {
 
   describe('team generation is locked to two sides', () => {
     it('refuses any other teamsCount for a challenge event', async () => {
-      eventModel.findById.mockResolvedValue(eventDoc({ status: 'preparation' }));
+      eventModel.findById.mockResolvedValue(
+        eventDoc({ status: 'ready_to_play' }),
+      );
       await expect(
         service.generateTeams(EVENT_ID, ADMIN_A, {
           teamsCount: 4,

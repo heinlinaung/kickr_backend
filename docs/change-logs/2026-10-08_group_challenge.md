@@ -343,6 +343,24 @@ when the caller is an owner/admin of either group (or the creator). Everyone
 else gets the event without those keys — the negotiation is the admins'
 business.
 
+### Challenge lifecycle: no `preparation` stage
+
+Challenge events now run their own status enum — the football list with
+`preparation` cut out:
+
+```
+join → ready_to_play → playing → after_match → done
+   ↘ cancelled (from join / ready_to_play / playing)
+ready_to_play → join   (reopen the roster)
+```
+
+Their teams are the two groups, so there is no build stage to pass
+through: team generation and shuffle happen in **`ready_to_play`**
+(`PATCH /events/:id/status` with `join → ready_to_play` directly;
+`join → preparation` is now a 409 on challenge events). The event's
+sportType stays football — the event `type` outranks the sport in the
+lifecycle.
+
 ### Resubmit accepts a date fix
 
 `POST /events/:id/proposal/resubmit` takes an optional body:
