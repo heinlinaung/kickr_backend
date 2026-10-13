@@ -6,9 +6,10 @@ describe('plan fallbacks', () => {
     // Must stay equal to the `default` row in scripts/seed-plans.ts — this is
     // what an unseeded database enforces.
     expect(DEFAULT_PLAN).toBe('default');
+    // Raised 2026-10 on main: 5 groups / 10 events per week (were 2 / 3).
     expect(DEFAULT_PLAN_LIMITS).toEqual({
-      maxGroupsOwned: 2,
-      maxEventsPerWeek: 3,
+      maxGroupsOwned: 5,
+      maxEventsPerWeek: 10,
       maxGalleryPhotosPerGroup: 50,
     });
   });

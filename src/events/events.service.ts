@@ -85,6 +85,8 @@ import { ReviewPaymentDto } from './dto/review-payment.dto';
 import { CreateChallengeEventDto } from './dto/create-challenge-event.dto';
 import { ReviewProposalDto } from './dto/review-proposal.dto';
 import { AssignPlayersDto } from './dto/assign-players.dto';
+import { ResubmitProposalDto } from './dto/resubmit-proposal.dto';
+import { RespondInvitationDto } from './dto/respond-invitation.dto';
 import {
   Challenge,
   ChallengeDocument,
@@ -277,9 +279,10 @@ export class EventsService {
     // A disjunction rather than a bare `isPublic: true`, and it sits in $or at
     // the top level so the region/date/status/geo narrowings below stay ANDed
     // against it: a joined event must not bypass an explicit filter.
-    const [joinedIds, memberGroupIds] = await Promise.all([
+    const [joinedIds, memberGroupIds, adminGroupIds] = await Promise.all([
       this.joinedEventIds(userId),
       this.approvedGroupIds(userId),
+      this.adminGroupIds(userId),
     ]);
     // Three routes to visibility: an event is public, the caller JOINED it,
     // or it belongs to a group the caller is an approved MEMBER of. The third
@@ -287,13 +290,23 @@ export class EventsService {
     // BEFORE joining them — without it, a private event was visible in
     // GET /events/group/:id (membership-gated) yet missing from this list
     // until the member had already joined, which is backwards for discovery.
+    //
+    // CHALLENGE events are stricter (2026-10-14): plain membership is NOT
+    // enough — only each side's owner/admins see the match, plus the players
+    // who ACCEPTED their invitation (they are `joined`, so the roster arm
+    // covers them). Hence the member arm excludes challenge events and two
+    // admin-only arms carry them, one per side.
     const visibility: Record<string, unknown>[] = [{ isPublic: true }];
     if (joinedIds.length) visibility.push({ _id: { $in: joinedIds } });
     if (memberGroupIds.length) {
-      visibility.push({ groupId: { $in: memberGroupIds } });
-      // A challenge event belongs to the PROPOSER's group but is both groups'
-      // match — the opposing side's members see it before anyone is assigned.
-      visibility.push({ opponentGroupId: { $in: memberGroupIds } });
+      visibility.push({
+        groupId: { $in: memberGroupIds },
+        type: { $ne: 'challenge' },
+      });
+    }
+    if (adminGroupIds.length) {
+      visibility.push({ groupId: { $in: adminGroupIds } });
+      visibility.push({ opponentGroupId: { $in: adminGroupIds } });
     }
     const filter: Record<string, unknown> =
       visibility.length > 1
@@ -426,18 +439,26 @@ export class EventsService {
     // the caller is an approved member of — so the two endpoints agree on
     // what the caller may see and a member can FIND their group's private
     // event by name, not just scroll to it.
-    const [joinedIds, memberGroupIds] = userId
+    const [joinedIds, memberGroupIds, adminGroupIds] = userId
       ? await Promise.all([
           this.joinedEventIds(userId),
           this.approvedGroupIds(userId),
+          this.adminGroupIds(userId),
         ])
-      : [[], []];
+      : [[], [], []];
     const visibility: Record<string, unknown>[] = [{ isPublic: true }];
     if (joinedIds.length) visibility.push({ _id: { $in: joinedIds } });
     if (memberGroupIds.length) {
-      visibility.push({ groupId: { $in: memberGroupIds } });
-      // Challenge events: the opposing side's members may find the match too.
-      visibility.push({ opponentGroupId: { $in: memberGroupIds } });
+      // Challenge events excluded: plain members cannot FIND the match until
+      // they accept their invitation — same rule as list().
+      visibility.push({
+        groupId: { $in: memberGroupIds },
+        type: { $ne: 'challenge' },
+      });
+    }
+    if (adminGroupIds.length) {
+      visibility.push({ groupId: { $in: adminGroupIds } });
+      visibility.push({ opponentGroupId: { $in: adminGroupIds } });
     }
 
     // Text match, visibility and (below) the keyset are ALL disjunctions or
@@ -1005,6 +1026,27 @@ export class EventsService {
       .lean();
     const teamNames = [...new Set(matches.flatMap((m) => [m.teamA, m.teamB]))];
 
+    // Whether the caller may see the PROPOSAL fields of a challenge event —
+    // owner/admin of either side, or the creator. The negotiation is the
+    // admins' business; a player only ever sees the finished arrangement.
+    let seesProposal = event.type !== 'challenge';
+    if (!seesProposal && userId) {
+      if (event.createdBy?.toString() === userId) {
+        seesProposal = true;
+      } else {
+        const sides = [event.groupId, event.opponentGroupId].filter(Boolean);
+        const adminRow = sides.length
+          ? await this.memberModel.findOne({
+              groupId: { $in: sides },
+              userId: new Types.ObjectId(userId),
+              status: 'approved',
+              role: { $in: ['owner', 'admin'] },
+            })
+          : null;
+        seesProposal = !!adminRow;
+      }
+    }
+
     let likedByMe = false;
     // Whether the CALLER is on the roster. `joinedCount` says how many people
     // joined, and `userRole` reports the caller's GROUP role — neither answers
@@ -1031,8 +1073,14 @@ export class EventsService {
       joinedByMe = !!player;
     }
 
+    const payload: Record<string, unknown> = { ...withIsFull(event) };
+    if (!seesProposal) {
+      delete payload.proposedStatus;
+      delete payload.proposalRejectReason;
+    }
+
     return {
-      ...withIsFull(event),
+      ...payload,
       groupRules,
       // Resolved group identity + branding (name, logo, wallpaper); null for a
       // standalone event. `groupId` stays for clients that only need the id.
@@ -3325,7 +3373,11 @@ export class EventsService {
    * organizers) and resubmits — EXPLICITLY, so an ordinary edit after
    * acceptance never silently reopens review.
    */
-  async resubmitProposal(eventId: string, userId: string) {
+  async resubmitProposal(
+    eventId: string,
+    userId: string,
+    dto: ResubmitProposalDto = {},
+  ) {
     const event = await this.eventModel.findById(eventId);
     if (!event) throw new NotFoundException('Event not found');
     if (event.type !== 'challenge' || !event.opponentGroupId) {
@@ -3340,6 +3392,11 @@ export class EventsService {
     }
     await this.assertOrganizer(eventId, userId);
 
+    // "date change need" is the most common rejection, so the fix can ride
+    // the resubmission itself instead of needing a separate PATCH first.
+    if (dto.date !== undefined) {
+      event.date = new Date(dto.date);
+    }
     event.proposedStatus = 'proposed';
     event.proposalRejectReason = null;
     await event.save();
@@ -3383,7 +3440,11 @@ export class EventsService {
       );
     }
 
-    const assigned: string[] = [];
+    // Assignment is an INVITATION (2026-10-14): rows start `invited` and the
+    // player answers via POST /events/:id/invitation/respond. Until they
+    // accept, they are not on the roster — not counted, not dealt into teams,
+    // and the event stays out of their lists.
+    const invited: string[] = [];
     const skipped: string[] = [];
     for (const targetId of dto.userIds) {
       const member = await this.memberModel.findOne({
@@ -3401,51 +3462,107 @@ export class EventsService {
         eventId: event._id,
         userId: new Types.ObjectId(targetId),
       });
-      if (existing?.status === 'joined') {
+      if (existing?.status === 'joined' || existing?.status === 'invited') {
         skipped.push(targetId);
         continue;
       }
       if (existing) {
-        existing.status = 'joined';
-        existing.joinedAt = new Date();
+        // A declined (or unassigned) player can be invited again.
+        existing.status = 'invited';
         existing.groupId = sideGroupId;
+        existing.inviteRejectReason = null;
         await existing.save();
       } else {
         await this.playerModel.create({
           eventId: event._id,
           userId: new Types.ObjectId(targetId),
-          status: 'joined',
-          joinedAt: new Date(),
+          status: 'invited',
           groupId: sideGroupId,
         });
       }
-      assigned.push(targetId);
+      invited.push(targetId);
 
       try {
         await this.notificationsService.create({
           userId: targetId,
-          title: 'You are on the squad',
-          body: `You have been assigned to the challenge match '${event.title}'`,
+          title: 'Challenge match invitation',
+          body:
+            `You have been invited to the challenge match '${event.title}' — ` +
+            'accept or decline',
           type: 'event',
           refId: event._id.toString(),
         });
       } catch (err) {
-        this.logger.warn(`Assignment notification failed: ${err}`);
+        this.logger.warn(`Invitation notification failed: ${err}`);
       }
     }
 
-    if (assigned.length) {
-      await this.eventModel.updateOne(
-        { _id: event._id },
-        { $inc: { joinedCount: assigned.length } },
+    return {
+      message: `${invited.length} player(s) invited`,
+      invited,
+      skipped,
+    };
+  }
+
+  /**
+   * The invited player's answer — `POST /events/:id/invitation/respond`.
+   *
+   * Accept puts them on the roster (status `joined`, joinedCount bumped) and
+   * is what makes the event VISIBLE in their lists. Decline cancels the row,
+   * keeping the optional reason for the admins; their side's admins are
+   * notified so they can invite someone else.
+   */
+  async respondInvitation(
+    eventId: string,
+    userId: string,
+    dto: RespondInvitationDto,
+  ) {
+    const event = await this.eventModel.findById(eventId);
+    if (!event) throw new NotFoundException('Event not found');
+    if (event.type !== 'challenge') {
+      throw new BadRequestException(
+        'Only challenge events carry invitations',
       );
     }
 
-    return {
-      message: `${assigned.length} player(s) assigned`,
-      assigned,
-      skipped,
-    };
+    const row = await this.playerModel.findOne({
+      eventId: event._id,
+      userId: new Types.ObjectId(userId),
+      status: 'invited',
+    });
+    if (!row) {
+      throw new NotFoundException(
+        'You have no pending invitation for this event',
+      );
+    }
+
+    if (dto.action === 'accept') {
+      row.status = 'joined';
+      row.joinedAt = new Date();
+      row.inviteRejectReason = null;
+      await row.save();
+      await this.eventModel.updateOne(
+        { _id: event._id },
+        { $inc: { joinedCount: 1 } },
+      );
+      return { message: 'Invitation accepted — you are on the squad' };
+    }
+
+    row.status = 'cancelled';
+    row.inviteRejectReason = dto.reason ?? null;
+    await row.save();
+
+    // Their side's admins hear about it so the slot can be refilled.
+    if (row.groupId) {
+      await this.notifySideAdmins(
+        row.groupId,
+        'Invitation declined',
+        `A player declined the invitation to '${event.title}'` +
+          (dto.reason ? `: ${dto.reason}` : ''),
+        event._id.toString(),
+      );
+    }
+    return { message: 'Invitation declined' };
   }
 
   /** The mirror of assignPlayers, for corrections. Either side's organizer. */
@@ -3460,21 +3577,27 @@ export class EventsService {
       throw new BadRequestException('Invalid user id');
     }
 
+    // Joined AND still-invited rows both unassign — withdrawing an unanswered
+    // invitation is the same administrative act.
     const row = await this.playerModel.findOne({
       eventId: event._id,
       userId: new Types.ObjectId(targetUserId),
-      status: 'joined',
+      status: { $in: ['joined', 'invited'] },
     });
     if (!row) {
       throw new NotFoundException('That player is not assigned to this event');
     }
 
+    const wasJoined = row.status === 'joined';
     row.status = 'cancelled';
     await row.save();
-    await this.eventModel.updateOne(
-      { _id: event._id, joinedCount: { $gt: 0 } },
-      { $inc: { joinedCount: -1 } },
-    );
+    // Only an ACCEPTED player ever counted.
+    if (wasJoined) {
+      await this.eventModel.updateOne(
+        { _id: event._id, joinedCount: { $gt: 0 } },
+        { $inc: { joinedCount: -1 } },
+      );
+    }
 
     return { message: 'Player unassigned' };
   }
@@ -3872,6 +3995,21 @@ export class EventsService {
 
     const rows = await this.memberModel
       .find({ userId: new Types.ObjectId(userId), status: 'approved' })
+      .select('groupId')
+      .lean();
+    return rows.map((row) => row.groupId);
+  }
+
+  /** Groups where the caller is an approved OWNER or ADMIN. */
+  private async adminGroupIds(userId: string): Promise<unknown[]> {
+    if (!Types.ObjectId.isValid(userId)) return [];
+
+    const rows = await this.memberModel
+      .find({
+        userId: new Types.ObjectId(userId),
+        status: 'approved',
+        role: { $in: ['owner', 'admin'] },
+      })
       .select('groupId')
       .lean();
     return rows.map((row) => row.groupId);

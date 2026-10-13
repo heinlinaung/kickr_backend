@@ -40,6 +40,8 @@ import { SubmitPaymentDto } from './dto/submit-payment.dto';
 import { ReviewPaymentDto } from './dto/review-payment.dto';
 import { ReviewProposalDto } from './dto/review-proposal.dto';
 import { AssignPlayersDto } from './dto/assign-players.dto';
+import { ResubmitProposalDto } from './dto/resubmit-proposal.dto';
+import { RespondInvitationDto } from './dto/respond-invitation.dto';
 import { AddGuestDto } from './dto/add-guest.dto';
 import { SetGuestApprovalDto } from './dto/set-guest-approval.dto';
 import { SetTeamMemberRoleDto } from './dto/set-team-member-role.dto';
@@ -643,24 +645,50 @@ export class EventsController {
     summary: 'Re-propose a rejected challenge event after editing it',
     description:
       'Either side\'s organizer. Only a REJECTED proposal can be resubmitted ' +
-      '— edit the event first (PATCH /events/:id), then resubmit; the ' +
+      '— pass `date` in the body to fix the most common rejection in the ' +
+      'same call, or edit anything else via PATCH /events/:id first. The ' +
       'opposing side is notified to review again.',
   })
   @ApiResponse({ status: 400, description: 'Proposal is not in rejected state' })
-  resubmitProposal(@Param('id') id: string, @CurrentUser() user: any) {
-    return this.eventsService.resubmitProposal(id, user._id.toString());
+  resubmitProposal(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() dto: ResubmitProposalDto,
+  ) {
+    return this.eventsService.resubmitProposal(id, user._id.toString(), dto);
+  }
+
+  @Post(':id/invitation/respond')
+  @ApiOperation({
+    summary: 'Accept or decline your challenge-event invitation (player)',
+    description:
+      'Answers the invitation created by POST /events/:id/players/assign. ' +
+      '`action` accept|reject with an optional reason on reject (shown to ' +
+      "your side's admins). Accepting puts you on the roster and makes the " +
+      'event appear in your lists; declining frees the slot.',
+  })
+  @ApiResponse({ status: 400, description: 'Not a challenge event' })
+  @ApiResponse({ status: 404, description: 'No pending invitation' })
+  respondInvitation(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() dto: RespondInvitationDto,
+  ) {
+    return this.eventsService.respondInvitation(id, user._id.toString(), dto);
   }
 
   @Post(':id/players/assign')
   @ApiOperation({
-    summary: "Assign your group's members to a challenge event (side admins)",
+    summary: "Invite your group's members to a challenge event (side admins)",
     description:
       'Challenge events only — self-join is closed there. The caller must be ' +
       'owner/admin of one of the two groups; every assignee must be an ' +
       "approved member of the CALLER's side, and the roster row records that " +
-      'side. No minimum or maximum squad size. Already-assigned players are ' +
-      'skipped, assigned players are notified. Requires the proposal to be ' +
-      'accepted first.',
+      'side. Assignment is an INVITATION: each player is notified and must ' +
+      'accept via POST /events/:id/invitation/respond before they are on the ' +
+      'roster (or see the event in their lists). No minimum or maximum squad ' +
+      'size; already invited/joined players are skipped. Requires the ' +
+      'proposal to be accepted first.',
   })
   @ApiResponse({
     status: 400,

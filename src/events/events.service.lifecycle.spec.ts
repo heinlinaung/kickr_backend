@@ -380,10 +380,11 @@ describe('EventsService — lifecycle', () => {
     });
 
     it('refuses when another event has taken the freed weekly slot', async () => {
-      // Cancelling freed the slot; the creator scheduled 3 others that week.
+      // Cancelling freed the slot; the creator filled the whole weekly
+      // allowance (10 on the default plan) with other events.
       const doc = cancelledDoc();
       eventModel.findById.mockResolvedValue(doc);
-      eventModel.countDocuments.mockResolvedValue(3);
+      eventModel.countDocuments.mockResolvedValue(10);
 
       await expect(service.restore(EVENT_ID, CREATOR)).rejects.toThrow(
         /freed slot/,
