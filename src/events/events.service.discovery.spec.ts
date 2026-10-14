@@ -785,3 +785,101 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
     });
   });
 });
+
+describe('EventsService — list ?sports= filter', () => {
+  let service: EventsService;
+  const eventModel: any = {};
+  const playerModel: any = {};
+  const memberModel: any = {};
+  const groupModel: any = {};
+
+  const GROUP_FOOT = new Types.ObjectId();
+
+  const emptyChain = () => ({
+    select: jest.fn().mockReturnThis(),
+    lean: jest.fn().mockResolvedValue([]),
+  });
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    eventModel.find = jest.fn().mockReturnValue(findChain([]));
+    playerModel.find = jest.fn().mockReturnValue(emptyChain());
+    memberModel.find = jest.fn().mockReturnValue(emptyChain());
+    // The fallback lookup: which groups carry a wanted sportType.
+    groupModel.find = jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([{ _id: GROUP_FOOT }]),
+    });
+
+    const m = await Test.createTestingModule({
+      providers: [
+        EventsService,
+        ...eventsProviders({ eventModel, playerModel, memberModel, groupModel }),
+      ],
+    }).compile();
+    service = m.get(EventsService);
+  });
+
+  const filter = () => eventModel.find.mock.calls[0][0];
+  const sportClause = () => filter().$and[0];
+
+  it('matches event.sportType against the comma-separated list', async () => {
+    await service.list(USER, { sports: 'football,badminton' });
+
+    expect(sportClause().$or[0]).toEqual({
+      sportType: { $in: ['football', 'badminton'] },
+    });
+  });
+
+  it("falls back to the GROUP's sportType for events without one", async () => {
+    await service.list(USER, { sports: 'football' });
+
+    // The group lookup asked for the wanted sports…
+    expect(groupModel.find).toHaveBeenCalledWith({
+      sportType: { $in: ['football'] },
+    });
+    // …and the second arm catches sportType-less events of those groups.
+    // `sportType: null` matches stored null AND a missing field.
+    expect(sportClause().$or[1]).toEqual({
+      sportType: null,
+      groupId: { $in: [GROUP_FOOT] },
+    });
+  });
+
+  it('skips the fallback arm when no group carries the sport', async () => {
+    groupModel.find.mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue([]),
+    });
+
+    await service.list(USER, { sports: 'padel' });
+
+    expect(sportClause()).toEqual({ sportType: { $in: ['padel'] } });
+  });
+
+  it('trims and lowercases entries, dropping empties', async () => {
+    await service.list(USER, { sports: ' Football , BADMINTON ,, ' });
+
+    expect(sportClause().$or[0]).toEqual({
+      sportType: { $in: ['football', 'badminton'] },
+    });
+  });
+
+  it('adds nothing without the param — or with a blank one', async () => {
+    await service.list(USER, {});
+    expect(filter().$and).toBeUndefined();
+
+    eventModel.find.mockClear();
+    await service.list(USER, { sports: '  ' });
+    expect(filter().$and).toBeUndefined();
+    expect(groupModel.find).not.toHaveBeenCalled();
+  });
+
+  it('composes with the visibility $or instead of clobbering it', async () => {
+    await service.list(USER, { sports: 'football' });
+
+    // Visibility keeps the top-level disjunction; the sport filter ANDs in.
+    expect(filter().isPublic ?? filter().$or).toBeDefined();
+    expect(filter().$and).toHaveLength(1);
+  });
+});

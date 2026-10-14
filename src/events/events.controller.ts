@@ -112,6 +112,15 @@ export class EventsController {
       'and an event can be past-dated while still `join` because nobody ' +
       'advanced it. An explicit ?from= overrides this floor.',
   })
+  @ApiQuery({
+    name: 'sports',
+    required: false,
+    example: 'football,badminton',
+    description:
+      'Comma-separated sport values (see GET /sport-types). Matches the ' +
+      "event's own sportType; an event without one falls back to its " +
+      "group's sportType.",
+  })
   list(
     @CurrentUser() user: any,
     @Query('region') region?: string,
@@ -121,6 +130,7 @@ export class EventsController {
     @Query('to') to?: string,
     @Query('status') status?: string,
     @Query('includeExpired') includeExpired?: string,
+    @Query('sports') sports?: string,
   ) {
     return this.eventsService.list(user._id.toString(), {
       region,
@@ -129,6 +139,7 @@ export class EventsController {
       from,
       to,
       status,
+      sports,
       // Explicitly compared to 'false' rather than reusing the
       // `=== 'true'` idiom from the other routes: those default to FALSE, so
       // an absent param correctly reads as false there. Here the default is
