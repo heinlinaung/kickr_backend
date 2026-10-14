@@ -388,3 +388,11 @@ proposer admins · assignment → each assigned player.
 
 No seeder, no env change, no migration — all new fields default null /
 'normal' on existing documents.
+
+### `maxPlayers` optional on challenge events (2026-10-14)
+
+- `POST /challenges/:id/event` without `maxPlayers` leaves it **null** —
+  the schema default (12) no longer sneaks in. Send it to set a cap.
+- A null cap means **never full**: `isFull` stays false however many
+  players accept (rosters are admin-assigned with no min/max by spec).
+- Normal events are unchanged (default 12, self-join capacity enforced).

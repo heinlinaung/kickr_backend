@@ -190,6 +190,29 @@ describe('EventsService — group challenge', () => {
       expect(String(challenge.eventId)).toBe(String(created._id));
       expect(challenge.save).toHaveBeenCalled();
     });
+
+    it('maxPlayers is OPTIONAL: unset stays null, never the default cap', async () => {
+      // The roster is admin-assigned with no min/max, so the schema default
+      // (12, for self-join events) must not sneak in and read as "full".
+      const created: any = eventDoc({ maxPlayers: 12 }); // schema default applied
+      jest.spyOn(service, 'create').mockResolvedValue(created);
+
+      await service.createChallengeEvent(CHALLENGE_ID, ADMIN_A, dto);
+
+      expect(created.maxPlayers).toBeNull();
+    });
+
+    it('an explicit maxPlayers from the proposer is kept', async () => {
+      const created: any = eventDoc({ maxPlayers: 14 });
+      jest.spyOn(service, 'create').mockResolvedValue(created);
+
+      await service.createChallengeEvent(CHALLENGE_ID, ADMIN_A, {
+        ...dto,
+        maxPlayers: 14,
+      });
+
+      expect(created.maxPlayers).toBe(14);
+    });
   });
 
   describe('reviewProposal', () => {

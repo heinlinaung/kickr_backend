@@ -512,6 +512,30 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
     });
   });
 
+  describe('findById → isFull with a null cap', () => {
+    it('a capless event (challenge) is NEVER full', async () => {
+      // null coerced to 0 would read as full immediately — the exact bug the
+      // null-means-no-cap rule guards against.
+      eventModel.findById.mockReturnValue(
+        q({ _id: EVENT_ID, groupId: null, maxPlayers: null, joinedCount: 8 }),
+      );
+
+      const res: any = await service.findById(EVENT_ID);
+
+      expect(res.isFull).toBe(false);
+    });
+
+    it('a capped event still fills up', async () => {
+      eventModel.findById.mockReturnValue(
+        q({ _id: EVENT_ID, groupId: null, maxPlayers: 12, joinedCount: 12 }),
+      );
+
+      const res: any = await service.findById(EVENT_ID);
+
+      expect(res.isFull).toBe(true);
+    });
+  });
+
   describe('listPlayers → profile position on the card', () => {
     it('populates footballPosition for registered players, never the email', async () => {
       const chain = {
