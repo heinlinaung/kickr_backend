@@ -745,12 +745,14 @@ describe('GroupsService', () => {
       expect(JSON.stringify(res)).not.toContain('SECRET-CODE');
     });
 
-    it('hides the venues a private group plays at', async () => {
-      // The event gate already hides the schedule; leaking the locations
-      // would undo half of that.
+    it('returns the venues — the detail is PUBLIC now (2026-10-14)', async () => {
+      // The old narrowing hid locations from strangers; the detail API is
+      // public by decision, so the full document comes back. Only the
+      // invite-code credential stays membership-gated.
       const res = await asNonMember();
 
-      expect(res).not.toHaveProperty('locations');
+      expect(res.locations).toHaveLength(2);
+      expect(res.wallpaper).toBe('wall.jpg');
     });
 
     it('still returns the rules', async () => {
@@ -795,12 +797,12 @@ describe('GroupsService', () => {
       expect(res.locations).toHaveLength(2);
     });
 
-    it('does NOT narrow a PUBLIC group', async () => {
-      // Only private groups are gated. A public group returns whole; just its
-      // event listing is restricted, and that happens elsewhere.
+    it('the invite-code rule is MEMBERSHIP-based, not privacy-based', async () => {
+      // Even a PUBLIC group's code is a bearer credential: join-by-code
+      // accepts it from whoever presents it, so only approved members read it.
       const res = await asNonMember({ ...privateGroup, isPrivate: false });
 
-      expect(res.inviteCode).toBe('SECRET-CODE');
+      expect(res).not.toHaveProperty('inviteCode');
       expect(res.locations).toHaveLength(2);
     });
 
@@ -831,13 +833,17 @@ describe('GroupsService', () => {
       );
     });
 
-    it('returns the bare group when no caller is supplied', async () => {
+    it('serves an anonymous caller: full group, null flags, no member query', async () => {
       groupModel.findById.mockReturnValue(q({ _id: GROUP_ID, name: 'FC' }));
 
       const res: any = await service.findById(GROUP_ID);
 
       expect(res.name).toBe('FC');
-      expect(res).not.toHaveProperty('userRole');
+      // Flags come back explicitly null/false so the response shape is one
+      // shape for every caller.
+      expect(res.userRole).toBeNull();
+      expect(res.memberStatus).toBeNull();
+      expect(res.isCashier).toBe(false);
       expect(memberModel.findOne).not.toHaveBeenCalled();
     });
 

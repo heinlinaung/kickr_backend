@@ -179,79 +179,54 @@ export class GroupsService {
   }
 
   /**
-   * Narrows a group document for a caller who is not an approved member.
+   * Group detail — PUBLIC since 2026-10-14: the full document is returned to
+   * anyone, private groups included; the old `publicView` narrowing is gone.
+   * (A private group's EVENT listing stays gated in
+   * `EventsService.listByGroup` — privacy moved there entirely.)
    *
-   * A **private** group is discoverable — it shows up in `/groups/search` — so
-   * a stranger is expected to reach its detail page and decide whether to ask
-   * to join. What they get is the same card search returns, plus `rules`:
-   * enough to make that decision, and nothing more.
+   * One exception survives, and it is a credential rule rather than a
+   * privacy one: `inviteCode` / `inviteCodeExpiry` are stripped for anyone
+   * but an approved member. The code is a bearer token —
+   * `POST /groups/join-by-code` accepts it from whoever presents it — so a
+   * public detail page must not hand it out. Members read it from
+   * `GET /groups/:id/qr` as before.
    *
-   * Withheld until they join, and why each one matters:
-   *
-   * - **`inviteCode` / `inviteCodeExpiry`** — a bearer credential. Anyone
-   *   holding it can present it to `POST /groups/join-by-code`, so returning it
-   *   to a non-member hands out the very thing membership is supposed to gate.
-   *   This is the reason this method exists.
-   * - **`locations`** — where the group plays. The event gate already hides the
-   *   schedule; leaking the venues undoes half of that.
-   * - **`wallpaper`, `ownerId`, `maxPlayers`** and anything added later — not
-   *   individually sensitive, but an allowlist that grows by default is how a
-   *   future field leaks silently. New fields are hidden until someone decides
-   *   otherwise.
-   *
-   * A **public** group is returned whole, unchanged. Only its event listing is
-   * gated, which happens in `EventsService.listByGroup`.
-   */
-  private publicView<T extends { isPrivate?: boolean; rules?: string }>(
-    group: T,
-    memberStatus: string | null,
-  ) {
-    // Approved members see everything. A PENDING request does not — approval is
-    // the gate everywhere else on this branch, and a pending requester is a
-    // stranger until someone accepts them.
-    if (!group.isPrivate || memberStatus === 'approved') return group;
-
-    const source = group as Record<string, unknown>;
-    const visible: Record<string, unknown> = { rules: group.rules ?? '' };
-    for (const field of GROUP_CARD_FIELDS) visible[field] = source[field];
-    return visible as unknown as T;
-  }
-
-  /**
-   * Group detail. When `userId` is supplied the response carries the caller's
-   * own membership so the client can render role-gated UI without a second
-   * request.
-   *
-   * A private group is NARROWED for a non-member — see `publicView`. The group
-   * stays discoverable; its contents do not.
-   *
-   * `memberStatus` is returned alongside `userRole` because the role alone is
-   * ambiguous: a pending join request already stores `role: 'member'`, so
-   * without the status an unapproved requester looks like a full member.
+   * When `userId` is supplied the response carries the caller's own
+   * membership so the client can render role-gated UI without a second
+   * request. `memberStatus` is returned alongside `userRole` because the
+   * role alone is ambiguous: a pending join request already stores
+   * `role: 'member'`, so without the status an unapproved requester looks
+   * like a full member.
    */
   async findById(groupId: string, userId?: string) {
     const group = await this.groupModel.findById(groupId).lean();
     if (!group) throw new NotFoundException('Group not found');
 
-    if (!userId) return { ...this.publicView(group, null), isCashier: false };
-
     // Queried directly rather than via getMemberRole(), which filters to
     // approved rows and so cannot report a pending membership.
-    const member = await this.memberModel
-      .findOne({
-        groupId: new Types.ObjectId(groupId),
-        userId: new Types.ObjectId(userId),
-      })
-      .select('role status')
-      .lean();
+    const member = userId
+      ? await this.memberModel
+          .findOne({
+            groupId: new Types.ObjectId(groupId),
+            userId: new Types.ObjectId(userId),
+          })
+          .select('role status')
+          .lean()
+      : null;
+
+    const payload: Record<string, unknown> = { ...group };
+    if (member?.status !== 'approved') {
+      delete payload.inviteCode;
+      delete payload.inviteCodeExpiry;
+    }
 
     return {
-      ...this.publicView(group, member?.status ?? null),
+      ...payload,
       userRole: member?.role ?? null,
       memberStatus: member?.status ?? null,
       // Whether the CALLER holds this group's cashier seat, so the client can
       // show payment-review and bank-details controls without extra calls.
-      isCashier: group.cashierId?.toString() === userId,
+      isCashier: !!userId && group.cashierId?.toString() === userId,
     };
   }
 

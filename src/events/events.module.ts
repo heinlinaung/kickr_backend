@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { EventsController } from './events.controller';
+import { PublicEventsController } from './public-events.controller';
 import { EventTemplatesController } from './event-templates.controller';
 import {
   EventPayment,
@@ -72,7 +73,13 @@ import { PlansModule } from '../plans/plans.module';
     SportTypesModule,
     PlansModule,
   ],
-  controllers: [EventsController, EventTemplatesController],
+  // PublicEventsController LAST: its bare `:id` must register after every
+  // static route (search, joined, …) in the guarded controller.
+  controllers: [
+    EventsController,
+    EventTemplatesController,
+    PublicEventsController,
+  ],
   providers: [EventsService],
   exports: [EventsService, MongooseModule],
 })
