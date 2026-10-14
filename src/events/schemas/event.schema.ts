@@ -76,8 +76,14 @@ export class Event {
   @Prop({ type: Types.ObjectId, ref: 'Location', default: null })
   locationId: Types.ObjectId | null;
 
-  @Prop({ default: 12 })
-  maxPlayers: number;
+  /**
+   * Roster cap for self-join events. NULLABLE since 2026-10-14 for CHALLENGE
+   * events: their rosters are admin-assigned with no min/max by spec, so an
+   * unset cap stays unset (null) instead of inheriting the default — and a
+   * null cap means "never full". Normal events keep the default of 12.
+   */
+  @Prop({ type: Number, default: 12 })
+  maxPlayers: number | null;
 
   @Prop({ default: 0 })
   joinedCount: number;
@@ -343,9 +349,12 @@ EventSchema.index({ status: 1, date: 1 });
  */
 EventSchema.virtual('isFull').get(function (this: {
   joinedCount?: number;
-  maxPlayers?: number;
+  maxPlayers?: number | null;
 }) {
-  return (this.joinedCount ?? 0) >= (this.maxPlayers ?? 0);
+  // No cap (challenge events may leave maxPlayers null) means never full —
+  // comparing against a null coerced to 0 would read as full immediately.
+  if (this.maxPlayers == null) return false;
+  return (this.joinedCount ?? 0) >= this.maxPlayers;
 });
 
 EventSchema.set('toJSON', { virtuals: true });

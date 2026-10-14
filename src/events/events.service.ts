@@ -3351,6 +3351,12 @@ export class EventsService {
     event.proposalRejectReason = null;
     event.challengeColors = { challengerColor, challengedColor };
     event.isPublic = false;
+    // No cap unless the proposer set one: the roster is admin-assigned with
+    // no min/max by spec, so the schema default (12, for self-join events)
+    // must not sneak in and make the match read as "full".
+    if (eventDto.maxPlayers === undefined) {
+      event.maxPlayers = null;
+    }
     await event.save();
 
     challenge.eventId = event._id;
@@ -4116,12 +4122,15 @@ export class EventsService {
  * `.lean()` results — and every read path here is lean for speed. Rather than
  * drop lean(), compute the same rule in one place.
  */
-function withIsFull<T extends { joinedCount?: number; maxPlayers?: number }>(
-  event: T,
-): T & { isFull: boolean } {
+function withIsFull<
+  T extends { joinedCount?: number; maxPlayers?: number | null },
+>(event: T): T & { isFull: boolean } {
   return {
     ...event,
-    isFull: (event.joinedCount ?? 0) >= (event.maxPlayers ?? 0),
+    // No cap (challenge events may leave maxPlayers null) means never full.
+    isFull:
+      event.maxPlayers != null &&
+      (event.joinedCount ?? 0) >= event.maxPlayers,
   };
 }
 
