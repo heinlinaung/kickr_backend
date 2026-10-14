@@ -4,8 +4,17 @@ import { HydratedDocument, Types } from 'mongoose';
 
 export type EventPlayerDocument = HydratedDocument<EventPlayer>;
 
-/** A roster row is either a registered user or a guest brought by one. */
-export const EVENT_PLAYER_TYPES = ['registered', 'guest'] as const;
+/**
+ * A roster row is a registered user, a guest brought by one, or — since
+ * 2026-10-14 — an ANONYMOUS player: someone with no account who joined a
+ * PUBLIC event themselves with just a name (`POST /events/:id/join-anonymous`).
+ *
+ * Anonymous differs from guest in who vouches: a guest is somebody's plus-one
+ * (sponsor, approval flow); an anonymous player walked in off the street —
+ * no sponsor, no approval, approved on arrival. Both have no `userId`, so
+ * both live in `team.guests` when dealt into teams.
+ */
+export const EVENT_PLAYER_TYPES = ['registered', 'guest', 'anonymous'] as const;
 export type EventPlayerType = (typeof EVENT_PLAYER_TYPES)[number];
 
 /**
@@ -58,7 +67,10 @@ export class EventPlayer {
   @Prop({ default: 'registered', enum: EVENT_PLAYER_TYPES })
   type: string;
 
-  /** Display name for a guest. Absent on registered rows, which have a user. */
+  /**
+   * Display name for an accountless row — a guest or an anonymous player.
+   * Absent on registered rows, which have a user.
+   */
   @Prop({ trim: true })
   guestName?: string;
 

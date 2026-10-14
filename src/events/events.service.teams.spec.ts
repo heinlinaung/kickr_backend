@@ -59,10 +59,13 @@ const guestRows = (ids: string[]) => ({
     .mockResolvedValue(ids.map((id) => ({ _id: new Types.ObjectId(id) }))),
 });
 
+/** True when the query is the ACCOUNTLESS-roster lookup (guests + anonymous). */
+const isGuestQuery = (q: any = {}) => !!q?.type?.$in;
+
 /** Overrides only the REGISTERED half of the roster mock; guests stay empty. */
 const onlyPlayers = (playerModel: any, ids: string[]) =>
   playerModel.find.mockImplementation((q: any = {}) =>
-    q.type === 'guest' ? guestRows([]) : joinedPlayers(ids),
+    isGuestQuery(q) ? guestRows([]) : joinedPlayers(ids),
   );
 
 describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
@@ -82,7 +85,7 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
     // double branches on the query so the guest lookup does not receive player
     // documents; individual tests override it to supply guests.
     playerModel.find = jest.fn().mockImplementation((q: any = {}) =>
-      q.type === 'guest'
+      isGuestQuery(q)
         ? guestRows([])
         : joinedPlayers([P1, P2, P3, P4]),
     );
@@ -645,7 +648,7 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
     /** Roster mock with both halves populated. */
     const withGuests = (players: string[], guests: string[]) =>
       playerModel.find.mockImplementation((q: any = {}) =>
-        q.type === 'guest' ? guestRows(guests) : joinedPlayers(players),
+        isGuestQuery(q) ? guestRows(guests) : joinedPlayers(players),
       );
 
     const teamDoc = (over: Record<string, unknown> = {}) => {
@@ -878,7 +881,7 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       await service.shuffleTeams(EVENT_ID, CREATOR).catch(() => undefined);
 
       const q = playerModel.find.mock.calls[0][0];
-      expect(q.type).toEqual({ $ne: 'guest' });
+      expect(q.type).toEqual({ $nin: ['guest', 'anonymous'] });
       // Same reasoning already applied to approval.
       expect(q.approval).toEqual({ $nin: ['pending', 'rejected'] });
     });
@@ -916,7 +919,7 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
         eventDoc({ status: 'preparation', teamCount: 3 }),
       );
       playerModel.find = jest.fn().mockImplementation((q: any) =>
-        q?.type === 'guest'
+        isGuestQuery(q)
           ? { select: jest.fn().mockReturnThis(), sort: jest.fn().mockReturnThis(), lean: jest.fn().mockResolvedValue([]) }
           : {
               select: jest.fn().mockReturnThis(),

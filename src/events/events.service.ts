@@ -87,6 +87,7 @@ import { ReviewProposalDto } from './dto/review-proposal.dto';
 import { AssignPlayersDto } from './dto/assign-players.dto';
 import { ResubmitProposalDto } from './dto/resubmit-proposal.dto';
 import { RespondInvitationDto } from './dto/respond-invitation.dto';
+import { JoinAnonymousDto } from './dto/join-anonymous.dto';
 import {
   Challenge,
   ChallengeDocument,
@@ -1242,6 +1243,103 @@ export class EventsService {
       // than silently dropping people the member added.
       guestsRemoved,
     };
+  }
+
+  /**
+   * `POST /events/:id/join-anonymous` — a walk-in with no account joins a
+   * PUBLIC event under just a name (2026-10-14).
+   *
+   * Anonymous, not a guest: nobody sponsors them and nothing needs approval
+   * — the event being public IS the invitation. The row has no `userId`, so
+   * downstream they travel the guest rails (`team.guests`, roster-row ids).
+   *
+   * Same atomic capacity guard as `join()`: status must be `join` and the
+   * roster under `maxPlayers`, checked and incremented in one update so two
+   * walk-ins cannot both take the last slot. Public events always carry a
+   * numeric cap (the schema default), so the null-cap case cannot arise here.
+   *
+   * No identity means no dedupe and no self-leave: the same name may join
+   * twice (two Aungs exist), and removal is the organizer's call
+   * (`DELETE /events/:id/anonymous/:playerId`).
+   */
+  async joinAnonymous(eventId: string, dto: JoinAnonymousDto) {
+    if (!Types.ObjectId.isValid(eventId)) {
+      throw new NotFoundException('Event not found');
+    }
+    const event = await this.eventModel
+      .findById(eventId)
+      .select('isPublic type')
+      .lean();
+    if (!event) throw new NotFoundException('Event not found');
+    if (!event.isPublic) {
+      throw new BadRequestException(
+        'Only public events accept anonymous players',
+      );
+    }
+
+    const updated = await this.eventModel.findOneAndUpdate(
+      {
+        _id: new Types.ObjectId(eventId),
+        status: 'join',
+        $expr: { $lt: ['$joinedCount', '$maxPlayers'] },
+      },
+      { $inc: { joinedCount: 1 } },
+      { new: true },
+    );
+    if (!updated) {
+      const current = await this.eventModel.findById(eventId).lean();
+      throw new BadRequestException(
+        !canJoin(current?.status)
+          ? 'Event is not open for joining'
+          : 'Event is full',
+      );
+    }
+
+    const row = await this.playerModel.create({
+      eventId: new Types.ObjectId(eventId),
+      guestName: dto.name.trim(),
+      type: 'anonymous',
+      status: 'joined',
+      joinedAt: new Date(),
+    });
+
+    return {
+      message: 'Joined event successfully',
+      // The device can keep this to show "you are on the roster" — it is the
+      // only handle an accountless player has.
+      playerId: String(row._id),
+      name: row.guestName,
+    };
+  }
+
+  /**
+   * The organizer removes an anonymous row — the only exit it has, since an
+   * accountless player cannot authenticate a self-leave.
+   */
+  async removeAnonymous(eventId: string, requesterId: string, playerId: string) {
+    await this.assertOrganizer(eventId, requesterId);
+    if (!Types.ObjectId.isValid(playerId)) {
+      throw new BadRequestException('Invalid player id');
+    }
+
+    const row = await this.playerModel.findOne({
+      _id: new Types.ObjectId(playerId),
+      eventId: new Types.ObjectId(eventId),
+      type: 'anonymous',
+      status: 'joined',
+    });
+    if (!row) {
+      throw new NotFoundException('Anonymous player not found for this event');
+    }
+
+    row.status = 'cancelled';
+    await row.save();
+    await this.eventModel.findOneAndUpdate(
+      { _id: new Types.ObjectId(eventId), joinedCount: { $gt: 0 } },
+      { $inc: { joinedCount: -1 } },
+    );
+
+    return { message: 'Anonymous player removed' };
   }
 
   /**
@@ -3875,7 +3973,7 @@ export class EventsService {
       guestIds.length
         ? this.playerModel
             .find({ _id: { $in: guestIds } })
-            .select('name')
+            .select('guestName')
             .lean()
         : [],
     ]);
@@ -3889,7 +3987,9 @@ export class EventsService {
     }
     for (const guest of guests as any[]) {
       resolved.set(guest._id.toString(), {
-        name: guest.name ?? null,
+        // The roster row's display name lives in `guestName` (guests and
+        // anonymous players alike).
+        name: guest.guestName ?? null,
         isGuest: true,
       });
     }
@@ -4010,17 +4110,20 @@ export class EventsService {
   }
 
   /**
-   * Roster-row ids of the APPROVED guests on an event, oldest first.
+   * Roster-row ids of the ACCOUNTLESS players on an event, oldest first:
+   * approved guests and anonymous walk-ins.
    *
-   * The guest counterpart to `joinedPlayerIds`. Returns roster-row ids rather
-   * than user ids because a guest has no user account — those ids are what
-   * `team.guests` holds.
+   * The counterpart to `joinedPlayerIds`. Returns roster-row ids rather than
+   * user ids because neither kind has a user account — those ids are what
+   * `team.guests` holds, so both are dealt into teams the same way.
+   * (Anonymous rows default to `approval: 'approved'`, so the approved
+   * filter admits them unchanged.)
    */
   private async approvedGuestIds(eventId: string): Promise<string[]> {
     const guests = await this.playerModel
       .find({
         eventId: new Types.ObjectId(eventId),
-        type: 'guest',
+        type: { $in: ['guest', 'anonymous'] },
         status: 'joined',
         approval: 'approved',
       })
@@ -4091,19 +4194,20 @@ export class EventsService {
    * reference nor a device to notify, and a guest row carries no `userId` at
    * all, so including them here would dereference undefined.
    *
-   * Phrased as `type: { $ne: 'guest' }` rather than `type: 'registered'`, for
-   * the same reason `PLAYABLE_APPROVAL` is an exclusion: `type` was added with
-   * a default, and Mongoose defaults apply on WRITE, not on read. Every roster
+   * Phrased as an EXCLUSION (`$nin`) rather than `type: 'registered'`, for
+   * the same reason `PLAYABLE_APPROVAL` is one: `type` was added with a
+   * default, and Mongoose defaults apply on WRITE, not on read. Every roster
    * row created before that field existed has no `type` at all, so a positive
    * match found none of them and shuffle reported an empty roster on every
-   * pre-existing event.
+   * pre-existing event. `anonymous` joined the exclusion with the guests —
+   * same reason, no `userId` to dereference.
    */
   private async joinedPlayerIds(eventId: string): Promise<string[]> {
     const players = await this.playerModel
       .find({
         eventId: new Types.ObjectId(eventId),
         status: 'joined',
-        type: { $ne: 'guest' },
+        type: { $nin: ['guest', 'anonymous'] },
         approval: PLAYABLE_APPROVAL,
       })
       .select('userId')

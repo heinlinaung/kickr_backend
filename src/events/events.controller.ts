@@ -717,6 +717,28 @@ export class EventsController {
     );
   }
 
+  @Delete(':id/anonymous/:playerId')
+  @ApiOperation({
+    summary: 'Remove an anonymous player (organizer)',
+    description:
+      'The only exit an anonymous roster row has — an accountless player ' +
+      'cannot authenticate a self-leave. `playerId` is the roster-row id ' +
+      'returned by POST /events/:id/join-anonymous (also visible in ' +
+      'GET /events/:id/players, type `anonymous`).',
+  })
+  @ApiResponse({ status: 404, description: 'No such anonymous player here' })
+  removeAnonymous(
+    @Param('id') id: string,
+    @Param('playerId') playerId: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.eventsService.removeAnonymous(
+      id,
+      user._id.toString(),
+      playerId,
+    );
+  }
+
   @Get(':id/teams')
   @ApiOperation({ summary: "The event's teams, with players populated" })
   teams(@Param('id') id: string) {

@@ -82,7 +82,7 @@ describe('EventsService — team formation', () => {
       lean: jest
         .fn()
         .mockResolvedValue([
-          { _id: new Types.ObjectId(GUEST_ROW), name: 'Guest Joe' },
+          { _id: new Types.ObjectId(GUEST_ROW), guestName: 'Guest Joe' },
         ]),
     });
     userModel.find = jest.fn().mockReturnValue({

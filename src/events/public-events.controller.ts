@@ -1,9 +1,10 @@
 // src/events/public-events.controller.ts
-import { Controller, Get, Param, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { OptionalJwtAuthGuard } from '../common/guards/optional-jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { EventsService } from './events.service';
+import { JoinAnonymousDto } from './dto/join-anonymous.dto';
 
 /**
  * The PUBLIC event read (2026-10-14): event detail needs no account — a
@@ -39,5 +40,25 @@ export class PublicEventsController {
   @ApiResponse({ status: 404, description: 'No such event, or a malformed id' })
   findOne(@Param('id') id: string, @CurrentUser() user: any) {
     return this.eventsService.findById(id, user?._id?.toString());
+  }
+
+  @Post(':id/join-anonymous')
+  @ApiOperation({
+    summary: 'Join a PUBLIC event without an account (name required)',
+    description:
+      'PUBLIC — no token, no sign-up. Only `name` is required; the roster ' +
+      'row is created as type `anonymous` (no sponsor, no approval — unlike ' +
+      'a guest, which is unchanged). Same capacity rules as a normal join: ' +
+      "the event must be public, in `join`, and under `maxPlayers`. The " +
+      'returned `playerId` is the only handle the player has — removal is ' +
+      'the organizer\'s call (DELETE /events/:id/anonymous/:playerId).',
+  })
+  @ApiResponse({
+    status: 400,
+    description: 'Event is private, not open for joining, or full',
+  })
+  @ApiResponse({ status: 404, description: 'No such event' })
+  joinAnonymous(@Param('id') id: string, @Body() dto: JoinAnonymousDto) {
+    return this.eventsService.joinAnonymous(id, dto);
   }
 }
