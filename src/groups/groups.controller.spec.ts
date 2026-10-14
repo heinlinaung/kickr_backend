@@ -1,6 +1,7 @@
 import { Test } from '@nestjs/testing';
 import { BadRequestException } from '@nestjs/common';
 import { GroupsController } from './groups.controller';
+import { PublicGroupsController } from './public-groups.controller';
 import { GroupsService } from './groups.service';
 
 describe('GroupsController', () => {
@@ -163,9 +164,17 @@ describe('GroupsController', () => {
       expect(svc.create).toHaveBeenCalledWith('requester-1', dto);
     });
 
-    it('GET /groups/:id passes the caller so the response can carry userRole', async () => {
-      await controller.findOne('g1', user);
+    it('GET /groups/:id (public controller) passes the caller when present', async () => {
+      // The detail moved to PublicGroupsController (optional auth).
+      const pub = new PublicGroupsController(svc as any);
+      await pub.findOne('g1', user);
       expect(svc.findById).toHaveBeenCalledWith('g1', 'requester-1');
+    });
+
+    it('GET /groups/:id serves an ANONYMOUS caller with no user id', async () => {
+      const pub = new PublicGroupsController(svc as any);
+      await pub.findOne('g1', null);
+      expect(svc.findById).toHaveBeenCalledWith('g1', undefined);
     });
 
     it('PATCH /groups/:id', async () => {
@@ -221,16 +230,37 @@ describe('GroupsController', () => {
   });
 
   describe('route ordering', () => {
-    it("declares the literal 'search' route before the ':id' wildcard", () => {
-      const src = require('fs').readFileSync(
+    it("the ':id' wildcard lives in the PUBLIC controller, registered last", () => {
+      // GET /groups/:id moved to PublicGroupsController (optional auth). The
+      // bare ':id' must not exist in the guarded controller any more…
+      const fs = require('fs');
+      const guarded = fs.readFileSync(
         __dirname + '/groups.controller.ts',
         'utf8',
       );
-      const searchAt = src.indexOf("@Get('search')");
-      const idAt = src.indexOf("@Get(':id')");
-      expect(searchAt).toBeGreaterThan(-1);
-      expect(idAt).toBeGreaterThan(-1);
-      expect(searchAt).toBeLessThan(idAt);
+      expect(guarded.indexOf("@Get('search')")).toBeGreaterThan(-1);
+      expect(guarded.indexOf("@Get(':id')")).toBe(-1);
+
+      // …and the public controller that owns it must be registered AFTER the
+      // guarded one, or its ':id' would swallow /groups/search.
+      const pub = fs.readFileSync(
+        __dirname + '/public-groups.controller.ts',
+        'utf8',
+      );
+      expect(pub.indexOf("@Get(':id')")).toBeGreaterThan(-1);
+
+      const moduleSrc = fs.readFileSync(
+        __dirname + '/groups.module.ts',
+        'utf8',
+      );
+      const controllersAt = moduleSrc.indexOf('controllers:');
+      const guardedAt = moduleSrc.indexOf('GroupsController', controllersAt);
+      const publicAt = moduleSrc.indexOf(
+        'PublicGroupsController',
+        controllersAt,
+      );
+      expect(guardedAt).toBeGreaterThan(-1);
+      expect(publicAt).toBeGreaterThan(guardedAt);
     });
   });
 });

@@ -153,6 +153,8 @@ export interface ListEventsQuery {
    * flipping it would silently drop rows from every existing client.
    */
   includeExpired?: boolean;
+  /** Comma-separated sport values, e.g. "football,badminton". */
+  sports?: string;
 }
 
 @Injectable()
@@ -268,7 +270,7 @@ export class EventsService {
    * region is set: they have no group from which to derive a region.
    */
   async list(userId: string, query: ListEventsQuery = {}) {
-    const { region, near, radius, from, to, status } = query;
+    const { region, near, radius, from, to, status, sports } = query;
     const includeExpired = query.includeExpired ?? true;
 
     // Visibility: anything public, PLUS anything the caller is on the roster
@@ -315,6 +317,41 @@ export class EventsService {
           // match the public half, so keep the simpler filter and let the
           // index work.
           { isPublic: true };
+
+    if (sports?.trim()) {
+      // Comma-separated, matched in the stored (lowercase) form. Filter
+      // semantics like `region`: an unknown value simply matches nothing —
+      // callers are browsing, not writing.
+      const wanted = sports
+        .split(',')
+        .map((sport) => sport.trim().toLowerCase())
+        .filter(Boolean);
+      if (wanted.length) {
+        // An event normally carries its own sportType (schema default
+        // 'football'), but rows written before the field existed have none —
+        // those fall back to their GROUP's sportType. `sportType: null`
+        // matches both stored null and a missing field.
+        const sportGroups = await this.groupModel
+          .find({ sportType: { $in: wanted } })
+          .select('_id')
+          .lean();
+        const sportArms: Record<string, unknown>[] = [
+          { sportType: { $in: wanted } },
+        ];
+        if (sportGroups.length) {
+          sportArms.push({
+            sportType: null,
+            groupId: { $in: sportGroups.map((g) => g._id) },
+          });
+        }
+        // Into $and: the visibility disjunction already owns the top-level
+        // $or, and two $or keys would overwrite each other.
+        filter.$and = [
+          ...((filter.$and as Record<string, unknown>[]) ?? []),
+          sportArms.length > 1 ? { $or: sportArms } : sportArms[0],
+        ];
+      }
+    }
 
     if (region?.trim()) {
       // country/city are stored lowercase, so this is an exact match on a

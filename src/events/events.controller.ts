@@ -112,6 +112,15 @@ export class EventsController {
       'and an event can be past-dated while still `join` because nobody ' +
       'advanced it. An explicit ?from= overrides this floor.',
   })
+  @ApiQuery({
+    name: 'sports',
+    required: false,
+    example: 'football,badminton',
+    description:
+      'Comma-separated sport values (see GET /sport-types). Matches the ' +
+      "event's own sportType; an event without one falls back to its " +
+      "group's sportType.",
+  })
   list(
     @CurrentUser() user: any,
     @Query('region') region?: string,
@@ -121,6 +130,7 @@ export class EventsController {
     @Query('to') to?: string,
     @Query('status') status?: string,
     @Query('includeExpired') includeExpired?: string,
+    @Query('sports') sports?: string,
   ) {
     return this.eventsService.list(user._id.toString(), {
       region,
@@ -129,6 +139,7 @@ export class EventsController {
       from,
       to,
       status,
+      sports,
       // Explicitly compared to 'false' rather than reusing the
       // `=== 'true'` idiom from the other routes: those default to FALSE, so
       // an absent param correctly reads as false there. Here the default is
@@ -284,26 +295,10 @@ export class EventsController {
     return this.eventsService.create(user._id.toString(), dto);
   }
 
-  @Get(':id')
-  @ApiOperation({
-    summary: 'Event detail, with everything a detail screen needs',
-    description:
-      'Beyond the event document, this resolves the things a detail screen ' +
-      'would otherwise fetch separately: `group` ({ _id, name, logo, ' +
-      'wallpaper }, null for a standalone event), `groupRules`, `location` ' +
-      '(resolved venue object), `teams` (players populated), `matches`, ' +
-      'derived `standings`, plus `userRole` (the caller\'s GROUP role), ' +
-      '`joinedByMe` (whether the caller is on the ROSTER — not the same ' +
-      'thing), `likedByMe` and `isCashier` (whether the caller is the parent ' +
-      "group's cashier — always false for standalone events, where the " +
-      'creator reviews payments). `group` and `groupRules` are read-only ' +
-      'projections; edit them via PATCH /groups/:id. An invalid or unknown ' +
-      'id is a 404, never a 500.',
-  })
-  @ApiResponse({ status: 404, description: 'No such event, or a malformed id' })
-  findOne(@Param('id') id: string, @CurrentUser() user: any) {
-    return this.eventsService.findById(id, user._id.toString());
-  }
+  // GET :id (event detail) lives in PublicEventsController — it is publicly
+  // readable with OPTIONAL auth, which a class-level JwtAuthGuard cannot
+  // express. Registered after this controller so the static routes above
+  // (search, joined, …) keep matching first.
 
   @Patch(':id')
   @ApiOperation({ summary: 'Edit an event (organizer only, not once done)' })

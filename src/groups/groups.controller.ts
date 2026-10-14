@@ -94,10 +94,10 @@ export class GroupsController {
     );
   }
 
-  @Get(':id')
-  findOne(@Param('id') id: string, @CurrentUser() user: any) {
-    return this.groupsService.findById(id, user._id.toString());
-  }
+  // GET :id (group detail) lives in PublicGroupsController — publicly
+  // readable with OPTIONAL auth, which the class-level guard here cannot
+  // express. Registered after this controller so `search` and the other
+  // static routes keep matching first.
 
   @Patch(':id')
   update(
