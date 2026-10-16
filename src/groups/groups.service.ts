@@ -377,6 +377,7 @@ export class GroupsService {
     limit = DEFAULT_PAGE_LIMIT,
     cursor?: string,
     userId?: string,
+    sportType?: string,
   ) {
     const term = (q ?? '').trim();
     if (!term) return { items: [], nextCursor: null, hasMore: false };
@@ -385,6 +386,12 @@ export class GroupsService {
     const filter: Record<string, unknown> = {
       $or: [{ name: rx }, { handle: rx }],
     };
+
+    // Optional sport narrowing (e.g. `football`). An exact match on the stored
+    // value; not validated against `sporttypes` — an unknown sport simply
+    // matches nothing, which is the right answer for a filter.
+    const sport = sportType?.trim();
+    if (sport) filter.sportType = sport;
 
     // PRIVATE GROUPS ARE INCLUDED, deliberately. A private group is
     // discoverable — someone has to be able to find it to ask to join — and

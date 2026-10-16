@@ -44,6 +44,13 @@ export class EventResult {
   @Prop({ type: Number, default: null })
   mvpGoal: number | null;
 
+  /**
+   * Assists made by the MVP. `null` on results recorded before the field
+   * existed — "not reported", not zero.
+   */
+  @Prop({ type: Number, default: null })
+  mvpAssist: number | null;
+
   @Prop({ type: Number, default: null })
   scoreA: number | null;
 

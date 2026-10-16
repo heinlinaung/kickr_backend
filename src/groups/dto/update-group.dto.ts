@@ -8,8 +8,11 @@ import {
   Matches,
   MinLength,
   MaxLength,
+  ValidateNested,
+  ArrayMaxSize,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
+import { JerseyColorDto } from './jersey-color.dto';
 
 export class UpdateGroupDto {
   @ApiProperty({ example: 'Bangkok FC Updated', minLength: 2, required: false })
@@ -83,4 +86,21 @@ export class UpdateGroupDto {
     typeof value === 'string' ? value.trim().toLowerCase() : value,
   )
   city?: string;
+
+  @ApiProperty({
+    required: false,
+    type: [JerseyColorDto],
+    example: [
+      { top: 'white', pant: 'white' },
+      { top: 'red', pant: 'black' },
+    ],
+    description:
+      "The team's kits (max 5) — one entry per jersey set, e.g. home and away.",
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(5)
+  @ValidateNested({ each: true })
+  @Type(() => JerseyColorDto)
+  jerseyColors?: JerseyColorDto[];
 }

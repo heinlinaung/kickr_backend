@@ -323,6 +323,18 @@ describe('GroupsService', () => {
       }
     });
 
+    it('filters by sportType only when one is given', async () => {
+      groupModel.find.mockReturnValue(q([]));
+
+      await service.search('bangkok', 20, undefined, undefined, 'football');
+      await service.search('bangkok');
+      await service.search('bangkok', 20, undefined, undefined, '  ');
+
+      expect(groupModel.find.mock.calls[0][0].sportType).toBe('football');
+      expect(groupModel.find.mock.calls[1][0].sportType).toBeUndefined();
+      expect(groupModel.find.mock.calls[2][0].sportType).toBeUndefined();
+    });
+
     it('escapes regex special characters instead of throwing', async () => {
       groupModel.find.mockReturnValue(q([]));
 

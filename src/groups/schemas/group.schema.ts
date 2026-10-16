@@ -75,6 +75,23 @@ export class Group {
   @Prop({ type: String, default: '' })
   rules: string;
 
+  /**
+   * The team's kits — one { top, pant } colour pair per jersey set, since a
+   * team usually has two or three (home / away / third). Free-text colours;
+   * either may be omitted.
+   */
+  @Prop({
+    type: [
+      {
+        top: { type: String, trim: true },
+        pant: { type: String, trim: true },
+        _id: false,
+      },
+    ],
+    default: [],
+  })
+  jerseyColors: { top?: string; pant?: string }[];
+
   @Prop({ type: [{ type: Types.ObjectId, ref: 'Location' }], default: [] })
   locations: Types.ObjectId[];
 

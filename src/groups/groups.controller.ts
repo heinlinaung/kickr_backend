@@ -56,7 +56,8 @@ export class GroupsController {
   @ApiOperation({
     summary: 'Find groups by name or handle',
     description:
-      'Case-insensitive substring match on name and handle. ' +
+      'Case-insensitive substring match on name and handle, optionally ' +
+      'narrowed to one sport with `sportType` (e.g. `football`). ' +
       '⚠️ CHANGED — this used to return a bare array capped at 20 with no way ' +
       'past it; it now returns a page: `{ items, nextCursor, hasMore }`, ' +
       'matching /users/search and /events/search. ' +
@@ -81,17 +82,27 @@ export class GroupsController {
       'Opaque pagination cursor. Pass `nextCursor` from the previous ' +
       'response verbatim; omit for the first page. Invalid values give 400.',
   })
+  @ApiQuery({
+    name: 'sportType',
+    required: false,
+    example: 'football',
+    description:
+      'Optional. Only return groups of this sport — one of the values from ' +
+      'GET /configuration `sportTypes`. Omit to search every sport.',
+  })
   search(
     @CurrentUser() user: any,
     @Query('q') q: string,
     @Query('limit') limit?: string,
     @Query('cursor') cursor?: string,
+    @Query('sportType') sportType?: string,
   ) {
     return this.groupsService.search(
       q ?? '',
       limit === undefined ? undefined : Number(limit),
       cursor,
       user._id.toString(),
+      sportType,
     );
   }
 

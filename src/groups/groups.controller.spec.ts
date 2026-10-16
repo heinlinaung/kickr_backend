@@ -83,12 +83,19 @@ describe('GroupsController', () => {
         undefined,
         undefined,
         'u1',
+        undefined,
       );
     });
 
     it('coerces a missing query to an empty string', async () => {
       await controller.search(CALLER, undefined as any);
-      expect(svc.search).toHaveBeenCalledWith('', undefined, undefined, 'u1');
+      expect(svc.search).toHaveBeenCalledWith(
+        '',
+        undefined,
+        undefined,
+        'u1',
+        undefined,
+      );
     });
 
     it('passes limit and cursor through', async () => {
@@ -99,6 +106,25 @@ describe('GroupsController', () => {
         5,
         'eyJpIjoiYWJjIn0',
         'u1',
+        undefined,
+      );
+    });
+
+    it('passes the optional sportType through', async () => {
+      await controller.search(
+        CALLER,
+        'lumpini',
+        undefined,
+        undefined,
+        'football',
+      );
+
+      expect(svc.search).toHaveBeenCalledWith(
+        'lumpini',
+        undefined,
+        undefined,
+        'u1',
+        'football',
       );
     });
 

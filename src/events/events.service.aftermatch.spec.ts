@@ -100,6 +100,7 @@ describe('EventsService — after-match (spec §4.4)', () => {
         result: {
           mvpUserId: new Types.ObjectId(PLAYER),
           mvpGoal: 12,
+          mvpAssist: 4,
           scoreA: null,
           scoreB: null,
         },
@@ -110,20 +111,22 @@ describe('EventsService — after-match (spec §4.4)', () => {
 
       expect(doc.result.mvpUserId.toString()).toBe(PLAYER);
       expect(doc.result.mvpGoal).toBe(12);
+      expect(doc.result.mvpAssist).toBe(4);
       expect(doc.result).toMatchObject({ scoreA: 3, scoreB: 1 });
     });
   });
 
   describe('submitMvp — POST /events/:id/mvp', () => {
-    it('records the MVP and their goal count when they joined the event', async () => {
+    it('records the MVP and their goal/assist counts when they joined the event', async () => {
       const doc = eventDoc();
       eventModel.findById.mockResolvedValue(doc);
       playerModel.findOne.mockResolvedValue({ _id: 'row' });
 
-      await service.submitMvp(EVENT_ID, CREATOR, { userId: PLAYER, goal: 12 });
+      await service.submitMvp(EVENT_ID, CREATOR, { userId: PLAYER, goal: 12, assist: 4 });
 
       expect(doc.result.mvpUserId.toString()).toBe(PLAYER);
       expect(doc.result.mvpGoal).toBe(12);
+      expect(doc.result.mvpAssist).toBe(4);
       expect(doc.save).toHaveBeenCalled();
     });
 
@@ -133,7 +136,7 @@ describe('EventsService — after-match (spec §4.4)', () => {
 
       // Naming a non-player would corrupt the profile mvpCount (parent §2.3).
       await expect(
-        service.submitMvp(EVENT_ID, CREATOR, { userId: OUTSIDER, goal: 1 }),
+        service.submitMvp(EVENT_ID, CREATOR, { userId: OUTSIDER, goal: 1, assist: 0 }),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
@@ -142,21 +145,26 @@ describe('EventsService — after-match (spec §4.4)', () => {
       async (status) => {
         eventModel.findById.mockResolvedValue(eventDoc({ status }));
         await expect(
-          service.submitMvp(EVENT_ID, CREATOR, { userId: PLAYER, goal: 1 }),
+          service.submitMvp(EVENT_ID, CREATOR, { userId: PLAYER, goal: 1, assist: 0 }),
         ).rejects.toBeInstanceOf(BadRequestException);
       },
     );
 
     it('preserves a score recorded earlier — either order works', async () => {
       const doc = eventDoc({
-        result: { mvpUserId: null, mvpGoal: null, scoreA: 3, scoreB: 1 },
+        result: { mvpUserId: null, mvpGoal: null, mvpAssist: null, scoreA: 3, scoreB: 1 },
       });
       eventModel.findById.mockResolvedValue(doc);
       playerModel.findOne.mockResolvedValue({ _id: 'row' });
 
-      await service.submitMvp(EVENT_ID, CREATOR, { userId: PLAYER, goal: 12 });
+      await service.submitMvp(EVENT_ID, CREATOR, { userId: PLAYER, goal: 12, assist: 4 });
 
-      expect(doc.result).toMatchObject({ scoreA: 3, scoreB: 1, mvpGoal: 12 });
+      expect(doc.result).toMatchObject({
+        scoreA: 3,
+        scoreB: 1,
+        mvpGoal: 12,
+        mvpAssist: 4,
+      });
     });
   });
 
