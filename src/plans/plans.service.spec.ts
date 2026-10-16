@@ -16,7 +16,7 @@ const SEEDED: Record<string, any> = {
   default: {
     name: 'default',
     maxGroupsOwned: 2,
-    maxEventsPerWeek: 3,
+    maxEventsPerWeek: 10,
     maxGalleryPhotosPerGroup: 50,
   },
   'no-limit-plan': {
@@ -68,7 +68,7 @@ describe('PlansService', () => {
     it('reads the default row from the database', async () => {
       expect(await service.limitsByName('default')).toEqual({
         maxGroupsOwned: 2,
-        maxEventsPerWeek: 3,
+        maxEventsPerWeek: 10,
         maxGalleryPhotosPerGroup: 50,
       });
     });

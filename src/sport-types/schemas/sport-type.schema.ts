@@ -49,6 +49,14 @@ export class SportType {
   subTypes: string[];
 
   /**
+   * The roles a player can take in this sport, in display order, e.g.
+   * football's `['goalkeeper', 'defender', 'midfielder', 'forward']`. Empty
+   * for sports without positions. Lowercase slugs, like `subTypes`.
+   */
+  @Prop({ type: [String], default: [] })
+  playerRoles: string[];
+
+  /**
    * Display position, driving the default ordering. Separate from `_id`
    * because an ObjectId's order is creation order, which would make
    * reordering mean re-inserting.

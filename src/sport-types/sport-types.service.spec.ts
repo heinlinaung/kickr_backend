@@ -78,7 +78,12 @@ describe('SportTypesService', () => {
       const out = await service.findAll();
 
       expect(out).toEqual(
-        ROWS.map((r) => ({ ...r, name: r.value, matchProvided: true })),
+        ROWS.map((r) => ({
+          ...r,
+          name: r.value,
+          matchProvided: true,
+          playerRoles: [],
+        })),
       );
       const query = sportTypeModel.find.mock.results[0].value;
       expect(query.sort).toHaveBeenCalledWith({ sortOrder: 1, value: 1 });
@@ -159,9 +164,25 @@ describe('SportTypesService', () => {
         value: 'tennis',
         name: 'tennis',
         subTypes: ['singles'],
+        playerRoles: [],
         sortOrder: 4,
         matchProvided: true,
       });
+    });
+
+    it('stores playerRoles, deduped and in order', async () => {
+      sportTypeModel.findOne
+        .mockReturnValueOnce(one(ROWS[2])) // last by sortOrder
+        .mockReturnValueOnce(one({ value: 'hockey' }));
+
+      await service.create({
+        value: 'hockey',
+        playerRoles: ['goalkeeper', 'forward', 'goalkeeper'],
+      });
+
+      expect(sportTypeModel.create).toHaveBeenCalledWith(
+        expect.objectContaining({ playerRoles: ['goalkeeper', 'forward'] }),
+      );
     });
 
     it('stores matchProvided: false when sent', async () => {
@@ -202,6 +223,17 @@ describe('SportTypesService', () => {
       expect(sportTypeModel.updateOne).toHaveBeenCalledWith(
         { value: 'badminton' },
         { $set: { matchProvided: false } },
+      );
+    });
+
+    it('replaces playerRoles, deduped', async () => {
+      await service.update('football', {
+        playerRoles: ['goalkeeper', 'forward', 'forward'],
+      });
+
+      expect(sportTypeModel.updateOne).toHaveBeenCalledWith(
+        { value: 'football' },
+        { $set: { playerRoles: ['goalkeeper', 'forward'] } },
       );
     });
 

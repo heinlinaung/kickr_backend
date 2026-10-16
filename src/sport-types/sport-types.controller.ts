@@ -36,7 +36,8 @@ const ValueParam = ApiParam({
   example: 'football',
 });
 
-const ROW = '`{ value, name, subTypes, sortOrder, matchProvided }`';
+const ROW =
+  '`{ value, name, subTypes, playerRoles, sortOrder, matchProvided }`';
 
 /**
  * Every route — reads included — requires the caller's `role` to be
@@ -83,7 +84,7 @@ export class SportTypesController {
   @ApiResponse({ status: 201, description: `The created sport as ${ROW}` })
   @ApiResponse({
     status: 400,
-    description: 'value or a subType is not a lowercase slug',
+    description: 'value or a playerRole is not a lowercase slug',
   })
   @ApiResponse({
     status: 409,
@@ -115,7 +116,8 @@ export class SportTypesController {
   @ApiOperation({
     summary: 'Update a sport type (superadmin)',
     description:
-      'Changes `name`, `sortOrder` and/or `matchProvided`. `value` is the ' +
+      'Changes `name`, `sortOrder`, `matchProvided` and/or `playerRoles` ' +
+      '(replaced as a whole list). `value` is the ' +
       'ID stored on groups, events and users and never changes — renaming ' +
       'only changes the display `name`. `subTypes` are managed through the ' +
       '`/sub-types` endpoints.',

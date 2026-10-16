@@ -18,7 +18,7 @@ import { User, UserDocument } from '../users/schemas/user.schema';
 import { CreateSportTypeDto } from './dto/create-sport-type.dto';
 import { UpdateSportTypeDto } from './dto/update-sport-type.dto';
 
-const PUBLIC_FIELDS = 'value name subTypes sortOrder matchProvided';
+const PUBLIC_FIELDS = 'value name subTypes playerRoles sortOrder matchProvided';
 
 @Injectable()
 export class SportTypesService {
@@ -138,6 +138,7 @@ export class SportTypesService {
       value: dto.value,
       name,
       subTypes: unique(dto.subTypes ?? []),
+      playerRoles: unique(dto.playerRoles ?? []),
       sortOrder,
       matchProvided: dto.matchProvided ?? true,
     });
@@ -145,7 +146,7 @@ export class SportTypesService {
   }
 
   /**
-   * Updates `name`, `sortOrder` and/or `matchProvided`. `value` is the ID
+   * Updates `name`, `sortOrder`, `matchProvided` and/or `playerRoles`. `value` is the ID
    * other documents store and never changes, so a rename is a single write.
    * SubTypes are changed through the dedicated sub-type methods below.
    */
@@ -156,6 +157,9 @@ export class SportTypesService {
     if (dto.sortOrder !== undefined) $set.sortOrder = dto.sortOrder;
     if (dto.matchProvided !== undefined) {
       $set.matchProvided = dto.matchProvided;
+    }
+    if (dto.playerRoles !== undefined) {
+      $set.playerRoles = unique(dto.playerRoles);
     }
     if (dto.name !== undefined && dto.name !== sport.name) {
       await this.assertNameFree(dto.name, sport.value);
@@ -409,17 +413,24 @@ export class SportTypesService {
 }
 
 /**
- * `.lean()` skips schema defaults, so a row stored before `matchProvided` or
- * `name` existed would read them as undefined. Every such row is a match
- * sport, and is labelled by its value until a name is set.
+ * `.lean()` skips schema defaults, so a row stored before `matchProvided`,
+ * `name` or `playerRoles` existed would read them as undefined. Every such
+ * row is a match sport, is labelled by its value until a name is set, and
+ * has no player roles.
  */
 function withDefaults<
-  T extends { value: string; name?: string; matchProvided?: boolean },
->(row: T): T & { name: string; matchProvided: boolean } {
+  T extends {
+    value: string;
+    name?: string;
+    matchProvided?: boolean;
+    playerRoles?: string[];
+  },
+>(row: T): T & { name: string; matchProvided: boolean; playerRoles: string[] } {
   return {
     ...row,
     name: row.name ?? row.value,
     matchProvided: row.matchProvided ?? true,
+    playerRoles: row.playerRoles ?? [],
   };
 }
 

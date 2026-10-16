@@ -23,8 +23,8 @@
  * Matches on `value` and upserts, so re-running:
  *   - inserts anything missing,
  *   - refreshes `subTypes`/`sortOrder` on rows that exist,
- *   - backfills `matchProvided: true` and `name` where a row has no value
- *     yet, but never overwrites one a superadmin has set,
+ *   - backfills `matchProvided: true`, `name` and `playerRoles` where a row
+ *     has no value yet, but never overwrites one a superadmin has set,
  *   - never duplicates a sport (`value` is uniquely indexed).
  *
  * Sports in the collection but NOT in this list are reported and left alone —
@@ -52,18 +52,57 @@ const SPORT_TYPES: {
   value: string;
   name: string;
   subTypes: string[];
+  playerRoles: string[];
   sortOrder: number;
 }[] = [
   {
     value: 'football',
     name: 'Football',
     subTypes: ['futsal', 'stadium'],
+    // Same roles as the profile's FOOTBALL_POSITIONS.
+    playerRoles: [
+      'goalkeeper',
+      'defender',
+      'midfielder',
+      'forward',
+      'playmaker',
+    ],
     sortOrder: 1,
   },
-  { value: 'futsal', name: 'Futsal', subTypes: [], sortOrder: 2 },
-  { value: 'badminton', name: 'Badminton', subTypes: [], sortOrder: 3 },
-  { value: 'padel', name: 'Padel', subTypes: [], sortOrder: 4 },
-  { value: 'basketball', name: 'Basketball', subTypes: [], sortOrder: 5 },
+  {
+    value: 'futsal',
+    name: 'Futsal',
+    subTypes: [],
+    playerRoles: ['goalkeeper', 'defender', 'winger', 'pivot'],
+    sortOrder: 2,
+  },
+  {
+    value: 'badminton',
+    name: 'Badminton',
+    subTypes: [],
+    playerRoles: [],
+    sortOrder: 3,
+  },
+  {
+    value: 'padel',
+    name: 'Padel',
+    subTypes: [],
+    playerRoles: [],
+    sortOrder: 4,
+  },
+  {
+    value: 'basketball',
+    name: 'Basketball',
+    subTypes: [],
+    playerRoles: [
+      'point-guard',
+      'shooting-guard',
+      'small-forward',
+      'power-forward',
+      'center',
+    ],
+    sortOrder: 5,
+  },
 ];
 
 function sameStringArray(a: unknown, b: string[]): boolean {
@@ -123,18 +162,23 @@ async function main() {
 
     const backfillMatch = typeof current.matchProvided !== 'boolean';
     const backfillName = typeof current.name !== 'string';
+    const backfillRoles = !Array.isArray(current.playerRoles);
     if (
       current.sortOrder !== sport.sortOrder ||
       !sameStringArray(current.subTypes, sport.subTypes) ||
       backfillMatch ||
-      backfillName
+      backfillName ||
+      backfillRoles
     ) {
       console.log(
         `~ update  ${sport.value}: subTypes [${String(current.subTypes)}] -> ` +
           `[${sport.subTypes.join(', ')}], sortOrder ` +
           `${String(current.sortOrder)} -> ${sport.sortOrder}` +
           (backfillMatch ? ', matchProvided -> true' : '') +
-          (backfillName ? `, name -> ${sport.name}` : ''),
+          (backfillName ? `, name -> ${sport.name}` : '') +
+          (backfillRoles
+            ? `, playerRoles -> [${sport.playerRoles.join(', ')}]`
+            : ''),
       );
       if (APPLY) {
         await col.updateOne(
@@ -145,6 +189,7 @@ async function main() {
               sortOrder: sport.sortOrder,
               ...(backfillMatch && { matchProvided: true }),
               ...(backfillName && { name: sport.name }),
+              ...(backfillRoles && { playerRoles: sport.playerRoles }),
               updatedAt: new Date(),
             },
           },

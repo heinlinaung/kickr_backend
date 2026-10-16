@@ -444,6 +444,50 @@ export class GroupsService {
   }
 
   /**
+   * Every group on the platform, newest first, one numbered page at a time,
+   * optionally narrowed by a name/handle search.
+   * Superadmin only — the route guard enforces it, not this method.
+   *
+   * Page numbers + total rather than the cursor used elsewhere: the admin
+   * table renders numbered pagination and a group count, which a keyset
+   * cannot give. `.skip()` is acceptable here — one superadmin, a bounded
+   * collection — but would not be on a public feed (see pagination/cursor).
+   *
+   * Unlike search this returns whole documents (invite code and payment
+   * details included): it is an admin view, not a discovery card.
+   */
+  async listAll(q?: string, page = 1, limit = DEFAULT_PAGE_LIMIT) {
+    const term = (q ?? '').trim();
+    const filter: Record<string, unknown> = {};
+    if (term) {
+      const rx = new RegExp(escapeRegex(term), 'i');
+      filter.$or = [{ name: rx }, { handle: rx }];
+    }
+
+    const size = clampLimit(limit);
+    const pageNo = Number.isFinite(page) && page >= 1 ? Math.trunc(page) : 1;
+
+    const [items, total] = await Promise.all([
+      this.groupModel
+        .find(filter)
+        // _id tiebreaks equal timestamps so pages never overlap.
+        .sort({ _id: -1 })
+        .skip((pageNo - 1) * size)
+        .limit(size)
+        .lean(),
+      this.groupModel.countDocuments(filter),
+    ]);
+
+    return {
+      items,
+      total,
+      page: pageNo,
+      limit: size,
+      totalPages: Math.ceil(total / size),
+    };
+  }
+
+  /**
    * Throws unless the caller may see a private group's contents.
    *
    * Public groups are open, as before — only private ones are gated. The gate
@@ -944,7 +988,11 @@ export class GroupsService {
    * null clears the seat, which BLOCKS event payment reviews until a new
    * cashier is appointed (the deliberate design: no silent fallback).
    */
-  async setCashier(groupId: string, requesterId: string, userId: string | null) {
+  async setCashier(
+    groupId: string,
+    requesterId: string,
+    userId: string | null,
+  ) {
     const group = await this.groupModel
       .findById(groupId)
       .select('ownerId cashierId')

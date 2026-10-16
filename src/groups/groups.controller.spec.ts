@@ -3,6 +3,7 @@ import { BadRequestException } from '@nestjs/common';
 import { GroupsController } from './groups.controller';
 import { PublicGroupsController } from './public-groups.controller';
 import { GroupsService } from './groups.service';
+import { SuperadminGuard } from '../common/guards/superadmin.guard';
 
 describe('GroupsController', () => {
   let controller: GroupsController;
@@ -15,6 +16,13 @@ describe('GroupsController', () => {
     updateWallpaper: jest.fn().mockResolvedValue({ _id: 'g1' }),
     updateLogo: jest.fn().mockResolvedValue({ _id: 'g1' }),
     search: jest.fn().mockResolvedValue([]),
+    listAll: jest.fn().mockResolvedValue({
+      items: [],
+      total: 0,
+      page: 1,
+      limit: 20,
+      totalPages: 0,
+    }),
     getQr: jest.fn().mockResolvedValue({ inviteCode: 'c', inviteLink: 'l' }),
     listLocations: jest.fn().mockResolvedValue([]),
     attachLocation: jest.fn().mockResolvedValue({ _id: 'g1' }),
@@ -24,7 +32,9 @@ describe('GroupsController', () => {
     leave: jest.fn().mockResolvedValue({ message: 'You have left the group' }),
     updateMemberRole: jest.fn().mockResolvedValue({ role: 'admin' }),
     generateInviteCode: jest.fn().mockResolvedValue('code-1'),
-    remove: jest.fn().mockResolvedValue({ message: 'Group deleted successfully' }),
+    remove: jest
+      .fn()
+      .mockResolvedValue({ message: 'Group deleted successfully' }),
   };
 
   const user = { _id: 'requester-1' } as any;
@@ -36,6 +46,28 @@ describe('GroupsController', () => {
       providers: [{ provide: GroupsService, useValue: svc }],
     }).compile();
     controller = m.get(GroupsController);
+  });
+
+  describe('listAll', () => {
+    it('GET /groups/group-all is superadmin only', () => {
+      const guards = Reflect.getMetadata(
+        '__guards__',
+        GroupsController.prototype.listAll,
+      );
+      expect(guards).toContain(SuperadminGuard);
+    });
+
+    it('passes q, page and limit through', async () => {
+      await controller.listAll('fc', '3', '5');
+      expect(svc.listAll).toHaveBeenCalledWith('fc', 3, 5);
+
+      await controller.listAll();
+      expect(svc.listAll).toHaveBeenLastCalledWith(
+        undefined,
+        undefined,
+        undefined,
+      );
+    });
   });
 
   describe('search', () => {
