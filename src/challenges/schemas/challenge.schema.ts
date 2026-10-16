@@ -48,6 +48,15 @@ export class Challenge {
   @Prop({ type: Types.ObjectId, ref: 'Event', default: null })
   eventId: Types.ObjectId | null;
 
+  /**
+   * True from the moment the challenge is sent until the challenged group
+   * reads its challenges (PATCH /challenges/read). Drives the challenged
+   * side's unread badge. Defaults false so rows that predate the badge
+   * don't all light up as unread.
+   */
+  @Prop({ type: Boolean, default: false })
+  unreadByChallenged: boolean;
+
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -58,3 +67,5 @@ export const ChallengeSchema = SchemaFactory.createForClass(Challenge);
 // pending-duplicate guard.
 ChallengeSchema.index({ challengerGroupId: 1, status: 1 });
 ChallengeSchema.index({ challengedGroupId: 1, status: 1 });
+// The unread badge count / clear.
+ChallengeSchema.index({ challengedGroupId: 1, unreadByChallenged: 1 });

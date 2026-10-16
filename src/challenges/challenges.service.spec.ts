@@ -61,6 +61,10 @@ describe('ChallengesService', () => {
     challengeModel.create = jest.fn().mockResolvedValue(challengeDoc());
     challengeModel.findById = jest.fn().mockResolvedValue(challengeDoc());
     challengeModel.find = jest.fn().mockReturnValue(chain([]));
+    challengeModel.countDocuments = jest.fn().mockResolvedValue(3);
+    challengeModel.updateMany = jest
+      .fn()
+      .mockResolvedValue({ modifiedCount: 3 });
 
     const m = await Test.createTestingModule({
       providers: [
@@ -116,6 +120,7 @@ describe('ChallengesService', () => {
       expect(doc.challengerGroupId.toString()).toBe(GROUP_A);
       expect(doc.challengedGroupId.toString()).toBe(GROUP_B);
       expect(doc.createdBy.toString()).toBe(ADMIN_A);
+      expect(doc.unreadByChallenged).toBe(true);
 
       expect(notifications.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -204,6 +209,53 @@ describe('ChallengesService', () => {
         service.listForGroup('nope', ADMIN_A),
       ).rejects.toBeInstanceOf(BadRequestException);
       expect(challengeModel.find).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('unreadCount', () => {
+    it("counts only challenges the group RECEIVED and hasn't read", async () => {
+      const res = await service.unreadCount(GROUP_B, ADMIN_B);
+
+      expect(res).toEqual({ groupId: GROUP_B, count: 3 });
+      const [filter] = challengeModel.countDocuments.mock.calls[0];
+      expect(filter.challengedGroupId.toString()).toBe(GROUP_B);
+      expect(filter.unreadByChallenged).toBe(true);
+    });
+
+    it('403s a non-member', async () => {
+      memberModel.findOne.mockResolvedValue(null);
+      await expect(
+        service.unreadCount(GROUP_B, ADMIN_A),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(challengeModel.countDocuments).not.toHaveBeenCalled();
+    });
+
+    it('400s a malformed group id', async () => {
+      await expect(
+        service.unreadCount('nope', ADMIN_B),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
+  describe('markRead', () => {
+    it("clears the receiving group's unread challenges", async () => {
+      const res = await service.markRead(GROUP_B, ADMIN_B);
+
+      expect(res).toEqual({ groupId: GROUP_B, cleared: 3, count: 0 });
+      const [filter, update] = challengeModel.updateMany.mock.calls[0];
+      expect(filter.challengedGroupId.toString()).toBe(GROUP_B);
+      expect(filter.unreadByChallenged).toBe(true);
+      expect(update).toEqual({ $set: { unreadByChallenged: false } });
+    });
+
+    it('403s anyone but an owner/admin of that group', async () => {
+      memberModel.findOne.mockResolvedValue(null);
+      await expect(
+        service.markRead(GROUP_B, ADMIN_A),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(challengeModel.updateMany).not.toHaveBeenCalled();
+      const [filter] = memberModel.findOne.mock.calls[0];
+      expect(filter.role).toEqual({ $in: ['owner', 'admin'] });
     });
   });
 });
