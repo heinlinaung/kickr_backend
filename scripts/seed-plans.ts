@@ -7,7 +7,7 @@
  * The limits started as a code registry; they now live in the database so a
  * plan can be tuned or added without a deploy. Two plans:
  *
- *   default        2 groups owned, 3 events/week, 50 gallery photos/group —
+ *   default        2 groups owned, 10 events/week, 50 gallery photos/group —
  *                  what every user is on (User.plan defaults to 'default').
  *   no-limit-plan  every limit null = UNLIMITED. For testing and admin
  *                  accounts only; nothing assigns it — set User.plan by hand.
@@ -60,7 +60,7 @@ const SEED_PLANS: SeedPlan[] = [
   {
     name: 'default',
     maxGroupsOwned: 2,
-    maxEventsPerWeek: 3,
+    maxEventsPerWeek: 10,
     maxGalleryPhotosPerGroup: 50,
   },
   {

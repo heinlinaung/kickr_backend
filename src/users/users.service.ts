@@ -20,6 +20,10 @@ import { SportTypesService } from '../sport-types/sport-types.service';
 import { RatingsService } from '../ratings/ratings.service';
 import { EventsService } from '../events/events.service';
 import { Group, GroupDocument } from '../groups/schemas/group.schema';
+import {
+  GroupMember,
+  GroupMemberDocument,
+} from '../groups/schemas/group-member.schema';
 import { FINISHED_STATUSES } from '../events/events.lifecycle';
 import {
   EventPlayer,
@@ -87,6 +91,8 @@ export class UsersService {
     private readonly ratingsService: RatingsService,
     @InjectModel(Group.name) private groupModel: Model<GroupDocument>,
     private readonly eventsService: EventsService,
+    @InjectModel(GroupMember.name)
+    private memberModel: Model<GroupMemberDocument>,
   ) {}
 
   /**
@@ -412,6 +418,42 @@ export class UsersService {
     if (privacy.showMatchHistory)
       base.matchHistory = await this.getMatchHistory(targetUserId);
     return base;
+  }
+
+  /**
+   * Profile summary counts — `GET /users/:id/summary`.
+   *
+   * - eventCount:  events the user is on the roster of (`joined`)
+   * - reviewCount: ratings the user received as a player
+   * - groupCount:  groups the user is an approved member of (owned included —
+   *                the owner has an approved member row)
+   *
+   * Gated like the public profile: a missing, soft-deleted or private account
+   * is a 404 — except for the caller themselves, who can always see their own.
+   */
+  async getSummary(targetUserId: string, callerId: string) {
+    if (!Types.ObjectId.isValid(targetUserId)) {
+      throw new NotFoundException('User not found');
+    }
+    const uid = new Types.ObjectId(targetUserId);
+    const user = await this.userModel
+      .findById(uid)
+      .select('privacy deletedAt')
+      .lean();
+    if (!user || (user as any).deletedAt) {
+      throw new NotFoundException('User not found');
+    }
+    const isSelf = targetUserId === callerId;
+    if (!isSelf && (user as any).privacy?.profileVisibility === 'private') {
+      throw new NotFoundException('Profile is private');
+    }
+
+    const [eventCount, reviewCount, groupCount] = await Promise.all([
+      this.playerModel.countDocuments({ userId: uid, status: 'joined' }),
+      this.ratingsService.countForPlayer(targetUserId),
+      this.memberModel.countDocuments({ userId: uid, status: 'approved' }),
+    ]);
+    return { userId: targetUserId, eventCount, reviewCount, groupCount };
   }
 
   /**

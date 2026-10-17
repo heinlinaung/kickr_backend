@@ -22,6 +22,7 @@ import {
 } from '@nestjs/swagger';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { SuperadminGuard } from '../common/guards/superadmin.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { GroupsService } from './groups.service';
 import { CreateGroupDto } from './dto/create-group.dto';
@@ -55,7 +56,8 @@ export class GroupsController {
   @ApiOperation({
     summary: 'Find groups by name or handle',
     description:
-      'Case-insensitive substring match on name and handle. ' +
+      'Case-insensitive substring match on name and handle, optionally ' +
+      'narrowed to one sport with `sportType` (e.g. `football`). ' +
       '⚠️ CHANGED — this used to return a bare array capped at 20 with no way ' +
       'past it; it now returns a page: `{ items, nextCursor, hasMore }`, ' +
       'matching /users/search and /events/search. ' +
@@ -80,17 +82,66 @@ export class GroupsController {
       'Opaque pagination cursor. Pass `nextCursor` from the previous ' +
       'response verbatim; omit for the first page. Invalid values give 400.',
   })
+  @ApiQuery({
+    name: 'sportType',
+    required: false,
+    example: 'football',
+    description:
+      'Optional. Only return groups of this sport — one of the values from ' +
+      'GET /configuration `sportTypes`. Omit to search every sport.',
+  })
   search(
     @CurrentUser() user: any,
     @Query('q') q: string,
     @Query('limit') limit?: string,
     @Query('cursor') cursor?: string,
+    @Query('sportType') sportType?: string,
   ) {
     return this.groupsService.search(
       q ?? '',
       limit === undefined ? undefined : Number(limit),
       cursor,
       user._id.toString(),
+      sportType,
+    );
+  }
+
+  // Static route — like `search`, must stay above any ":id" wildcard.
+  @Get('group-all')
+  @UseGuards(SuperadminGuard)
+  @ApiOperation({
+    summary: 'List / search every group on the platform (superadmin)',
+    description:
+      'All groups, public and private, newest first, with numbered ' +
+      'pagination. Optional `q` filters by case-insensitive substring of ' +
+      'name or handle. Returns `{ items, total, page, limit, totalPages }` — ' +
+      '`total` is the number of groups matching `q` (all groups when `q` is ' +
+      'omitted). Items are full group documents, not search cards. A page ' +
+      'past the end returns empty `items` with the real `total`.',
+  })
+  @ApiQuery({ name: 'q', required: false, example: 'sunday' })
+  @ApiQuery({
+    name: 'page',
+    required: false,
+    example: 1,
+    description: '1-based page number. Defaults to 1.',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    example: 20,
+    description: 'Page size, 1-50. Defaults to 20.',
+  })
+  @ApiResponse({ status: 403, description: 'Caller is not a superadmin' })
+  listAll(
+    @Query('q') q?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.groupsService.listAll(
+      q,
+      page === undefined ? undefined : Number(page),
+      limit === undefined ? undefined : Number(limit),
     );
   }
 

@@ -220,3 +220,56 @@ describe('CreateGroupDto — rules', () => {
     expect(out.rules).toBeUndefined();
   });
 });
+
+describe('CreateGroupDto — jerseyColors', () => {
+  it('accepts several { top, pant } kits and trims the colours', async () => {
+    const out: any = await run(CreateGroupDto, {
+      name: 'FC',
+      jerseyColors: [
+        { top: ' white ', pant: 'white' },
+        { top: 'red', pant: '#000000' },
+      ],
+    });
+    expect(out.jerseyColors).toEqual([
+      { top: 'white', pant: 'white' },
+      { top: 'red', pant: '#000000' },
+    ]);
+  });
+
+  it('is optional', async () => {
+    const out: any = await run(CreateGroupDto, { name: 'FC' });
+    expect(out.jerseyColors).toBeUndefined();
+  });
+
+  it('allows a kit with only top or only pant', async () => {
+    const out: any = await run(CreateGroupDto, {
+      name: 'FC',
+      jerseyColors: [{ top: 'white' }, { pant: 'black' }],
+    });
+    expect(out.jerseyColors).toEqual([{ top: 'white' }, { pant: 'black' }]);
+  });
+
+  it('rejects an unknown key or more than 5 kits', async () => {
+    expect(
+      await expectRejected(CreateGroupDto, {
+        name: 'FC',
+        jerseyColors: [{ top: 'white', pant: 'white', socks: 'white' }],
+      }),
+    ).toContain('socks');
+    expect(
+      await expectRejected(CreateGroupDto, {
+        name: 'FC',
+        jerseyColors: Array(6).fill({ top: 'white', pant: 'white' }),
+      }),
+    ).toContain('jerseyColors');
+  });
+});
+
+describe('UpdateGroupDto — jerseyColors', () => {
+  it('accepts a replacement kit list', async () => {
+    const out: any = await run(UpdateGroupDto, {
+      jerseyColors: [{ top: 'blue', pant: 'white' }],
+    });
+    expect(out.jerseyColors).toEqual([{ top: 'blue', pant: 'white' }]);
+  });
+});

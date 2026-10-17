@@ -16,10 +16,7 @@ import { LocationsService } from '../locations/locations.service';
 import { EventsService } from '../events/events.service';
 import { PhotosService } from '../photos/photos.service';
 import { SportTypesService } from '../sport-types/sport-types.service';
-import {
-  plansDouble,
-  sportTypesDouble,
-} from '../events/events.test-providers';
+import { plansDouble, sportTypesDouble } from '../events/events.test-providers';
 import { PlansService } from '../plans/plans.service';
 import { Message } from '../chat/schemas/message.schema';
 import { Tournament } from '../tournaments/schemas/tournament.schema';
@@ -237,6 +234,71 @@ describe('GroupsService', () => {
     });
   });
 
+  describe('listAll', () => {
+    // find() chain with skip(), which the shared q() helper lacks.
+    const pq = (result: any) => ({
+      ...q(result),
+      skip: jest.fn().mockReturnThis(),
+    });
+
+    it('returns every group newest first with total, page one by default', async () => {
+      const query = pq([
+        { _id: GROUP_ID, name: 'Bangkok FC', isPrivate: true },
+      ]);
+      groupModel.find.mockReturnValue(query);
+      groupModel.countDocuments.mockResolvedValue(1);
+
+      const page = await service.listAll();
+
+      expect(groupModel.find).toHaveBeenCalledWith({});
+      expect(groupModel.countDocuments).toHaveBeenCalledWith({});
+      expect(query.sort).toHaveBeenCalledWith({ _id: -1 });
+      expect(query.skip).toHaveBeenCalledWith(0);
+      expect(query.limit).toHaveBeenCalledWith(20);
+      expect(page).toEqual({
+        items: [{ _id: GROUP_ID, name: 'Bangkok FC', isPrivate: true }],
+        total: 1,
+        page: 1,
+        limit: 20,
+        totalPages: 1,
+      });
+    });
+
+    it('skips to the requested page and counts totalPages', async () => {
+      const query = pq([]);
+      groupModel.find.mockReturnValue(query);
+      groupModel.countDocuments.mockResolvedValue(45);
+
+      const page = await service.listAll(undefined, 3, 10);
+
+      expect(query.skip).toHaveBeenCalledWith(20);
+      expect(query.limit).toHaveBeenCalledWith(10);
+      expect(page).toMatchObject({ total: 45, page: 3, totalPages: 5 });
+    });
+
+    it('filters items and total by name or handle, regex-escaped', async () => {
+      groupModel.find.mockReturnValue(pq([]));
+      groupModel.countDocuments.mockResolvedValue(0);
+
+      await service.listAll('  a.b  ');
+
+      const filter = groupModel.find.mock.calls[0][0];
+      expect(filter.$or).toEqual([{ name: /a\.b/i }, { handle: /a\.b/i }]);
+      expect(groupModel.countDocuments).toHaveBeenCalledWith(filter);
+    });
+
+    it('falls back to page 1 for a garbage page number', async () => {
+      const query = pq([]);
+      groupModel.find.mockReturnValue(query);
+      groupModel.countDocuments.mockResolvedValue(0);
+
+      const page = await service.listAll(undefined, NaN);
+
+      expect(query.skip).toHaveBeenCalledWith(0);
+      expect(page.page).toBe(1);
+    });
+  });
+
   describe('search', () => {
     it('includes PRIVATE groups and matches name OR handle', async () => {
       // Privacy is enforced on contents, not on discovery: a non-member may
@@ -259,6 +321,18 @@ describe('GroupsService', () => {
         expect(rx.flags).toContain('i');
         expect(rx.test('Bangkok FC')).toBe(true);
       }
+    });
+
+    it('filters by sportType only when one is given', async () => {
+      groupModel.find.mockReturnValue(q([]));
+
+      await service.search('bangkok', 20, undefined, undefined, 'football');
+      await service.search('bangkok');
+      await service.search('bangkok', 20, undefined, undefined, '  ');
+
+      expect(groupModel.find.mock.calls[0][0].sportType).toBe('football');
+      expect(groupModel.find.mock.calls[1][0].sportType).toBeUndefined();
+      expect(groupModel.find.mock.calls[2][0].sportType).toBeUndefined();
     });
 
     it('escapes regex special characters instead of throwing', async () => {

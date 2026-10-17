@@ -57,6 +57,35 @@ export class ChallengesController {
     return this.challenges.listForGroup(groupId, user._id.toString());
   }
 
+  @Get('unread-count')
+  @ApiOperation({
+    summary: 'Unread incoming challenges for a group (members)',
+    description:
+      'Counts challenges this group RECEIVED that have not been read yet. ' +
+      'Set when another group sends a challenge; cleared by ' +
+      'PATCH /challenges/read.',
+  })
+  @ApiQuery({ name: 'groupId', type: String })
+  @ApiResponse({ status: 403, description: 'Not a member of this group' })
+  unreadCount(@CurrentUser() user: any, @Query('groupId') groupId: string) {
+    return this.challenges.unreadCount(groupId, user._id.toString());
+  }
+
+  @Patch('read')
+  @ApiOperation({
+    summary: "Mark a group's incoming challenges as read (owner/admin)",
+    description:
+      'Clears the unread challenge count for the receiving group. Idempotent.',
+  })
+  @ApiQuery({ name: 'groupId', type: String })
+  @ApiResponse({
+    status: 403,
+    description: 'Caller is not an owner/admin of the group',
+  })
+  markRead(@CurrentUser() user: any, @Query('groupId') groupId: string) {
+    return this.challenges.markRead(groupId, user._id.toString());
+  }
+
   @Patch(':id/respond')
   @ApiOperation({
     summary: 'Accept or reject a challenge (challenged group owner/admin)',

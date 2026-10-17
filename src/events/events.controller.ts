@@ -323,13 +323,15 @@ export class EventsController {
   @ApiOperation({
     summary: 'Advance the event lifecycle',
     description:
-      'Sport-aware. FOOTBALL: join -> preparation -> ready_to_play -> ' +
+      "Sport-aware, keyed on the sport type's matchProvided flag. " +
+      'MATCH PROVIDED: join -> preparation -> ready_to_play -> ' +
       'playing -> after_match -> done. ready_to_play is where the teams are ' +
       'final and reviewable but the match has not kicked off — the roster ' +
       'is frozen, so shuffling is refused there. Two reverse edges: ' +
       'preparation may revert to join (reopening registration), and ' +
       'ready_to_play may revert to preparation (to re-shuffle a wrong team ' +
-      'set). EVERY OTHER SPORT skips preparation: join -> ready_to_play -> ' +
+      'set). matchProvided: false (and every CHALLENGE event) skips ' +
+      'preparation: join -> ready_to_play -> ' +
       'playing -> after_match -> done, with ready_to_play reverting to join ' +
       'and doubling as the team-building stage. done is terminal for all. ' +
       'BREAKING: preparation -> playing is no longer legal and now 409s — ' +
@@ -942,7 +944,7 @@ export class EventsController {
 
   @Post(':id/mvp')
   @ApiOperation({
-    summary: "Record the MVP and the MVP's goal count",
+    summary: "Record the MVP and the MVP's goal and assist counts",
     description:
       'Organizer-only, after_match only — the same window as the result. ' +
       '`userId` must be a player who joined this event. The overall score ' +

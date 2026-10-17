@@ -8,8 +8,8 @@ import { Type } from 'class-transformer';
  * `POST /events/:id/result` (which now records only the overall score).
  *
  * `userId` must be a joined player — checked in the service, which has the
- * roster. Both fields are required: naming an MVP without their goal count is
- * exactly the half-record the split was meant to end.
+ * roster. All fields are required: naming an MVP without their goal and assist
+ * counts is exactly the half-record the split was meant to end.
  */
 export class SubmitMvpDto {
   @ApiProperty({
@@ -29,4 +29,15 @@ export class SubmitMvpDto {
   @Min(0)
   @Max(200)
   goal: number;
+
+  @ApiProperty({
+    example: 3,
+    minimum: 0,
+    description: 'Assists made by the MVP.',
+  })
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(200)
+  assist: number;
 }

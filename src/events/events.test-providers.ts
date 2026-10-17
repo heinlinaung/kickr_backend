@@ -39,6 +39,7 @@ import { BadRequestException } from '@nestjs/common';
 export function ratingsDouble() {
   return {
     averageForPlayer: jest.fn().mockResolvedValue(0),
+    countForPlayer: jest.fn().mockResolvedValue(0),
   };
 }
 
@@ -57,11 +58,19 @@ export function plansDouble() {
  * (unknown sport, subType on a sport with no formats) without wiring a mock.
  */
 export const TEST_SPORT_TYPES = [
-  { value: 'football', subTypes: ['futsal', 'stadium'], sortOrder: 1 },
-  { value: 'futsal', subTypes: [], sortOrder: 2 },
-  { value: 'badminton', subTypes: [], sortOrder: 3 },
-  { value: 'padel', subTypes: [], sortOrder: 4 },
-  { value: 'basketball', subTypes: [], sortOrder: 5 },
+  // matchProvided picks the lifecycle: true keeps `preparation`, false
+  // skips it. Only football provides matches here, so the other rows
+  // exercise the shorter table.
+  {
+    value: 'football',
+    subTypes: ['futsal', 'stadium'],
+    sortOrder: 1,
+    matchProvided: true,
+  },
+  { value: 'futsal', subTypes: [], sortOrder: 2, matchProvided: false },
+  { value: 'badminton', subTypes: [], sortOrder: 3, matchProvided: false },
+  { value: 'padel', subTypes: [], sortOrder: 4, matchProvided: false },
+  { value: 'basketball', subTypes: [], sortOrder: 5, matchProvided: false },
 ];
 
 /** Behavioural double of SportTypesService over TEST_SPORT_TYPES. */

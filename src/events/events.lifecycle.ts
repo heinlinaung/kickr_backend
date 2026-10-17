@@ -25,16 +25,18 @@ export const FOOTBALL_SUB_TYPES = ['futsal', 'stadium'] as const;
 export type FootballSubType = (typeof FOOTBALL_SUB_TYPES)[number];
 
 /**
- * The lifecycle is sport-aware: FOOTBALL events keep the full six states, and
- * every other sport skips `preparation` — team assignment for them happens in
- * `ready_to_play` (see `canShuffle`), so a separate build stage gated nothing.
+ * The lifecycle is sport-aware, keyed on the sport type's `matchProvided`
+ * flag (2026-10-16 — it used to key on `sportType === 'football'`): a sport
+ * that provides matches keeps the full six states, and one that does not
+ * skips `preparation` — team assignment for it happens in `ready_to_play`
+ * (see `canShuffle`), so a separate build stage gated nothing.
  *
- * `EVENT_STATUSES` stays the SUPERSET (= the football list). It is what the
- * schema enum and query-filter validation accept, because a status filter must
- * be able to name any state a stored event can be in — including a football
- * event's `preparation` — regardless of which sport the caller browses.
+ * `EVENT_STATUSES` stays the SUPERSET (= the match-provided list). It is what
+ * the schema enum and query-filter validation accept, because a status filter
+ * must be able to name any state a stored event can be in — including
+ * `preparation` — regardless of which sport the caller browses.
  */
-export const FOOTBALL_EVENT_STATUSES = [
+export const MATCH_EVENT_STATUSES = [
   'join',
   'preparation',
   'ready_to_play',
@@ -49,12 +51,12 @@ export const FOOTBALL_EVENT_STATUSES = [
   'cancelled',
 ] as const;
 
-export const EVENT_STATUSES = FOOTBALL_EVENT_STATUSES;
+export const EVENT_STATUSES = MATCH_EVENT_STATUSES;
 
 export type EventStatus = (typeof EVENT_STATUSES)[number];
 
-/** The lifecycle for every sport but football: no `preparation`. */
-export const NON_FOOTBALL_EVENT_STATUSES = [
+/** The lifecycle for a sport with `matchProvided: false`: no `preparation`. */
+export const NO_MATCH_EVENT_STATUSES = [
   'join',
   'ready_to_play',
   'playing',
@@ -64,8 +66,8 @@ export const NON_FOOTBALL_EVENT_STATUSES = [
 ] as const satisfies readonly EventStatus[];
 
 /**
- * The lifecycle for CHALLENGE events (2026-10-14): the football list with
- * `preparation` cut out.
+ * The lifecycle for CHALLENGE events (2026-10-14): the match-provided list
+ * with `preparation` cut out.
  *
  * A challenge match skips the build stage because its teams are not built —
  * they are the two groups, locked to two sides from the moment the proposal
@@ -73,8 +75,8 @@ export const NON_FOOTBALL_EVENT_STATUSES = [
  * already cover.
  *
  * Deliberately its OWN copy rather than an alias of
- * `NON_FOOTBALL_EVENT_STATUSES`, even though the lists coincide today: a
- * challenge is a different thing from a non-football sport, and the two
+ * `NO_MATCH_EVENT_STATUSES`, even though the lists coincide today: a
+ * challenge is a different thing from a sport without matches, and the two
  * must be free to diverge without a find-and-replace.
  */
 export const CHALLENGE_EVENT_STATUSES = [
@@ -92,32 +94,33 @@ export function isChallenge(eventType: unknown): boolean {
 }
 
 /**
- * True when `sportType` runs the football lifecycle.
+ * True when the event's sport runs the full lifecycle, `preparation` included.
  *
- * A missing value (undefined/null) counts as football: the schema default is
- * 'football', so the only documents without the field are ones hydrated
- * outside Mongoose defaults (`.lean()` on pre-field rows) — and those predate
- * every other sport.
+ * Takes the sport type's `matchProvided` flag, resolved by the caller — this
+ * module stays pure, so the lookup lives in the service. Only an explicit
+ * `false` drops the stage: the schema default is `true`, and a missing value
+ * (a sport row stored before the field, or a sport that no longer exists)
+ * keeps the lifecycle every event had before the flag.
  */
-export function isFootball(sportType: unknown): boolean {
-  return sportType == null || sportType === 'football';
+export function hasPreparation(matchProvided: unknown): boolean {
+  return matchProvided !== false;
 }
 
 /**
  * The status list for an event, in lifecycle order.
  *
- * `eventType` outranks the sport: a challenge match is football by sport but
- * runs the no-`preparation` table — its teams are the two groups, so there
+ * `eventType` outranks the sport: a challenge match runs the no-`preparation`
+ * table whatever its sport provides — its teams are the two groups, so there
  * is no build stage to pass through.
  */
 export function statusesFor(
-  sportType: unknown,
+  matchProvided: unknown,
   eventType?: unknown,
 ): readonly EventStatus[] {
   if (isChallenge(eventType)) return CHALLENGE_EVENT_STATUSES;
-  return isFootball(sportType)
-    ? FOOTBALL_EVENT_STATUSES
-    : NON_FOOTBALL_EVENT_STATUSES;
+  return hasPreparation(matchProvided)
+    ? MATCH_EVENT_STATUSES
+    : NO_MATCH_EVENT_STATUSES;
 }
 
 /**
@@ -151,7 +154,7 @@ export function statusesFor(
  * come mid-match. NOT from `after_match`/`done` — the match was played, and
  * that history must not be erasable. Terminal like `done`.
  */
-const FOOTBALL_TRANSITIONS: Readonly<
+const MATCH_TRANSITIONS: Readonly<
   Record<EventStatus, readonly EventStatus[]>
 > = {
   join: ['preparation', 'cancelled'],
@@ -164,17 +167,19 @@ const FOOTBALL_TRANSITIONS: Readonly<
 };
 
 /**
- * Non-football table: `preparation` is cut out and its edges rewired —
+ * No-match table (`matchProvided: false`): `preparation` is cut out and its
+ * edges rewired —
  * `join -> ready_to_play` directly, and the reverse edge lands back in `join`
  * (reopening registration) instead of a build stage that does not exist.
  *
  * `preparation` still has EXIT rows even though nothing can enter it: a group
- * changing sport away from football (applyGroupSportType) can leave an event
- * already sitting there, and a state with no exits would strand it. The exits
- * mirror football's, so such an event escapes forward or back but cannot be
+ * changing to a sport without matches (applyGroupSportType), or a superadmin
+ * flipping a sport's `matchProvided` off, can leave an event already sitting
+ * there, and a state with no exits would strand it. The exits mirror the
+ * match table's, so such an event escapes forward or back but cannot be
  * re-entered.
  */
-const NON_FOOTBALL_TRANSITIONS: Readonly<
+const NO_MATCH_TRANSITIONS: Readonly<
   Record<EventStatus, readonly EventStatus[]>
 > = {
   join: ['ready_to_play', 'cancelled'],
@@ -187,7 +192,7 @@ const NON_FOOTBALL_TRANSITIONS: Readonly<
 };
 
 /**
- * Challenge table — the football edges with `preparation` cut out, its own
+ * Challenge table — the match edges with `preparation` cut out, its own
  * copy for the same reason `CHALLENGE_EVENT_STATUSES` is one.
  *
  * `preparation` keeps EXIT rows even though a challenge event can never
@@ -208,11 +213,11 @@ const CHALLENGE_TRANSITIONS: Readonly<
 
 /** The transition table for an event. `eventType` outranks the sport. */
 function transitionsFor(
-  sportType: unknown,
+  matchProvided: unknown,
   eventType?: unknown,
 ): Readonly<Record<EventStatus, readonly EventStatus[]>> {
   if (isChallenge(eventType)) return CHALLENGE_TRANSITIONS;
-  return isFootball(sportType) ? FOOTBALL_TRANSITIONS : NON_FOOTBALL_TRANSITIONS;
+  return hasPreparation(matchProvided) ? MATCH_TRANSITIONS : NO_MATCH_TRANSITIONS;
 }
 
 /**
@@ -253,26 +258,28 @@ export function isEventStatus(value: unknown): value is EventStatus {
  * Unknown states return false rather than throwing — callers validate input
  * separately and a bad value should read as "not allowed", not crash.
  *
- * `sportType` omitted means football, which is also every caller written
- * before the lifecycle became sport-aware.
+ * `matchProvided` omitted means the full table, which is also every caller
+ * written before the lifecycle became sport-aware.
  */
 export function canTransition(
   from: unknown,
   to: unknown,
-  sportType?: unknown,
+  matchProvided?: unknown,
   eventType?: unknown,
 ): boolean {
   if (!isEventStatus(from) || !isEventStatus(to)) return false;
-  return transitionsFor(sportType, eventType)[from].includes(to);
+  return transitionsFor(matchProvided, eventType)[from].includes(to);
 }
 
 /** The states reachable from `from`; empty for terminal or unknown states. */
 export function allowedTransitions(
   from: unknown,
-  sportType?: unknown,
+  matchProvided?: unknown,
   eventType?: unknown,
 ): readonly EventStatus[] {
-  return isEventStatus(from) ? transitionsFor(sportType, eventType)[from] : [];
+  return isEventStatus(from)
+    ? transitionsFor(matchProvided, eventType)[from]
+    : [];
 }
 
 // --- Action gates (spec §4.1) -------------------------------------------
@@ -293,33 +300,33 @@ export function canLeave(status: unknown): boolean {
 /**
  * Teams and fixtures are submitted during the sport's BUILD stage.
  *
- * Football builds in `preparation` and deliberately not in `ready_to_play`:
- * freezing the roster is that state's entire purpose there, and widening the
- * gate would make the two states equivalent.
+ * A match-provided sport builds in `preparation` and deliberately not in
+ * `ready_to_play`: freezing the roster is that state's entire purpose there,
+ * and widening the gate would make the two states equivalent.
  *
- * Every other sport has no `preparation`, so `ready_to_play` absorbs the
- * build role — it is the only state between registration and kick-off, and
- * gating on a state the sport cannot reach would make teams impossible.
+ * A sport without matches has no `preparation`, so `ready_to_play` absorbs
+ * the build role — it is the only state between registration and kick-off,
+ * and gating on a state the sport cannot reach would make teams impossible.
  */
 export function canShuffle(
   status: unknown,
-  sportType?: unknown,
+  matchProvided?: unknown,
   eventType?: unknown,
 ): boolean {
-  return status === buildStageFor(sportType, eventType);
+  return status === buildStageFor(matchProvided, eventType);
 }
 
 /**
  * The state an event builds teams in — for gate checks and error messages.
  * A CHALLENGE event has no `preparation` whatever its sport, so its two
- * side-teams are generated in `ready_to_play`, like a non-football sport.
+ * side-teams are generated in `ready_to_play`, like a sport without matches.
  */
 export function buildStageFor(
-  sportType: unknown,
+  matchProvided: unknown,
   eventType?: unknown,
 ): EventStatus {
   if (isChallenge(eventType)) return 'ready_to_play';
-  return isFootball(sportType) ? 'preparation' : 'ready_to_play';
+  return hasPreparation(matchProvided) ? 'preparation' : 'ready_to_play';
 }
 
 /** Scores can be entered once play starts, and corrected after the whistle. */

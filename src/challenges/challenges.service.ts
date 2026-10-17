@@ -80,6 +80,7 @@ export class ChallengesService {
       challengerGroupId: new Types.ObjectId(dto.challengerGroupId),
       challengedGroupId: new Types.ObjectId(dto.challengedGroupId),
       createdBy: new Types.ObjectId(userId),
+      unreadByChallenged: true,
     });
 
     await this.notifyGroupAdmins(
@@ -138,10 +139,7 @@ export class ChallengesService {
    * only — the handshake is group business, not public.
    */
   async listForGroup(groupId: string, userId: string) {
-    if (!Types.ObjectId.isValid(groupId)) {
-      throw new BadRequestException('groupId must be a valid id');
-    }
-    const gid = new Types.ObjectId(groupId);
+    const gid = this.parseGroupId(groupId);
 
     const member = await this.memberModel.findOne({
       groupId: gid,
@@ -160,6 +158,47 @@ export class ChallengesService {
       .lean();
   }
 
+  /**
+   * How many challenges the group has RECEIVED and not yet read. Approved
+   * members can see the badge; only owner/admins clear it.
+   */
+  async unreadCount(groupId: string, userId: string) {
+    const gid = this.parseGroupId(groupId);
+    const member = await this.memberModel.findOne({
+      groupId: gid,
+      userId: new Types.ObjectId(userId),
+      status: 'approved',
+    });
+    if (!member) {
+      throw new ForbiddenException('Not a member of this group');
+    }
+
+    const count = await this.challengeModel.countDocuments({
+      challengedGroupId: gid,
+      unreadByChallenged: true,
+    });
+    return { groupId, count };
+  }
+
+  /**
+   * The challenged group's owner/admin has read its incoming challenges —
+   * clear the badge. Idempotent; returns how many rows flipped.
+   */
+  async markRead(groupId: string, userId: string) {
+    const gid = this.parseGroupId(groupId);
+    await this.assertGroupAdmin(
+      groupId,
+      userId,
+      'Only an owner/admin of this group can mark its challenges as read',
+    );
+
+    const result = await this.challengeModel.updateMany(
+      { challengedGroupId: gid, unreadByChallenged: true },
+      { $set: { unreadByChallenged: false } },
+    );
+    return { groupId, cleared: result.modifiedCount, count: 0 };
+  }
+
   async findOrThrow(challengeId: string): Promise<ChallengeDocument> {
     if (!Types.ObjectId.isValid(challengeId)) {
       throw new NotFoundException('Challenge not found');
@@ -167,6 +206,13 @@ export class ChallengesService {
     const challenge = await this.challengeModel.findById(challengeId);
     if (!challenge) throw new NotFoundException('Challenge not found');
     return challenge;
+  }
+
+  private parseGroupId(groupId: string): Types.ObjectId {
+    if (!Types.ObjectId.isValid(groupId)) {
+      throw new BadRequestException('groupId must be a valid id');
+    }
+    return new Types.ObjectId(groupId);
   }
 
   /** Owner/admin membership gate, with a caller-specific message. */

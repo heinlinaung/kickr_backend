@@ -226,7 +226,7 @@ describe('EventsService — sportType from the sporttypes collection', () => {
       ...over,
     });
 
-    it('a non-football event closes registration straight into ready_to_play', async () => {
+    it('a matchProvided: false event closes registration straight into ready_to_play', async () => {
       const doc = eventDoc();
       eventModel.findById = jest.fn().mockResolvedValue(doc);
 
@@ -236,7 +236,7 @@ describe('EventsService — sportType from the sporttypes collection', () => {
       expect(doc.save).toHaveBeenCalled();
     });
 
-    it('a non-football event cannot enter preparation', async () => {
+    it('a matchProvided: false event cannot enter preparation', async () => {
       // 'preparation' IS a status, just not a reachable one for this sport —
       // so it 409s at the transition check, naming the sport.
       eventModel.findById = jest.fn().mockResolvedValue(eventDoc());
@@ -246,7 +246,7 @@ describe('EventsService — sportType from the sporttypes collection', () => {
       ).rejects.toThrow(/Cannot move a badminton event from 'join'/);
     });
 
-    it('a football event keeps the six-state path', async () => {
+    it('a matchProvided event keeps the six-state path', async () => {
       const doc = eventDoc({ sportType: 'football' });
       eventModel.findById = jest.fn().mockResolvedValue(doc);
 
@@ -256,6 +256,28 @@ describe('EventsService — sportType from the sporttypes collection', () => {
 
       await service.setStatus('e1', USER_ID, 'preparation');
       expect(doc.status).toBe('preparation');
+    });
+
+    it("the sport's matchProvided flag decides, not the sport name", async () => {
+      // A non-football sport that provides matches gets preparation...
+      sportTypes.findByValue.mockResolvedValueOnce({
+        value: 'badminton',
+        matchProvided: true,
+      });
+      const badminton = eventDoc();
+      eventModel.findById = jest.fn().mockResolvedValue(badminton);
+      await service.setStatus('e1', USER_ID, 'preparation');
+      expect(badminton.status).toBe('preparation');
+
+      // ...and football with the flag off skips it.
+      sportTypes.findByValue.mockResolvedValueOnce({
+        value: 'football',
+        matchProvided: false,
+      });
+      const football = eventDoc({ sportType: 'football' });
+      eventModel.findById = jest.fn().mockResolvedValue(football);
+      await service.setStatus('e1', USER_ID, 'ready_to_play');
+      expect(football.status).toBe('ready_to_play');
     });
   });
 

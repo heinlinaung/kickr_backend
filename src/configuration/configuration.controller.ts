@@ -18,7 +18,7 @@ export class ConfigurationController {
     description:
       '`{ config: { revision, appUpdate, majorUpdate, createdAt } | null, ' +
       'regions: { myanmar: [{ id, name }], ... }, ' +
-      'sportTypes: [{ value, name, subTypes, sortOrder, matchProvided }] }`',
+      'sportTypes: [{ value, name, subTypes, playerRoles, sortOrder, matchProvided }] }`',
   })
   @ApiOperation({
     summary: 'App startup configuration (public)',

@@ -1419,11 +1419,12 @@ export class EventsService {
         'Use POST /events/:id/cancel to cancel an event — it requires the reason players will see',
       );
     }
-    // Sport-aware: football runs the six-state table, every other sport skips
-    // `preparation` — so e.g. join -> preparation on a badminton event lands
-    // here, not in the isEventStatus check above (it IS a status, just not a
-    // reachable one for that sport).
-    if (!canTransition(event.status, to, event.sportType, event.type)) {
+    // Sport-aware: a sport with `matchProvided` runs the six-state table, one
+    // without skips `preparation` — so e.g. join -> preparation on such an
+    // event lands here, not in the isEventStatus check above (it IS a status,
+    // just not a reachable one for that sport).
+    const matchProvided = await this.matchProvidedFor(event);
+    if (!canTransition(event.status, to, matchProvided, event.type)) {
       throw new ConflictException(
         `Cannot move a ${event.sportType ?? 'football'} event from ` +
           `'${event.status}' to '${to}'`,
@@ -1470,7 +1471,8 @@ export class EventsService {
    */
   async cancel(eventId: string, userId: string, dto: CancelEventDto) {
     const event = await this.assertOrganizer(eventId, userId);
-    if (!canTransition(event.status, 'cancelled', event.sportType, event.type)) {
+    const matchProvided = await this.matchProvidedFor(event);
+    if (!canTransition(event.status, 'cancelled', matchProvided, event.type)) {
       throw new BadRequestException(
         event.status === 'cancelled'
           ? 'This event is already cancelled'
@@ -1733,6 +1735,25 @@ export class EventsService {
    * explicitly asked for the whole group to go, archived events included.
    */
   /**
+   * The event's sport `matchProvided` flag — what the pure lifecycle needs to
+   * pick its table (with `preparation`, or without). Looked up per call
+   * rather than copied onto the event, so a superadmin flipping the flag on a
+   * sport takes effect for its events at once.
+   *
+   * A missing event sportType reads as 'football' (the schema default), and
+   * a sport row that is gone or predates the field yields `undefined`, which
+   * the lifecycle treats as the full table.
+   */
+  private async matchProvidedFor(
+    event: Pick<EventDocument, 'sportType'>,
+  ): Promise<boolean | undefined> {
+    const sport = await this.sportTypesService.findByValue(
+      event.sportType ?? 'football',
+    );
+    return sport?.matchProvided;
+  }
+
+  /**
    * Rewrites every event under a group to the group's (new) sportType.
    *
    * Exists for `PATCH /groups/:id`, the same way `removeAllForGroup` exists
@@ -1869,10 +1890,11 @@ export class EventsService {
     const event = await this.assertOrganizer(eventId, userId);
     // A challenge match that is still only proposed has no teams to build.
     this.assertProposalAccepted(event);
-    if (!canShuffle(event.status, event.sportType, event.type)) {
+    const matchProvided = await this.matchProvidedFor(event);
+    if (!canShuffle(event.status, matchProvided, event.type)) {
       throw new BadRequestException(
         `Teams can only be generated during ` +
-          `${buildStageFor(event.sportType, event.type)} (event is '${event.status}')`,
+          `${buildStageFor(matchProvided, event.type)} (event is '${event.status}')`,
       );
     }
 
@@ -2023,10 +2045,11 @@ export class EventsService {
     dto: AssignTeamPlayersDto,
   ) {
     const event = await this.assertOrganizer(eventId, userId);
-    if (!canShuffle(event.status, event.sportType, event.type)) {
+    const matchProvided = await this.matchProvidedFor(event);
+    if (!canShuffle(event.status, matchProvided, event.type)) {
       throw new BadRequestException(
         `Teams can only be edited during ` +
-          `${buildStageFor(event.sportType, event.type)} (event is '${event.status}')`,
+          `${buildStageFor(matchProvided, event.type)} (event is '${event.status}')`,
       );
     }
     if (!Types.ObjectId.isValid(teamId)) {
@@ -2201,10 +2224,11 @@ export class EventsService {
   async shuffleTeams(eventId: string, userId: string) {
     const event = await this.assertOrganizer(eventId, userId);
     this.assertProposalAccepted(event);
-    if (!canShuffle(event.status, event.sportType, event.type)) {
+    const matchProvided = await this.matchProvidedFor(event);
+    if (!canShuffle(event.status, matchProvided, event.type)) {
       throw new BadRequestException(
         `Teams can only be shuffled during ` +
-          `${buildStageFor(event.sportType, event.type)} (event is '${event.status}')`,
+          `${buildStageFor(matchProvided, event.type)} (event is '${event.status}')`,
       );
     }
 
@@ -2512,6 +2536,7 @@ export class EventsService {
     event.result = {
       mvpUserId: event.result?.mvpUserId ?? null,
       mvpGoal: event.result?.mvpGoal ?? null,
+      mvpAssist: event.result?.mvpAssist ?? null,
       scoreA: dto.scoreA ?? null,
       scoreB: dto.scoreB ?? null,
     };
@@ -2521,7 +2546,7 @@ export class EventsService {
   }
 
   /**
-   * Record the MVP and their goal count — `POST /events/:id/mvp`, split out
+   * Record the MVP and their goal/assist counts — `POST /events/:id/mvp`, split out
    * of `submitResult` (2026-09-19) so naming the match's best player is its
    * own act, gated and validated on its own.
    *
@@ -2554,6 +2579,7 @@ export class EventsService {
     event.result = {
       mvpUserId: new Types.ObjectId(dto.userId),
       mvpGoal: dto.goal,
+      mvpAssist: dto.assist,
       scoreA: event.result?.scoreA ?? null,
       scoreB: event.result?.scoreB ?? null,
     };

@@ -764,11 +764,12 @@ export class TestDataService {
     // MVP has its own endpoint now — POST /events/:id/mvp.
     await this.expect(
       record,
-      'MVP + goal count recorded after the match',
+      'MVP + goal and assist counts recorded after the match',
       () =>
         this.eventsService.submitMvp(eventId, owner.id, {
           userId: joiners[0].id,
           goal: 2,
+          assist: 1,
         }),
       'resolve',
     );
@@ -780,6 +781,7 @@ export class TestDataService {
         this.eventsService.submitMvp(eventId, owner.id, {
           userId: new Types.ObjectId().toString(),
           goal: 1,
+          assist: 0,
         }),
       'reject',
     );

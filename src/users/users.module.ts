@@ -17,6 +17,10 @@ import {
 import { RatingsModule } from '../ratings/ratings.module';
 import { EventsModule } from '../events/events.module';
 import { Group, GroupSchema } from '../groups/schemas/group.schema';
+import {
+  GroupMember,
+  GroupMemberSchema,
+} from '../groups/schemas/group-member.schema';
 
 @Module({
   imports: [
@@ -35,6 +39,8 @@ import { Group, GroupSchema } from '../groups/schemas/group.schema';
       // schema is registered rather than importing GroupsModule (which
       // imports EventsModule and would widen the graph for one query).
       { name: Group.name, schema: GroupSchema },
+      // For the profile summary's group count — same read-only reasoning.
+      { name: GroupMember.name, schema: GroupMemberSchema },
     ]),
     UploadModule,
     // For profile sports/preferredSport validation against the `sporttypes`
