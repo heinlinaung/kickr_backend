@@ -13,6 +13,7 @@ import { SportTypesService } from '../sport-types/sport-types.service';
 import { RatingsService } from '../ratings/ratings.service';
 import { EventsService } from '../events/events.service';
 import { Group } from '../groups/schemas/group.schema';
+import { GroupMember } from '../groups/schemas/group-member.schema';
 import { sportTypesDouble, ratingsDouble } from '../events/events.test-providers';
 import { ConfigService } from '@nestjs/config';
 
@@ -57,6 +58,7 @@ describe('UsersService — favourite team', () => {
         { provide: SportTypesService, useValue: sportTypesDouble() },
         { provide: RatingsService, useValue: ratingsDouble() },
         { provide: getModelToken(Group.name), useValue: {} },
+        { provide: getModelToken(GroupMember.name), useValue: {} },
         { provide: EventsService, useValue: {} },
         { provide: ConfigService, useValue: { get: () => '' } },
       ],

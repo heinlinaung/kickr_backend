@@ -10,6 +10,7 @@ import { EventPlayer } from '../events/schemas/event-player.schema';
 import { Event } from '../events/schemas/event.schema';
 import { GlobalFootballTeam } from '../global-football-teams/schemas/global-football-team.schema';
 import { Group } from '../groups/schemas/group.schema';
+import { GroupMember } from '../groups/schemas/group-member.schema';
 import { ImageKitService } from '../common/upload/imagekit.service';
 import { SportTypesService } from '../sport-types/sport-types.service';
 import { RatingsService } from '../ratings/ratings.service';
@@ -57,6 +58,7 @@ describe('UsersService.deleteAccount — DELETE /users/me (soft delete)', () => 
         { provide: getModelToken(Event.name), useValue: eventModel },
         { provide: getModelToken(GlobalFootballTeam.name), useValue: {} },
         { provide: getModelToken(Group.name), useValue: groupModel },
+        { provide: getModelToken(GroupMember.name), useValue: {} },
         { provide: ImageKitService, useValue: {} },
         { provide: SportTypesService, useValue: sportTypesDouble() },
         { provide: RatingsService, useValue: ratingsDouble() },

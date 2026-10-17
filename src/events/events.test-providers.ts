@@ -39,6 +39,7 @@ import { BadRequestException } from '@nestjs/common';
 export function ratingsDouble() {
   return {
     averageForPlayer: jest.fn().mockResolvedValue(0),
+    countForPlayer: jest.fn().mockResolvedValue(0),
   };
 }
 

@@ -229,6 +229,15 @@ export class RatingsService {
     return row ? Math.round(row.average * 10) / 10 : 0;
   }
 
+  /** How many ratings (reviews) this user has received as a player. */
+  async countForPlayer(userId: string): Promise<number> {
+    if (!Types.ObjectId.isValid(userId)) return 0;
+    return this.ratingModel.countDocuments({
+      targetType: 'player',
+      targetId: new Types.ObjectId(userId),
+    });
+  }
+
   // ---------------------------------------------------------------- private
 
   /**

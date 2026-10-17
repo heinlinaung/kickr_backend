@@ -119,6 +119,20 @@ export class UsersController {
     );
   }
 
+  @Get(':id/summary')
+  @ApiOperation({
+    summary: 'Profile summary counts: events, reviews, groups',
+    description:
+      'eventCount = events the user joined; reviewCount = ratings received ' +
+      'as a player; groupCount = groups the user is an approved member of. ' +
+      'Pass your own id for the current user. 404 for a missing, deleted or ' +
+      'private account (your own private profile still works).',
+  })
+  @ApiResponse({ status: 404, description: 'User not found or private' })
+  getSummary(@CurrentUser() user: any, @Param('id') id: string) {
+    return this.usersService.getSummary(id, user._id.toString());
+  }
+
   @Get(':id/profile')
   getPublicProfile(@Param('id') id: string) {
     return this.usersService.getPublicProfile(id);

@@ -12,6 +12,7 @@ import { SportTypesService } from '../sport-types/sport-types.service';
 import { RatingsService } from '../ratings/ratings.service';
 import { EventsService } from '../events/events.service';
 import { Group } from '../groups/schemas/group.schema';
+import { GroupMember } from '../groups/schemas/group-member.schema';
 import { sportTypesDouble, ratingsDouble } from '../events/events.test-providers';
 
 describe('UsersService', () => {
@@ -26,6 +27,7 @@ describe('UsersService', () => {
     deleteFile: jest.fn(),
   };
   const playerModel: any = {};
+  const memberModel: any = {};
   const eventModel: any = {};
   // Defaults to "the club exists" so the many tests that patch unrelated
   // profile fields are unaffected; the favouriteTeamId cases override it.
@@ -53,6 +55,7 @@ describe('UsersService', () => {
         { provide: SportTypesService, useValue: sportTypesDouble() },
         { provide: RatingsService, useValue: ratingsDouble() },
         { provide: getModelToken(Group.name), useValue: {} },
+        { provide: getModelToken(GroupMember.name), useValue: memberModel },
         { provide: EventsService, useValue: {} },
       ],
     }).compile();
@@ -301,6 +304,67 @@ describe('UsersService', () => {
       // gated off → no EventPlayer queries at all
       expect(playerModel.countDocuments).not.toHaveBeenCalled();
       expect(playerModel.find).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('getSummary', () => {
+    const uid = '68aa02000000000000000001';
+    const other = '68aa02000000000000000002';
+    let ratings: any;
+
+    const userFound = (doc: any) =>
+      userModel.findById.mockReturnValue({
+        select: jest.fn().mockReturnValue({
+          lean: jest.fn().mockResolvedValue(doc),
+        }),
+      });
+
+    beforeEach(() => {
+      ratings = (service as any).ratingsService;
+      playerModel.countDocuments = jest.fn().mockResolvedValue(7);
+      memberModel.countDocuments = jest.fn().mockResolvedValue(3);
+      ratings.countForPlayer.mockResolvedValue(4);
+    });
+
+    it('returns event, review and group counts for the user', async () => {
+      userFound({ _id: uid });
+      await expect(service.getSummary(uid, uid)).resolves.toEqual({
+        userId: uid,
+        eventCount: 7,
+        reviewCount: 4,
+        groupCount: 3,
+      });
+      expect(playerModel.countDocuments).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'joined' }),
+      );
+      expect(memberModel.countDocuments).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'approved' }),
+      );
+      expect(ratings.countForPlayer).toHaveBeenCalledWith(uid);
+    });
+
+    it('404s for a malformed id, a missing or a deleted user', async () => {
+      await expect(service.getSummary('nope', uid)).rejects.toThrow(
+        NotFoundException,
+      );
+      userFound(null);
+      await expect(service.getSummary(other, uid)).rejects.toThrow(
+        NotFoundException,
+      );
+      userFound({ _id: other, deletedAt: new Date() });
+      await expect(service.getSummary(other, uid)).rejects.toThrow(
+        NotFoundException,
+      );
+    });
+
+    it("404s for someone else's private profile but not your own", async () => {
+      userFound({ _id: other, privacy: { profileVisibility: 'private' } });
+      await expect(service.getSummary(other, uid)).rejects.toThrow(
+        NotFoundException,
+      );
+      await expect(service.getSummary(other, other)).resolves.toMatchObject({
+        eventCount: 7,
+      });
     });
   });
 });

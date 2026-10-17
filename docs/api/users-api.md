@@ -35,6 +35,7 @@ there is no anonymous people-search.
 | `POST` | `/users/me/avatar` | any user | Avatar upload (multipart `file`). |
 | `GET` | `/users/me/qr` | any user | The caller's invite code / link. |
 | `GET` | `/users/:id/profile` | any user | Another user's public profile. `404` when `privacy.profileVisibility: "private"`. |
+| `GET` | `/users/:id/summary` | any user | Profile counts: `eventCount`, `reviewCount`, `groupCount`. Pass your own id for the current user. See `change-logs/2026-10-17_profile_summary.md`. |
 
 > Only `/users/search` is documented in detail below — the rest are listed so the
 > table is a complete picture of the controller. They predate this doc and are
