@@ -162,6 +162,16 @@ export class Event {
   takeAdditionalPrice: boolean;
 
   /**
+   * The cashier's replacement price per player (Event Funds,
+   * `PATCH /events/:id/fee`), in baht; null = charge the event's own fee
+   * (`price` + `additionalPrice` when taken). The full price, not a top-up.
+   * Its history lives in `eventfeeadjustments`; this is the current value so
+   * reads need no history lookup.
+   */
+  @Prop({ type: Number, default: null })
+  updatedPrice: number | null;
+
+  /**
    * Whether members may bring guests (`+1` / `+2`) to this event.
    *
    * Defaults to **false**: a capability switch stays off until an organizer

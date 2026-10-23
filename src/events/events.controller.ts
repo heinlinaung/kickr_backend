@@ -6,6 +6,7 @@ import {
   Put,
   Patch,
   Delete,
+  HttpCode,
   Body,
   Param,
   ParseIntPipe,
@@ -35,6 +36,7 @@ import { AddMatchDto } from './dto/add-match.dto';
 import { UpdateMatchScoreDto } from './dto/update-match-score.dto';
 import { SubmitResultDto } from './dto/submit-result.dto';
 import { SubmitMvpDto } from './dto/submit-mvp.dto';
+import { GiveMvpAwardDto } from '../awards/dto/give-mvp-award.dto';
 import { CancelEventDto } from './dto/cancel-event.dto';
 import { SubmitPaymentDto } from './dto/submit-payment.dto';
 import { ReviewPaymentDto } from './dto/review-payment.dto';
@@ -63,7 +65,7 @@ export class EventsController {
       'carries `joinedByMe`, so a mixed list can be told apart; do not assume ' +
       'a row from here is public. Roster membership is the test, not group ' +
       'membership: a private event you have not joined stays hidden even from ' +
-      "a member of the owning group — use GET /events/group/:groupId for a " +
+      'a member of the owning group — use GET /events/group/:groupId for a ' +
       'group schedule. FINISHED events are hidden by default: `after_match` ' +
       'and `done` are excluded unless asked for explicitly, since a played ' +
       'fixture is history rather than something to turn up to. An explicit ' +
@@ -87,7 +89,7 @@ export class EventsController {
     name: 'near',
     required: false,
     example: '16.8409,96.1735',
-    description: "Latitude,longitude. Pairs with `radius`.",
+    description: 'Latitude,longitude. Pairs with `radius`.',
   })
   @ApiQuery({
     name: 'radius',
@@ -145,7 +147,8 @@ export class EventsController {
       // an absent param correctly reads as false there. Here the default is
       // TRUE, and `undefined === 'true'` would be false — silently inverting
       // the default and hiding expired events for every caller.
-      includeExpired: includeExpired === undefined ? true : includeExpired !== 'false',
+      includeExpired:
+        includeExpired === undefined ? true : includeExpired !== 'false',
     });
   }
 
@@ -517,7 +520,10 @@ export class EventsController {
       'who was brought and what was decided. An approved guest gives their ' +
       'capacity back.',
   })
-  @ApiResponse({ status: 403, description: 'Neither the sponsor nor an organizer' })
+  @ApiResponse({
+    status: 403,
+    description: 'Neither the sponsor nor an organizer',
+  })
   @ApiResponse({ status: 404, description: 'Guest not found for this event' })
   removeGuest(
     @Param('id') id: string,
@@ -530,24 +536,63 @@ export class EventsController {
   // --- Payments ------------------------------------------------------------
 
   @Get(':id/payments')
+  @ApiTags('Payment & Funds')
   @ApiOperation({
     summary: 'Payment status for the event',
     description:
       'Role-aware: the group cashier (or the creator for non-group events) ' +
       'and the organizer get every member; anyone else gets only their own ' +
-      'row. Each row carries method (cash | bank_transfer), status ' +
-      '(submitted | approved | rejected), the bank-transfer proof image, the ' +
-      'reviewer and a reject reason. A member with no row has not submitted ' +
-      'anything. The amount is not stored per member; it comes from the ' +
-      "event's `price` plus `additionalPrice` when `takeAdditionalPrice` is " +
-      'set.',
+      'line. One line per member — the joined roster plus anyone with a ' +
+      'payment row — so members who never submitted appear as unpaid. Each ' +
+      'line carries `member`, `paymentStatus` (paid | unpaid), ' +
+      '`balanceStatus` (UNPAID | PENDING | PARTIAL | APPROVED | OVERPAID), ' +
+      '`paidAmount`, `owedAmount` and `payment` (the submission row — ' +
+      'method, status, proof, reviewer, reject reason — or null). Paged: ' +
+      '`{ items, nextCursor, hasMore }`, ordered by member id.',
   })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    enum: ['paid', 'unpaid'],
+    description:
+      'Optional. `paid`: nothing owed at the current price. `unpaid`: ' +
+      'anything still owed — no submission, awaiting review, rejected or ' +
+      'part-paid. Omit for everyone.',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    example: 20,
+    description: 'Page size, 1-50. Defaults to 20.',
+  })
+  @ApiQuery({
+    name: 'cursor',
+    required: false,
+    description:
+      'Opaque pagination cursor. Pass `nextCursor` from the previous ' +
+      'response verbatim; omit for the first page. Invalid values give 400.',
+  })
+  @ApiResponse({ status: 400, description: 'Invalid status or cursor' })
   @ApiResponse({ status: 404, description: 'Event not found' })
-  listPayments(@Param('id') id: string, @CurrentUser() user: any) {
-    return this.eventsService.listPayments(id, user._id.toString());
+  listPayments(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Query('status') status?: string,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    if (status !== undefined && status !== 'paid' && status !== 'unpaid') {
+      throw new BadRequestException('status must be one of: paid, unpaid');
+    }
+    return this.eventsService.listPayments(id, user._id.toString(), {
+      status,
+      limit: limit === undefined ? undefined : Number(limit),
+      cursor,
+    });
   }
 
   @Post(':id/payments')
+  @ApiTags('Payment & Funds')
   @UseInterceptors(FileInterceptor('file', multerMemoryImageOptions))
   @ApiOperation({
     summary: 'Submit YOUR payment for review (joined players)',
@@ -573,15 +618,11 @@ export class EventsController {
     @Body() dto: SubmitPaymentDto,
     @UploadedFile() file?: Express.Multer.File,
   ) {
-    return this.eventsService.submitPayment(
-      id,
-      user._id.toString(),
-      dto,
-      file,
-    );
+    return this.eventsService.submitPayment(id, user._id.toString(), dto, file);
   }
 
   @Patch(':id/payments/:memberId/review')
+  @ApiTags('Payment & Funds')
   @ApiOperation({
     summary: "Approve or reject a member's payment (cashier)",
     description:
@@ -621,14 +662,20 @@ export class EventsController {
   @ApiOperation({
     summary: "Accept or reject a challenge event's proposal (opposing side)",
     description:
-      "Owner/admin of the group that did NOT create the event — the proposer " +
+      'Owner/admin of the group that did NOT create the event — the proposer ' +
       'cannot accept their own terms. `action` accept|reject with an optional ' +
       'reason ("date change need", "color conflict", …). Accept unlocks the ' +
       'normal event lifecycle; reject sends the proposer back to edit and ' +
       'POST /events/:id/proposal/resubmit.',
   })
-  @ApiResponse({ status: 400, description: 'Not a challenge event, or already reviewed' })
-  @ApiResponse({ status: 403, description: 'Caller is not an opposing-side admin' })
+  @ApiResponse({
+    status: 400,
+    description: 'Not a challenge event, or already reviewed',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Caller is not an opposing-side admin',
+  })
   reviewProposal(
     @Param('id') id: string,
     @CurrentUser() user: any,
@@ -641,12 +688,15 @@ export class EventsController {
   @ApiOperation({
     summary: 'Re-propose a rejected challenge event after editing it',
     description:
-      'Either side\'s organizer. Only a REJECTED proposal can be resubmitted ' +
+      "Either side's organizer. Only a REJECTED proposal can be resubmitted " +
       '— pass `date` in the body to fix the most common rejection in the ' +
       'same call, or edit anything else via PATCH /events/:id first. The ' +
       'opposing side is notified to review again.',
   })
-  @ApiResponse({ status: 400, description: 'Proposal is not in rejected state' })
+  @ApiResponse({
+    status: 400,
+    description: 'Proposal is not in rejected state',
+  })
   resubmitProposal(
     @Param('id') id: string,
     @CurrentUser() user: any,
@@ -693,7 +743,10 @@ export class EventsController {
       'Not a challenge event, proposal not accepted, or an assignee is not ' +
       "a member of the caller's group",
   })
-  @ApiResponse({ status: 403, description: 'Caller is not an admin of either side' })
+  @ApiResponse({
+    status: 403,
+    description: 'Caller is not an admin of either side',
+  })
   assignPlayers(
     @Param('id') id: string,
     @CurrentUser() user: any,
@@ -814,9 +867,9 @@ export class EventsController {
       'Sets or REPLACES the line-up in one call — no partial edits. ' +
       "`formation` is free-form ('4-4-2', '2-2', …): its numbers must match " +
       'the sizes of the non-empty position groups in defenders → midfielders ' +
-      '→ forwards order (which lines map to which group is the client\'s ' +
+      "→ forwards order (which lines map to which group is the client's " +
       'choice), and segments + goalkeeper must equal `playerCount`. Everyone ' +
-      "placed must be on THIS team — `players` (user ids) or `guests` " +
+      'placed must be on THIS team — `players` (user ids) or `guests` ' +
       '(roster-row ids). Array order is preserved; it IS the formation. ' +
       'GET /formations serves the suggested shapes per player count.',
   })
@@ -826,7 +879,10 @@ export class EventsController {
       'Layout arithmetic broken, duplicate player, someone not on the team, ' +
       'or the event is archived',
   })
-  @ApiResponse({ status: 403, description: 'Caller may not set this formation' })
+  @ApiResponse({
+    status: 403,
+    description: 'Caller may not set this formation',
+  })
   @ApiResponse({ status: 404, description: 'Event or team not found' })
   setTeamFormation(
     @Param('id') id: string,
@@ -958,6 +1014,60 @@ export class EventsController {
     @Body() dto: SubmitMvpDto,
   ) {
     return this.eventsService.submitMvp(id, user._id.toString(), dto);
+  }
+
+  @Post(':id/awards/mvp')
+  @ApiOperation({
+    summary: 'Give the MVP award to a participant',
+    description:
+      'Organizer-only, once the match is over (after_match or done). One MVP ' +
+      'per event: the same player again only updates `note`; a different ' +
+      'player is MVP_ALREADY_AWARDED — DELETE first. The player is notified ' +
+      'and the award shows on their Awards tab. `result.mvpUserId` follows.',
+  })
+  @ApiResponse({ status: 201, description: 'The MVP award' })
+  @ApiResponse({
+    status: 400,
+    description: 'USER_NOT_IN_EVENT or EVENT_NOT_FINISHED',
+  })
+  @ApiResponse({ status: 403, description: 'NOT_EVENT_ORGANIZER' })
+  @ApiResponse({ status: 409, description: 'MVP_ALREADY_AWARDED' })
+  awardMvp(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() dto: GiveMvpAwardDto,
+  ) {
+    return this.eventsService.awardMvp(id, user._id.toString(), dto);
+  }
+
+  @Patch(':id/awards/mvp')
+  @ApiOperation({
+    summary: 'Give the MVP award, or update its note',
+    description: 'Same rules as POST; answers 200 instead of 201.',
+  })
+  @ApiResponse({ status: 403, description: 'NOT_EVENT_ORGANIZER' })
+  @ApiResponse({ status: 409, description: 'MVP_ALREADY_AWARDED' })
+  updateMvpAward(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() dto: GiveMvpAwardDto,
+  ) {
+    return this.eventsService.awardMvp(id, user._id.toString(), dto);
+  }
+
+  @Delete(':id/awards/mvp')
+  @HttpCode(204)
+  @ApiOperation({
+    summary: 'Take back the MVP award',
+    description:
+      "Organizer-only. Removes it from the player's Awards tab and clears " +
+      'the MVP (and goal/assist) off the result; the score is kept.',
+  })
+  @ApiResponse({ status: 204, description: 'Taken back' })
+  @ApiResponse({ status: 403, description: 'NOT_EVENT_ORGANIZER' })
+  @ApiResponse({ status: 404, description: 'AWARD_NOT_FOUND' })
+  async revokeMvp(@Param('id') id: string, @CurrentUser() user: any) {
+    await this.eventsService.revokeMvp(id, user._id.toString());
   }
 
   @Post(':id/cancel')

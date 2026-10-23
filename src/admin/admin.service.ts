@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { ClientSession, Model, Types } from 'mongoose';
 import { Group, GroupDocument } from '../groups/schemas/group.schema';
 import {
   GroupMember,
@@ -11,7 +11,18 @@ import {
   EventPlayer,
   EventPlayerDocument,
 } from '../events/schemas/event-player.schema';
+import {
+  EventPayment,
+  EventPaymentDocument,
+} from '../events/schemas/event-payment.schema';
 import { User, UserDocument } from '../users/schemas/user.schema';
+import { FinanceService } from '../finance/finance.service';
+import {
+  feePerPlayerCents,
+  fromCents,
+  memberBalance,
+  pricePerPlayerCents,
+} from '../finance/money';
 
 /** Why a given user id was not added. */
 export type SkipReason =
@@ -19,7 +30,9 @@ export type SkipReason =
   | 'already_joined'
   | 'user_not_found'
   | 'group_full'
-  | 'event_full';
+  | 'event_full'
+  | 'not_joined'
+  | 'already_paid';
 
 export interface BulkAddResult {
   added: string[];
@@ -46,6 +59,9 @@ export class AdminService {
     @InjectModel(EventPlayer.name)
     private playerModel: Model<EventPlayerDocument>,
     @InjectModel(User.name) private userModel: Model<UserDocument>,
+    @InjectModel(EventPayment.name)
+    private paymentModel: Model<EventPaymentDocument>,
+    private readonly financeService: FinanceService,
   ) {}
 
   async addGroupMembers(
@@ -157,6 +173,107 @@ export class AdminService {
           status: 'joined',
         });
       }
+      result.added.push(userId);
+    }
+
+    return finalise(result);
+  }
+
+  /**
+   * Test-data helper: mark joined players as fully paid, skipping the
+   * submit -> cashier-review flow. Each row ends up exactly as an approval
+   * would leave it — `approved`, `paidAmount` covering the current price —
+   * and on a SETTLED group event the difference posts to the group fund as
+   * a LATE_PAYMENT, same as a real approval. `added` lists who was marked.
+   */
+  async markEventPaymentsPaid(
+    eventId: string,
+    userIds: string[],
+    method = 'cash',
+  ): Promise<BulkAddResult> {
+    const event = await this.eventModel
+      .findById(eventId)
+      .select(
+        'groupId createdBy price additionalPrice takeAdditionalPrice updatedPrice',
+      )
+      .lean();
+    if (!event) throw new NotFoundException('Event not found');
+
+    // Stamped as the reviewer: the cashier, or the creator for a non-group
+    // event (or a group still without a cashier) — there is no acting user.
+    const group = event.groupId
+      ? await this.groupModel.findById(event.groupId).select('cashierId').lean()
+      : null;
+    const reviewerId = (group?.cashierId ?? event.createdBy).toString();
+
+    const feeCents = feePerPlayerCents(event);
+    const priceCents = pricePerPlayerCents(event);
+    const ids = dedupe(userIds);
+    const known = await this.existingUserIds(ids);
+    const result = emptyResult();
+
+    for (const userId of ids) {
+      if (!known.has(userId)) {
+        result.skipped.push({ userId, reason: 'user_not_found' });
+        continue;
+      }
+
+      const joined = await this.playerModel.findOne({
+        eventId: new Types.ObjectId(eventId),
+        userId: new Types.ObjectId(userId),
+        status: 'joined',
+      });
+      if (!joined) {
+        result.skipped.push({ userId, reason: 'not_joined' });
+        continue;
+      }
+
+      const existing = await this.paymentModel.findOne({
+        eventId: new Types.ObjectId(eventId),
+        memberId: new Types.ObjectId(userId),
+      });
+      const balance = memberBalance(existing, priceCents, feeCents);
+      if (existing?.status === 'approved' && balance.owedCents === 0) {
+        result.skipped.push({ userId, reason: 'already_paid' });
+        continue;
+      }
+      const paidAfter = balance.paidCents + balance.owedCents;
+
+      const write = async (session: ClientSession | null) => {
+        await this.paymentModel.findOneAndUpdate(
+          {
+            eventId: new Types.ObjectId(eventId),
+            memberId: new Types.ObjectId(userId),
+          },
+          {
+            $set: {
+              method,
+              status: 'approved',
+              proofUrl: null,
+              proofFileId: null,
+              submittedAt: existing?.submittedAt ?? new Date(),
+              amount: fromCents(balance.owedCents),
+              paidAmount: fromCents(paidAfter),
+              reviewedBy: new Types.ObjectId(reviewerId),
+              reviewedAt: new Date(),
+              rejectReason: null,
+            },
+          },
+          { upsert: true, session },
+        );
+        if (event.groupId) {
+          await this.financeService.onPaymentReviewed(session, {
+            eventId,
+            memberId: userId,
+            paidBeforeCents: balance.paidCents,
+            paidAfterCents: paidAfter,
+            reviewerId,
+          });
+        }
+      };
+      await (event.groupId
+        ? this.financeService.runInTransaction(write)
+        : write(null));
       result.added.push(userId);
     }
 

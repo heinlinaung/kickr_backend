@@ -42,6 +42,14 @@ async function bootstrap() {
   const lastAppConfig = otherPaths.map(([p]) => p.startsWith('/app-config')).lastIndexOf(true);
   otherPaths.splice(lastAppConfig + 1, 0, ...sportTypePaths);
   document.paths = Object.fromEntries(otherPaths);
+  // Method-level @ApiTags is appended to the controller's tag rather than
+  // replacing it. Group/event payment endpoints tagged 'Payment & Funds' should
+  // live only under that tag, so drop their controller tag.
+  for (const ops of Object.values(document.paths)) {
+    for (const op of Object.values(ops) as { tags?: string[] }[]) {
+      if (op?.tags?.includes('Payment & Funds')) op.tags = ['Payment & Funds'];
+    }
+  }
   SwaggerModule.setup('api-docs', app, document);
 
   app.enableShutdownHooks();

@@ -8,6 +8,8 @@ import { GroupMember } from '../groups/schemas/group-member.schema';
 import { Event } from '../events/schemas/event.schema';
 import { EventPlayer } from '../events/schemas/event-player.schema';
 import { User } from '../users/schemas/user.schema';
+import { EventPayment } from '../events/schemas/event-payment.schema';
+import { FinanceService } from '../finance/finance.service';
 
 const q = (result: any) => ({
   select: jest.fn().mockReturnThis(),
@@ -22,6 +24,8 @@ describe('AdminService', () => {
   const eventModel: any = {};
   const playerModel: any = {};
   const userModel: any = {};
+  const paymentModel: any = {};
+  const financeService: any = {};
 
   const GROUP_ID = new Types.ObjectId().toString();
   const EVENT_ID = new Types.ObjectId().toString();
@@ -50,6 +54,14 @@ describe('AdminService', () => {
       findOne: jest.fn().mockResolvedValue(null),
     });
     Object.assign(userModel, { find: jest.fn() });
+    Object.assign(paymentModel, {
+      findOne: jest.fn().mockResolvedValue(null),
+      findOneAndUpdate: jest.fn(),
+    });
+    Object.assign(financeService, {
+      onPaymentReviewed: jest.fn(),
+      runInTransaction: jest.fn((fn: any) => fn(null)),
+    });
 
     const m = await Test.createTestingModule({
       providers: [
@@ -59,6 +71,8 @@ describe('AdminService', () => {
         { provide: getModelToken(Event.name), useValue: eventModel },
         { provide: getModelToken(EventPlayer.name), useValue: playerModel },
         { provide: getModelToken(User.name), useValue: userModel },
+        { provide: getModelToken(EventPayment.name), useValue: paymentModel },
+        { provide: FinanceService, useValue: financeService },
       ],
     }).compile();
 
@@ -210,6 +224,74 @@ describe('AdminService', () => {
       expect(cancelled.save).toHaveBeenCalled();
       // unique {eventId,userId} index would reject an insert here
       expect(playerModel.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('markEventPaymentsPaid', () => {
+    const event = { createdBy: U3, groupId: null, price: 100 };
+
+    it('404s for an unknown event', async () => {
+      eventModel.findById.mockReturnValue(q(null));
+      await expect(
+        service.markEventPaymentsPaid(EVENT_ID, [U1]),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('writes an approved row covering the price for joined players', async () => {
+      eventModel.findById.mockReturnValue(q(event));
+      usersExist(U1);
+      playerModel.findOne.mockResolvedValue({ status: 'joined' });
+
+      const res = await service.markEventPaymentsPaid(EVENT_ID, [U1]);
+
+      expect(res.added).toEqual([U1]);
+      const [, update] = paymentModel.findOneAndUpdate.mock.calls[0];
+      expect(update.$set).toMatchObject({
+        method: 'cash',
+        status: 'approved',
+        amount: 100,
+        paidAmount: 100,
+      });
+      expect(update.$set.reviewedBy.toString()).toBe(U3);
+    });
+
+    it('skips players not joined and those already fully paid', async () => {
+      eventModel.findById.mockReturnValue(q(event));
+      usersExist(U1, U2);
+      playerModel.findOne
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ status: 'joined' });
+      paymentModel.findOne.mockResolvedValue({
+        status: 'approved',
+        paidAmount: 100,
+      });
+
+      const res = await service.markEventPaymentsPaid(EVENT_ID, [U1, U2]);
+
+      expect(res.skipped).toEqual([
+        { userId: U1, reason: 'not_joined' },
+        { userId: U2, reason: 'already_paid' },
+      ]);
+      expect(paymentModel.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('posts to the group fund for a group event', async () => {
+      eventModel.findById.mockReturnValue(
+        q({ ...event, groupId: new Types.ObjectId(GROUP_ID) }),
+      );
+      groupModel.findById.mockReturnValue(q({ cashierId: U2 }));
+      usersExist(U1);
+      playerModel.findOne.mockResolvedValue({ status: 'joined' });
+
+      await service.markEventPaymentsPaid(EVENT_ID, [U1]);
+
+      expect(financeService.onPaymentReviewed).toHaveBeenCalledWith(null, {
+        eventId: EVENT_ID,
+        memberId: U1,
+        paidBeforeCents: 0,
+        paidAfterCents: 10000,
+        reviewerId: U2,
+      });
     });
   });
 });

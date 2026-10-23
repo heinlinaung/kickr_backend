@@ -19,6 +19,7 @@ import { Location } from '../locations/schemas/location.schema';
 import { ImageKitService } from '../common/upload/imagekit.service';
 import { LocationsService } from '../locations/locations.service';
 import { EventsService } from '../events/events.service';
+import { FinanceService } from '../finance/finance.service';
 import { PhotosService } from '../photos/photos.service';
 import { SportTypesService } from '../sport-types/sport-types.service';
 import { PlansService } from '../plans/plans.service';
@@ -76,6 +77,10 @@ describe('GroupsService — cashier & payment details', () => {
         { provide: getModelToken(Tournament.name), useValue: {} },
         { provide: getModelToken(Location.name), useValue: {} },
         { provide: EventsService, useValue: {} },
+        {
+          provide: FinanceService,
+          useValue: { buildGroupFund: jest.fn().mockResolvedValue(null) },
+        },
         { provide: PhotosService, useValue: {} },
         { provide: SportTypesService, useValue: sportTypesDouble() },
         { provide: PlansService, useValue: plansDouble() },

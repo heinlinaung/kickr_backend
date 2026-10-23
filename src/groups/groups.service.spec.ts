@@ -14,6 +14,7 @@ import { GroupMember } from './schemas/group-member.schema';
 import { ImageKitService } from '../common/upload/imagekit.service';
 import { LocationsService } from '../locations/locations.service';
 import { EventsService } from '../events/events.service';
+import { FinanceService } from '../finance/finance.service';
 import { PhotosService } from '../photos/photos.service';
 import { SportTypesService } from '../sport-types/sport-types.service';
 import { plansDouble, sportTypesDouble } from '../events/events.test-providers';
@@ -110,6 +111,10 @@ describe('GroupsService', () => {
         { provide: getModelToken(Tournament.name), useValue: tournamentModel },
         { provide: getModelToken(Location.name), useValue: locationModel },
         { provide: EventsService, useValue: eventsService },
+        {
+          provide: FinanceService,
+          useValue: { buildGroupFund: jest.fn().mockResolvedValue(null) },
+        },
         { provide: PhotosService, useValue: photosService },
         { provide: SportTypesService, useValue: sportTypesDouble() },
         { provide: PlansService, useValue: plansDouble() },

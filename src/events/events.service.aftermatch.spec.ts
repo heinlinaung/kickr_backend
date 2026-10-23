@@ -14,6 +14,8 @@ const CREATOR = '507f191e810c19729de860ea';
 const PLAYER = '507f191e810c19729de860e1';
 const OUTSIDER = '507f191e810c19729de860ef';
 const GROUP_ID = '507f1f77bcf86cd799439099';
+const OTHER_GROUP = '507f1f77bcf86cd799439098';
+const CHALLENGE_ID = '507f1f77bcf86cd799439097';
 
 const eventDoc = (over: Record<string, unknown> = {}) => {
   const doc: any = {
@@ -46,6 +48,10 @@ describe('EventsService — after-match (spec §4.4)', () => {
   const memberModel: any = {};
   const imagekit: any = {};
   const photosService: any = {};
+  const awards: any = {};
+  const challengeModel: any = {};
+  const matchModel: any = {};
+  const teamChatModel: any = {};
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -60,6 +66,20 @@ describe('EventsService — after-match (spec §4.4)', () => {
       .fn()
       .mockResolvedValue({ url: 'https://ik/new.jpg', fileId: 'new-file' });
     imagekit.deleteFile = jest.fn().mockResolvedValue(undefined);
+    awards.giveMvp = jest.fn().mockResolvedValue({ id: 'aw_1' });
+    awards.revokeMvp = jest.fn().mockResolvedValue(undefined);
+    awards.giveChallengeAward = jest.fn().mockResolvedValue(null);
+    challengeModel.findById = jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue({
+        challengerGroupId: new Types.ObjectId(GROUP_ID),
+        challengedGroupId: new Types.ObjectId(OTHER_GROUP),
+      }),
+    });
+    matchModel.find = jest.fn().mockReturnValue({
+      lean: jest.fn().mockResolvedValue([]),
+    });
+    teamChatModel.updateMany = jest.fn().mockResolvedValue({});
 
     const m = await Test.createTestingModule({
       providers: [
@@ -70,6 +90,10 @@ describe('EventsService — after-match (spec §4.4)', () => {
           memberModel,
           imagekit,
           photosService,
+          awards,
+          challengeModel,
+          matchModel,
+          teamChatModel,
         }),
       ],
     }).compile();
@@ -92,7 +116,11 @@ describe('EventsService — after-match (spec §4.4)', () => {
       eventModel.findById.mockResolvedValue(doc);
 
       await service.submitResult(EVENT_ID, CREATOR, { scoreA: 3, scoreB: 1 });
-      expect(doc.result).toMatchObject({ scoreA: 3, scoreB: 1, mvpUserId: null });
+      expect(doc.result).toMatchObject({
+        scoreA: 3,
+        scoreB: 1,
+        mvpUserId: null,
+      });
     });
 
     it('preserves an MVP recorded earlier — correcting a score cannot blank it', async () => {
@@ -122,7 +150,11 @@ describe('EventsService — after-match (spec §4.4)', () => {
       eventModel.findById.mockResolvedValue(doc);
       playerModel.findOne.mockResolvedValue({ _id: 'row' });
 
-      await service.submitMvp(EVENT_ID, CREATOR, { userId: PLAYER, goal: 12, assist: 4 });
+      await service.submitMvp(EVENT_ID, CREATOR, {
+        userId: PLAYER,
+        goal: 12,
+        assist: 4,
+      });
 
       expect(doc.result.mvpUserId.toString()).toBe(PLAYER);
       expect(doc.result.mvpGoal).toBe(12);
@@ -136,7 +168,11 @@ describe('EventsService — after-match (spec §4.4)', () => {
 
       // Naming a non-player would corrupt the profile mvpCount (parent §2.3).
       await expect(
-        service.submitMvp(EVENT_ID, CREATOR, { userId: OUTSIDER, goal: 1, assist: 0 }),
+        service.submitMvp(EVENT_ID, CREATOR, {
+          userId: OUTSIDER,
+          goal: 1,
+          assist: 0,
+        }),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
 
@@ -145,19 +181,33 @@ describe('EventsService — after-match (spec §4.4)', () => {
       async (status) => {
         eventModel.findById.mockResolvedValue(eventDoc({ status }));
         await expect(
-          service.submitMvp(EVENT_ID, CREATOR, { userId: PLAYER, goal: 1, assist: 0 }),
+          service.submitMvp(EVENT_ID, CREATOR, {
+            userId: PLAYER,
+            goal: 1,
+            assist: 0,
+          }),
         ).rejects.toBeInstanceOf(BadRequestException);
       },
     );
 
     it('preserves a score recorded earlier — either order works', async () => {
       const doc = eventDoc({
-        result: { mvpUserId: null, mvpGoal: null, mvpAssist: null, scoreA: 3, scoreB: 1 },
+        result: {
+          mvpUserId: null,
+          mvpGoal: null,
+          mvpAssist: null,
+          scoreA: 3,
+          scoreB: 1,
+        },
       });
       eventModel.findById.mockResolvedValue(doc);
       playerModel.findOne.mockResolvedValue({ _id: 'row' });
 
-      await service.submitMvp(EVENT_ID, CREATOR, { userId: PLAYER, goal: 12, assist: 4 });
+      await service.submitMvp(EVENT_ID, CREATOR, {
+        userId: PLAYER,
+        goal: 12,
+        assist: 4,
+      });
 
       expect(doc.result).toMatchObject({
         scoreA: 3,
@@ -165,6 +215,206 @@ describe('EventsService — after-match (spec §4.4)', () => {
         mvpGoal: 12,
         mvpAssist: 4,
       });
+    });
+  });
+
+  describe('submitMvp keeps the MVP award in step', () => {
+    it('gives the award, replacing a different holder', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc({ title: 'Sunday' }));
+      playerModel.findOne.mockResolvedValue({ _id: 'row' });
+
+      await service.submitMvp(EVENT_ID, CREATOR, {
+        userId: PLAYER,
+        goal: 1,
+        assist: 0,
+      });
+
+      expect(awards.giveMvp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: PLAYER,
+          awardedBy: CREATOR,
+          replace: true,
+        }),
+      );
+    });
+  });
+
+  describe('awardMvp — POST|PATCH /events/:id/awards/mvp', () => {
+    const code = async (p: Promise<unknown>) =>
+      p.then(
+        () => 'resolved',
+        (err: any) => err.getResponse().code,
+      );
+
+    it.each(['after_match', 'done'])('awards while %s', async (status) => {
+      const doc = eventDoc({ status });
+      eventModel.findById.mockResolvedValue(doc);
+      playerModel.findOne.mockResolvedValue({ _id: 'row' });
+
+      const award = await service.awardMvp(EVENT_ID, CREATOR, {
+        userId: PLAYER,
+        note: '2 goals',
+      });
+
+      expect(award).toEqual({ id: 'aw_1' });
+      expect(awards.giveMvp).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: PLAYER, note: '2 goals' }),
+      );
+      expect(awards.giveMvp.mock.calls[0][0].replace).toBeUndefined();
+      expect(doc.result.mvpUserId.toString()).toBe(PLAYER);
+    });
+
+    it('drops goal/assist when the MVP changes, keeps them when it does not', async () => {
+      const stale = eventDoc({
+        result: {
+          mvpUserId: new Types.ObjectId(OUTSIDER),
+          mvpGoal: 5,
+          mvpAssist: 2,
+          scoreA: 1,
+          scoreB: 0,
+        },
+      });
+      eventModel.findById.mockResolvedValue(stale);
+      playerModel.findOne.mockResolvedValue({ _id: 'row' });
+      await service.awardMvp(EVENT_ID, CREATOR, { userId: PLAYER });
+      expect(stale.result).toMatchObject({
+        mvpGoal: null,
+        mvpAssist: null,
+        scoreA: 1,
+      });
+
+      const same = eventDoc({
+        result: {
+          mvpUserId: new Types.ObjectId(PLAYER),
+          mvpGoal: 5,
+          mvpAssist: 2,
+          scoreA: 1,
+          scoreB: 0,
+        },
+      });
+      eventModel.findById.mockResolvedValue(same);
+      await service.awardMvp(EVENT_ID, CREATOR, { userId: PLAYER });
+      expect(same.result).toMatchObject({ mvpGoal: 5, mvpAssist: 2 });
+    });
+
+    it('EVENT_NOT_FINISHED before the match is over', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc({ status: 'playing' }));
+      expect(
+        await code(service.awardMvp(EVENT_ID, CREATOR, { userId: PLAYER })),
+      ).toBe('EVENT_NOT_FINISHED');
+    });
+
+    it('USER_NOT_IN_EVENT for a non-player', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc());
+      expect(
+        await code(service.awardMvp(EVENT_ID, CREATOR, { userId: OUTSIDER })),
+      ).toBe('USER_NOT_IN_EVENT');
+    });
+
+    it('NOT_EVENT_ORGANIZER for anyone else', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc());
+      const err: any = await service
+        .awardMvp(EVENT_ID, OUTSIDER, { userId: PLAYER })
+        .catch((e) => e);
+      expect(err).toBeInstanceOf(ForbiddenException);
+      expect(err.getResponse().code).toBe('NOT_EVENT_ORGANIZER');
+    });
+  });
+
+  describe('revokeMvp — DELETE /events/:id/awards/mvp', () => {
+    it('takes the award back and clears the MVP, keeping the score', async () => {
+      const doc = eventDoc({
+        result: {
+          mvpUserId: new Types.ObjectId(PLAYER),
+          mvpGoal: 5,
+          mvpAssist: 2,
+          scoreA: 3,
+          scoreB: 1,
+        },
+      });
+      eventModel.findById.mockResolvedValue(doc);
+
+      await service.revokeMvp(EVENT_ID, CREATOR);
+
+      expect(awards.revokeMvp).toHaveBeenCalledWith(EVENT_ID);
+      expect(doc.result).toEqual({
+        mvpUserId: null,
+        mvpGoal: null,
+        mvpAssist: null,
+        scoreA: 3,
+        scoreB: 1,
+      });
+    });
+  });
+
+  describe('Group Challenge award on done', () => {
+    const challengeEvent = (over: Record<string, unknown> = {}) =>
+      eventDoc({
+        type: 'challenge',
+        proposedStatus: 'accepted',
+        challengeId: new Types.ObjectId(CHALLENGE_ID),
+        groupId: new Types.ObjectId(GROUP_ID),
+        sportType: 'basketball',
+        challengeColors: { challengerColor: 'Red', challengedColor: 'Blue' },
+        ...over,
+      });
+    // The creator keeps organizer rights, so no membership is needed; done
+    // is reachable from after_match for every table.
+    const finish = async (doc: any) => {
+      eventModel.findById.mockResolvedValue(doc);
+      await service.setStatus(EVENT_ID, CREATOR, 'done');
+    };
+
+    it('awards the challenger when scoreA wins', async () => {
+      await finish(challengeEvent({ result: { scoreA: 3, scoreB: 1 } }));
+      expect(awards.giveChallengeAward).toHaveBeenCalledWith(
+        expect.objectContaining({
+          winnerGroupId: new Types.ObjectId(GROUP_ID),
+        }),
+      );
+    });
+
+    it('awards the challenged side when scoreB wins', async () => {
+      await finish(challengeEvent({ result: { scoreA: 0, scoreB: 2 } }));
+      expect(
+        awards.giveChallengeAward.mock.calls[0][0].winnerGroupId.toString(),
+      ).toBe(OTHER_GROUP);
+    });
+
+    it('gives nothing on a draw', async () => {
+      await finish(challengeEvent({ result: { scoreA: 2, scoreB: 2 } }));
+      expect(awards.giveChallengeAward).not.toHaveBeenCalled();
+    });
+
+    it('falls back to fixture goals when no overall score was posted', async () => {
+      matchModel.find.mockReturnValue({
+        lean: jest.fn().mockResolvedValue([
+          { teamA: 'Red', teamB: 'Blue', scoreA: 1, scoreB: 2 },
+          { teamA: 'Blue', teamB: 'Red', scoreA: 0, scoreB: 0 },
+          { teamA: 'Red', teamB: 'Blue', scoreA: null, scoreB: null },
+        ]),
+      });
+      await finish(challengeEvent());
+      expect(
+        awards.giveChallengeAward.mock.calls[0][0].winnerGroupId.toString(),
+      ).toBe(OTHER_GROUP);
+    });
+
+    it('gives nothing when nothing was scored', async () => {
+      await finish(challengeEvent());
+      expect(awards.giveChallengeAward).not.toHaveBeenCalled();
+    });
+
+    it('never awards a normal event', async () => {
+      await finish(eventDoc({ result: { scoreA: 3, scoreB: 1 } }));
+      expect(awards.giveChallengeAward).not.toHaveBeenCalled();
+    });
+
+    it('an award failure does not block the archive', async () => {
+      awards.giveChallengeAward.mockRejectedValue(new Error('db down'));
+      const doc = challengeEvent({ result: { scoreA: 3, scoreB: 1 } });
+      await finish(doc);
+      expect(doc.status).toBe('done');
     });
   });
 

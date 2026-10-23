@@ -29,6 +29,8 @@ import { PhotosService } from '../photos/photos.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SportTypesService } from '../sport-types/sport-types.service';
 import { PlansService } from '../plans/plans.service';
+import { FinanceService } from '../finance/finance.service';
+import { AwardsService } from '../awards/awards.service';
 import { DEFAULT_PLAN_LIMITS } from '../plans/plans';
 import { BadRequestException } from '@nestjs/common';
 
@@ -127,6 +129,8 @@ export interface EventsTestDoubles {
   notifications?: any;
   sportTypes?: any;
   plans?: any;
+  finance?: any;
+  awards?: any;
 }
 
 export function eventsProviders(doubles: EventsTestDoubles = {}) {
@@ -179,6 +183,11 @@ export function eventsProviders(doubles: EventsTestDoubles = {}) {
         select: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       }),
+      // reviewPayment names the member on a late-payment ledger row.
+      findById: jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(null),
+      }),
     },
     challengeModel = { findById: jest.fn() },
     locations = { assertOwnedBy: jest.fn(), assertCanEdit: jest.fn() },
@@ -195,6 +204,17 @@ export function eventsProviders(doubles: EventsTestDoubles = {}) {
     notifications = { create: jest.fn().mockResolvedValue(undefined) },
     sportTypes = sportTypesDouble(),
     plans = plansDouble(),
+    // reviewPayment runs its group-event writes through runInTransaction;
+    // the double just calls the work unsessioned.
+    finance = {
+      runInTransaction: jest.fn((fn: (s: null) => unknown) => fn(null)),
+      onPaymentReviewed: jest.fn().mockResolvedValue(undefined),
+    },
+    awards = {
+      giveMvp: jest.fn().mockResolvedValue({}),
+      revokeMvp: jest.fn().mockResolvedValue(undefined),
+      giveChallengeAward: jest.fn().mockResolvedValue(null),
+    },
   } = doubles;
 
   return [
@@ -217,5 +237,7 @@ export function eventsProviders(doubles: EventsTestDoubles = {}) {
     { provide: NotificationsService, useValue: notifications },
     { provide: SportTypesService, useValue: sportTypes },
     { provide: PlansService, useValue: plans },
+    { provide: FinanceService, useValue: finance },
+    { provide: AwardsService, useValue: awards },
   ];
 }

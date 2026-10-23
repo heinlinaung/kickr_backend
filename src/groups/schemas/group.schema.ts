@@ -101,6 +101,15 @@ export class Group {
   @Prop({ default: 22 })
   maxPlayers: number;
 
+  /**
+   * Whether approved members may read an event's individual expense entries
+   * (`GET /events/:id/expenses`). Off by default: members get per-category
+   * totals from the finance summary, and the line items stay with the
+   * cashier and owner.
+   */
+  @Prop({ default: false })
+  showExpenseDetailsToMembers: boolean;
+
   @Prop()
   inviteCode: string;
 

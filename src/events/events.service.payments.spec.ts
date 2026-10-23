@@ -28,10 +28,16 @@ describe('EventsService — member payments (submit/review)', () => {
   const memberModel: any = {};
   const groupModel: any = {};
   const imagekit = {
-    upload: jest.fn().mockResolvedValue({ url: 'https://ik/p.jpg', fileId: 'fid1' }),
+    upload: jest
+      .fn()
+      .mockResolvedValue({ url: 'https://ik/p.jpg', fileId: 'fid1' }),
     deleteFile: jest.fn().mockResolvedValue(undefined),
   };
   const notifications = { create: jest.fn().mockResolvedValue(undefined) };
+  const finance = {
+    runInTransaction: jest.fn((fn: (s: null) => unknown) => fn(null)),
+    onPaymentReviewed: jest.fn().mockResolvedValue(undefined),
+  };
 
   /** find(...).populate(...).sort(...).lean() */
   const listChain = (rows: any[]) => ({
@@ -62,7 +68,10 @@ describe('EventsService — member payments (submit/review)', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
-    imagekit.upload.mockResolvedValue({ url: 'https://ik/p.jpg', fileId: 'fid1' });
+    imagekit.upload.mockResolvedValue({
+      url: 'https://ik/p.jpg',
+      fileId: 'fid1',
+    });
     mockEvent();
     playerModel.findOne = jest.fn().mockResolvedValue({ status: 'joined' });
     paymentModel.find = jest.fn().mockReturnValue(listChain([]));
@@ -89,6 +98,7 @@ describe('EventsService — member payments (submit/review)', () => {
           groupModel,
           imagekit,
           notifications,
+          finance,
         }),
       ],
     }).compile();
@@ -112,9 +122,9 @@ describe('EventsService — member payments (submit/review)', () => {
     });
 
     it('requires a receipt image for a bank transfer', async () => {
-      await expect(
-        submit(MEMBER, { method: 'bank_transfer' }),
-      ).rejects.toThrow(/receipt image/);
+      await expect(submit(MEMBER, { method: 'bank_transfer' })).rejects.toThrow(
+        /receipt image/,
+      );
       expect(paymentModel.findOneAndUpdate).not.toHaveBeenCalled();
     });
 
@@ -182,12 +192,50 @@ describe('EventsService — member payments (submit/review)', () => {
       expect(paymentModel.findOneAndUpdate).toHaveBeenCalled();
     });
 
-    it('stores no amount — the event owns the price', async () => {
+    it('records what the submission is for, but never the price itself', async () => {
+      mockEvent({ price: 100, additionalPrice: 20, takeAdditionalPrice: true });
       await submit();
       const [, update] = paymentModel.findOneAndUpdate.mock.calls[0];
-      for (const field of ['amount', 'price', 'additionalPrice']) {
+      // The event still owns the price…
+      for (const field of ['price', 'additionalPrice', 'updatedPrice']) {
         expect(update.$set).not.toHaveProperty(field);
       }
+      // …the row records the balance this claim covers (Event Funds).
+      expect(update.$set.amount).toBe(120);
+      expect(update.$set.paidAmount).toBe(0);
+    });
+
+    it('lets a part-paid member top up the difference after a price rise', async () => {
+      mockEvent({ price: 120, updatedPrice: 150 });
+      paymentModel.findOne = jest.fn().mockResolvedValue({
+        status: 'approved',
+        amount: 120,
+        paidAmount: 120,
+        proofFileId: 'approvedFid',
+      });
+
+      await submit(MEMBER, { method: 'bank_transfer' }, file);
+
+      const [, update] = paymentModel.findOneAndUpdate.mock.calls[0];
+      expect(update.$set).toMatchObject({
+        status: 'submitted',
+        amount: 30,
+        paidAmount: 120,
+      });
+      // The approved receipt is evidence for money already counted.
+      expect(imagekit.deleteFile).not.toHaveBeenCalled();
+    });
+
+    it('still refuses an approved member who owes nothing', async () => {
+      mockEvent({ price: 120 });
+      paymentModel.findOne = jest
+        .fn()
+        .mockResolvedValue({
+          status: 'approved',
+          amount: 120,
+          paidAmount: 120,
+        });
+      await expect(submit()).rejects.toThrow(BadRequestException);
     });
 
     it('notifies the group cashier that a review is waiting', async () => {
@@ -226,9 +274,7 @@ describe('EventsService — member payments (submit/review)', () => {
     it('403s anyone but the cashier on a group event — the owner included', async () => {
       paymentModel.findOne.mockResolvedValue(submittedRow());
       await expect(review(CREATOR)).rejects.toThrow(/Only the group cashier/);
-      await expect(review(STRANGER)).rejects.toBeInstanceOf(
-        ForbiddenException,
-      );
+      await expect(review(STRANGER)).rejects.toBeInstanceOf(ForbiddenException);
     });
 
     it('lets the cashier approve, stamping who and when', async () => {
@@ -241,6 +287,58 @@ describe('EventsService — member payments (submit/review)', () => {
       expect(row).toMatchObject({ status: 'approved', rejectReason: null });
       expect(String(row.reviewedBy)).toBe(CASHIER);
       expect(row.reviewedAt).toBeInstanceOf(Date);
+    });
+
+    it('approving adds the submission to paidAmount and tells Event Funds', async () => {
+      mockEvent({ price: 120 });
+      const row = { ...submittedRow(), amount: 120, paidAmount: 0 };
+      paymentModel.findOne.mockResolvedValue(row);
+
+      await review(CASHIER, { action: 'approve' });
+
+      expect(row.paidAmount).toBe(120);
+      expect(finance.onPaymentReviewed).toHaveBeenCalledWith(
+        null,
+        expect.objectContaining({
+          eventId: EVENT_ID,
+          memberId: MEMBER,
+          paidBeforeCents: 0,
+          paidAfterCents: 12000,
+          reviewerId: CASHIER,
+        }),
+      );
+    });
+
+    it('un-approving takes the submission back out of paidAmount', async () => {
+      mockEvent({ price: 120 });
+      const row = {
+        ...submittedRow(),
+        status: 'approved',
+        amount: 120,
+        paidAmount: 120,
+      };
+      paymentModel.findOne.mockResolvedValue(row);
+
+      await review(CASHIER, { action: 'reject', reason: 'Bounced' });
+
+      expect(row.paidAmount).toBe(0);
+      expect(finance.onPaymentReviewed).toHaveBeenCalledWith(
+        null,
+        expect.objectContaining({ paidBeforeCents: 12000, paidAfterCents: 0 }),
+      );
+    });
+
+    it('a legacy approved row (no paidAmount) counts as the full fee', async () => {
+      mockEvent({ price: 120 });
+      const row = { ...submittedRow(), status: 'approved' };
+      paymentModel.findOne.mockResolvedValue(row);
+
+      await review(CASHIER, { action: 'reject', reason: 'Never arrived' });
+
+      expect(finance.onPaymentReviewed).toHaveBeenCalledWith(
+        null,
+        expect.objectContaining({ paidBeforeCents: 12000, paidAfterCents: 0 }),
+      );
     });
 
     it('a rejection keeps the reason for the member to see', async () => {
@@ -300,33 +398,105 @@ describe('EventsService — member payments (submit/review)', () => {
   });
 
   describe('listPayments', () => {
-    it('gives the event creator (organizer) every row', async () => {
-      await service.listPayments(EVENT_ID, CREATOR);
-      const filter = paymentModel.find.mock.calls[0][0];
-      expect(filter.memberId).toBeUndefined();
+    const OTHER = '507f191e810c19729de860ee';
+    const id = (v: string) => new Types.ObjectId(v);
+
+    /** Roster of MEMBER + OTHER; event costs 100. */
+    const setup = (payments: any[] = []) => {
+      mockEvent({ price: 100 });
+      playerModel.find = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest
+          .fn()
+          .mockResolvedValue([{ userId: id(MEMBER) }, { userId: id(OTHER) }]),
+      });
+      paymentModel.find = jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue(payments),
+      });
+    };
+    const approved = (memberId: string) => ({
+      memberId: id(memberId),
+      status: 'approved',
+      paidAmount: 100,
     });
 
-    it('gives the CASHIER every row too — they review them', async () => {
+    it('gives the event creator (organizer) every member', async () => {
+      setup();
+      await service.listPayments(EVENT_ID, CREATOR);
+      expect(paymentModel.find.mock.calls[0][0].memberId).toBeUndefined();
+      expect(playerModel.find.mock.calls[0][0].userId).not.toBeInstanceOf(
+        Types.ObjectId,
+      );
+    });
+
+    it('gives the CASHIER every member too — they review them', async () => {
+      setup();
       await service.listPayments(EVENT_ID, CASHIER);
-      const filter = paymentModel.find.mock.calls[0][0];
-      expect(filter.memberId).toBeUndefined();
+      expect(paymentModel.find.mock.calls[0][0].memberId).toBeUndefined();
     });
 
-    it('narrows anyone else to their own row', async () => {
+    it('narrows anyone else to their own line', async () => {
+      setup();
       await service.listPayments(EVENT_ID, STRANGER);
-      const filter = paymentModel.find.mock.calls[0][0];
-      expect(filter.memberId.toString()).toBe(STRANGER);
+      expect(paymentModel.find.mock.calls[0][0].memberId.toString()).toBe(
+        STRANGER,
+      );
+      expect(playerModel.find.mock.calls[0][0].userId.toString()).toBe(
+        STRANGER,
+      );
     });
 
-    it('never populates the member email', async () => {
-      const c = listChain([]);
-      paymentModel.find.mockReturnValue(c);
+    it('lists a member with no submission as unpaid', async () => {
+      setup([approved(MEMBER)]);
+      const page = await service.listPayments(EVENT_ID, CREATOR);
+      expect(
+        page.items.map((l: any) => [l.member._id.toString(), l.paymentStatus]),
+      ).toEqual([
+        [MEMBER, 'paid'],
+        [OTHER, 'unpaid'],
+      ]);
+      expect(page.items[1].payment).toBeNull();
+      expect(page.items[1].balanceStatus).toBe('UNPAID');
+    });
 
-      await service.listPayments(EVENT_ID, CREATOR);
+    it('filters by ?status=paid and ?status=unpaid', async () => {
+      setup([approved(MEMBER), { memberId: id(OTHER), status: 'submitted' }]);
+      const paid = await service.listPayments(EVENT_ID, CREATOR, {
+        status: 'paid',
+      });
+      expect(paid.items.map((l: any) => l.member._id.toString())).toEqual([
+        MEMBER,
+      ]);
 
-      const fields = c.populate.mock.calls[0][1] as string;
-      expect(fields.split(' ')).not.toContain('email');
-      expect(fields.split(' ')).toContain('name');
+      const unpaid = await service.listPayments(EVENT_ID, CREATOR, {
+        status: 'unpaid',
+      });
+      expect(unpaid.items.map((l: any) => l.member._id.toString())).toEqual([
+        OTHER,
+      ]);
+      expect(unpaid.items[0].balanceStatus).toBe('PENDING');
+    });
+
+    it('pages by cursor without repeating or skipping', async () => {
+      setup();
+      const first = await service.listPayments(EVENT_ID, CREATOR, { limit: 1 });
+      expect(first.hasMore).toBe(true);
+      expect(first.items[0].member._id.toString()).toBe(MEMBER);
+
+      const second = await service.listPayments(EVENT_ID, CREATOR, {
+        limit: 1,
+        cursor: first.nextCursor!,
+      });
+      expect(second.items[0].member._id.toString()).toBe(OTHER);
+      expect(second.hasMore).toBe(false);
+      expect(second.nextCursor).toBeNull();
+    });
+
+    it('400s a garbage cursor', async () => {
+      setup();
+      await expect(
+        service.listPayments(EVENT_ID, CREATOR, { cursor: 'nope' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
     });
 
     it('404s an unknown event', async () => {
@@ -338,4 +508,5 @@ describe('EventsService — member payments (submit/review)', () => {
       ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
+
 });

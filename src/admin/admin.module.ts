@@ -26,6 +26,10 @@ import {
   EventLike,
   EventLikeSchema,
 } from '../events/schemas/event-like.schema';
+import {
+  EventPayment,
+  EventPaymentSchema,
+} from '../events/schemas/event-payment.schema';
 import { Location, LocationSchema } from '../locations/schemas/location.schema';
 import { User, UserSchema } from '../users/schemas/user.schema';
 import { AuthModule } from '../auth/auth.module';
@@ -47,6 +51,7 @@ import { EventsModule } from '../events/events.module';
       { name: EventMatch.name, schema: EventMatchSchema },
       { name: EventTeamChat.name, schema: EventTeamChatSchema },
       { name: EventLike.name, schema: EventLikeSchema },
+      { name: EventPayment.name, schema: EventPaymentSchema },
       { name: Location.name, schema: LocationSchema },
       { name: User.name, schema: UserSchema },
       { name: TestRun.name, schema: TestRunSchema },

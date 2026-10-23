@@ -94,6 +94,19 @@ export class CreateGroupDto {
   @IsBoolean()
   isPrivate?: boolean;
 
+  @ApiProperty({
+    example: false,
+    required: false,
+    default: false,
+    description:
+      'When true, any approved member can read the individual expense ' +
+      'entries (GET /events/:eventId/expenses). Default false: members see ' +
+      'only per-category totals in GET /events/:eventId/finance.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  showExpenseDetailsToMembers?: boolean;
+
   @ApiProperty({ example: 22, required: false })
   @IsOptional()
   @Type(() => Number)
