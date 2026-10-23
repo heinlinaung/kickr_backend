@@ -46,6 +46,9 @@ import { AddMatchDto } from './dto/add-match.dto';
 import { UpdateMatchScoreDto } from './dto/update-match-score.dto';
 import { SubmitResultDto } from './dto/submit-result.dto';
 import { SubmitMvpDto } from './dto/submit-mvp.dto';
+import { GiveMvpAwardDto } from '../awards/dto/give-mvp-award.dto';
+import { AwardsService } from '../awards/awards.service';
+import { awardError } from '../awards/awards.errors';
 import { CancelEventDto } from './dto/cancel-event.dto';
 import { CreateEventTemplateDto } from './dto/create-event-template.dto';
 import { LocationsService } from '../locations/locations.service';
@@ -208,6 +211,7 @@ export class EventsService {
     private readonly sportTypesService: SportTypesService,
     private readonly plansService: PlansService,
     private readonly financeService: FinanceService,
+    private readonly awardsService: AwardsService,
   ) {}
 
   /**
@@ -1464,6 +1468,9 @@ export class EventsService {
         { eventId: event._id },
         { $set: { archived: true } },
       );
+      // A challenge match is final once it is archived — the winning group
+      // gets its Group Challenge award.
+      await this.awardChallengeWinner(event);
     }
 
     return event.toJSON();
@@ -2599,7 +2606,170 @@ export class EventsService {
     };
     await event.save();
 
+    // Keep the MVP award in step. `replace`: this endpoint has always let the
+    // organizer correct the MVP in one call, so it swaps the award too.
+    await this.awardsService.giveMvp({
+      event,
+      userId: dto.userId,
+      awardedBy: userId,
+      replace: true,
+    });
+
     return event.toJSON();
+  }
+
+  /**
+   * Give the MVP award — `POST|PATCH /events/:id/awards/mvp`.
+   *
+   * Stricter than `submitMvp`: naming a DIFFERENT player while one holds the
+   * award is `MVP_ALREADY_AWARDED` (take it back first); the same player
+   * again only updates the note. Allowed once the match is over
+   * (`after_match` or `done`). `event.result.mvpUserId` follows the award;
+   * goal/assist counts survive only when the MVP stays the same player.
+   */
+  async awardMvp(eventId: string, userId: string, dto: GiveMvpAwardDto) {
+    const event = await this.assertAwardOrganizer(eventId, userId);
+    if (event.status !== 'after_match' && event.status !== 'done') {
+      throw awardError(
+        'EVENT_NOT_FINISHED',
+        `The MVP can only be awarded after the match (event is '${event.status}')`,
+      );
+    }
+
+    const player = await this.playerModel.findOne({
+      eventId: new Types.ObjectId(eventId),
+      userId: new Types.ObjectId(dto.userId),
+      status: 'joined',
+    });
+    if (!player) {
+      throw awardError(
+        'USER_NOT_IN_EVENT',
+        'The MVP must be a player who joined this event',
+      );
+    }
+
+    const award = await this.awardsService.giveMvp({
+      event,
+      userId: dto.userId,
+      awardedBy: userId,
+      note: dto.note,
+    });
+
+    const sameMvp = event.result?.mvpUserId?.toString() === dto.userId;
+    event.result = {
+      mvpUserId: new Types.ObjectId(dto.userId),
+      mvpGoal: sameMvp ? (event.result?.mvpGoal ?? null) : null,
+      mvpAssist: sameMvp ? (event.result?.mvpAssist ?? null) : null,
+      scoreA: event.result?.scoreA ?? null,
+      scoreB: event.result?.scoreB ?? null,
+    };
+    await event.save();
+
+    return award;
+  }
+
+  /**
+   * Take back the MVP award — `DELETE /events/:id/awards/mvp`. Clears the
+   * MVP off the result too, so it leaves the player's Awards tab and the
+   * event at once; the score is kept.
+   */
+  async revokeMvp(eventId: string, userId: string) {
+    const event = await this.assertAwardOrganizer(eventId, userId);
+    await this.awardsService.revokeMvp(eventId);
+
+    if (event.result) {
+      event.result = {
+        mvpUserId: null,
+        mvpGoal: null,
+        mvpAssist: null,
+        scoreA: event.result.scoreA ?? null,
+        scoreB: event.result.scoreB ?? null,
+      };
+      await event.save();
+    }
+  }
+
+  /** `assertOrganizer` with the awards API's error code. */
+  private async assertAwardOrganizer(eventId: string, userId: string) {
+    try {
+      return await this.assertOrganizer(eventId, userId);
+    } catch (err) {
+      if (err instanceof ForbiddenException) {
+        throw awardError(
+          'NOT_EVENT_ORGANIZER',
+          'Only the event organizer can manage its MVP award',
+        );
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Gives the winning group its Group Challenge award when a challenge event
+   * reaches `done`. A draw, or a match with no score recorded, gets no award.
+   *
+   * The winner comes from the overall result (`scoreA` = challenger side —
+   * the challenger's team is always generated first); failing that, from the
+   * goals in the two teams' fixtures. Best-effort: an award failure is
+   * logged and never blocks the archive.
+   */
+  private async awardChallengeWinner(event: EventDocument): Promise<void> {
+    if (event.type !== 'challenge' || !event.challengeId) return;
+    try {
+      const challenge = await this.challengeModel
+        .findById(event.challengeId)
+        .select('challengerGroupId challengedGroupId')
+        .lean();
+      if (!challenge) return;
+
+      let challengerGoals = event.result?.scoreA ?? null;
+      let challengedGoals = event.result?.scoreB ?? null;
+      if (challengerGoals === null || challengedGoals === null) {
+        const totals = await this.challengeFixtureGoals(event);
+        if (!totals) return;
+        [challengerGoals, challengedGoals] = totals;
+      }
+      if (challengerGoals === challengedGoals) return;
+
+      await this.awardsService.giveChallengeAward({
+        event,
+        challengeId: event.challengeId,
+        winnerGroupId:
+          challengerGoals > challengedGoals
+            ? challenge.challengerGroupId
+            : challenge.challengedGroupId,
+      });
+    } catch (err) {
+      this.logger.warn(`Challenge award failed for ${event._id}: ${err}`);
+    }
+  }
+
+  /**
+   * [challenger, challenged] goals summed over the played fixtures, or null
+   * when nothing was scored. Teams are named by the agreed kit colors, so two
+   * identical colors leave the sides indistinguishable — also null.
+   */
+  private async challengeFixtureGoals(
+    event: EventDocument,
+  ): Promise<[number, number] | null> {
+    const challengerTeam =
+      event.challengeColors?.challengerColor ?? String(TEAM_COLOURS[0]);
+    const challengedTeam =
+      event.challengeColors?.challengedColor ?? String(TEAM_COLOURS[1]);
+    if (challengerTeam === challengedTeam) return null;
+
+    const matches = await this.matchModel.find({ eventId: event._id }).lean();
+    let played = false;
+    const goals = { [challengerTeam]: 0, [challengedTeam]: 0 };
+    for (const match of matches) {
+      if (match.scoreA === null || match.scoreA === undefined) continue;
+      if (match.scoreB === null || match.scoreB === undefined) continue;
+      if (!(match.teamA in goals) || !(match.teamB in goals)) continue;
+      played = true;
+      goals[match.teamA] += match.scoreA;
+      goals[match.teamB] += match.scoreB;
+    }
+    return played ? [goals[challengerTeam], goals[challengedTeam]] : null;
   }
 
   /**

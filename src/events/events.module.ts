@@ -35,6 +35,7 @@ import { Location, LocationSchema } from '../locations/schemas/location.schema';
 import { LocationsModule } from '../locations/locations.module';
 import { UploadModule } from '../common/upload/upload.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { AwardsModule } from '../awards/awards.module';
 
 import { PhotosModule } from '../photos/photos.module';
 import { SportTypesModule } from '../sport-types/sport-types.module';
@@ -103,6 +104,9 @@ import {
     NotificationsModule,
     SportTypesModule,
     PlansModule,
+    // MVP awards and the Group Challenge award on `done`. A leaf (schemas
+    // only), so importing it closes no cycle.
+    AwardsModule,
   ],
   // PublicEventsController LAST: its bare `:id` must register after every
   // static route (search, joined, …) in the guarded controller.

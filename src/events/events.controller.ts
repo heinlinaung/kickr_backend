@@ -6,6 +6,7 @@ import {
   Put,
   Patch,
   Delete,
+  HttpCode,
   Body,
   Param,
   ParseIntPipe,
@@ -35,6 +36,7 @@ import { AddMatchDto } from './dto/add-match.dto';
 import { UpdateMatchScoreDto } from './dto/update-match-score.dto';
 import { SubmitResultDto } from './dto/submit-result.dto';
 import { SubmitMvpDto } from './dto/submit-mvp.dto';
+import { GiveMvpAwardDto } from '../awards/dto/give-mvp-award.dto';
 import { CancelEventDto } from './dto/cancel-event.dto';
 import { SubmitPaymentDto } from './dto/submit-payment.dto';
 import { ReviewPaymentDto } from './dto/review-payment.dto';
@@ -1012,6 +1014,60 @@ export class EventsController {
     @Body() dto: SubmitMvpDto,
   ) {
     return this.eventsService.submitMvp(id, user._id.toString(), dto);
+  }
+
+  @Post(':id/awards/mvp')
+  @ApiOperation({
+    summary: 'Give the MVP award to a participant',
+    description:
+      'Organizer-only, once the match is over (after_match or done). One MVP ' +
+      'per event: the same player again only updates `note`; a different ' +
+      'player is MVP_ALREADY_AWARDED — DELETE first. The player is notified ' +
+      'and the award shows on their Awards tab. `result.mvpUserId` follows.',
+  })
+  @ApiResponse({ status: 201, description: 'The MVP award' })
+  @ApiResponse({
+    status: 400,
+    description: 'USER_NOT_IN_EVENT or EVENT_NOT_FINISHED',
+  })
+  @ApiResponse({ status: 403, description: 'NOT_EVENT_ORGANIZER' })
+  @ApiResponse({ status: 409, description: 'MVP_ALREADY_AWARDED' })
+  awardMvp(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() dto: GiveMvpAwardDto,
+  ) {
+    return this.eventsService.awardMvp(id, user._id.toString(), dto);
+  }
+
+  @Patch(':id/awards/mvp')
+  @ApiOperation({
+    summary: 'Give the MVP award, or update its note',
+    description: 'Same rules as POST; answers 200 instead of 201.',
+  })
+  @ApiResponse({ status: 403, description: 'NOT_EVENT_ORGANIZER' })
+  @ApiResponse({ status: 409, description: 'MVP_ALREADY_AWARDED' })
+  updateMvpAward(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() dto: GiveMvpAwardDto,
+  ) {
+    return this.eventsService.awardMvp(id, user._id.toString(), dto);
+  }
+
+  @Delete(':id/awards/mvp')
+  @HttpCode(204)
+  @ApiOperation({
+    summary: 'Take back the MVP award',
+    description:
+      "Organizer-only. Removes it from the player's Awards tab and clears " +
+      'the MVP (and goal/assist) off the result; the score is kept.',
+  })
+  @ApiResponse({ status: 204, description: 'Taken back' })
+  @ApiResponse({ status: 403, description: 'NOT_EVENT_ORGANIZER' })
+  @ApiResponse({ status: 404, description: 'AWARD_NOT_FOUND' })
+  async revokeMvp(@Param('id') id: string, @CurrentUser() user: any) {
+    await this.eventsService.revokeMvp(id, user._id.toString());
   }
 
   @Post(':id/cancel')

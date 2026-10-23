@@ -24,6 +24,7 @@ import { SportTypesModule } from './sport-types/sport-types.module';
 import { RatingsModule } from './ratings/ratings.module';
 import { FormationsModule } from './formations/formations.module';
 import { ChallengesModule } from './challenges/challenges.module';
+import { AwardsModule } from './awards/awards.module';
 import { AppConfigModule } from './app-config/app-config.module';
 import { CountriesModule } from './countries/countries.module';
 import { ConfigurationModule } from './configuration/configuration.module';
@@ -80,6 +81,7 @@ import { ConfigurationModule } from './configuration/configuration.module';
     RatingsModule,
     FormationsModule,
     ChallengesModule,
+    AwardsModule,
     AppConfigModule,
     CountriesModule,
     ConfigurationModule,
