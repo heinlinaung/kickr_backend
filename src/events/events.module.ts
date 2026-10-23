@@ -39,6 +39,28 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { PhotosModule } from '../photos/photos.module';
 import { SportTypesModule } from '../sport-types/sport-types.module';
 import { PlansModule } from '../plans/plans.module';
+import { FinanceService } from '../finance/finance.service';
+import { FinanceController } from '../finance/finance.controller';
+import {
+  EventExpense,
+  EventExpenseSchema,
+} from '../finance/schemas/event-expense.schema';
+import {
+  EventSettlement,
+  EventSettlementSchema,
+} from '../finance/schemas/event-settlement.schema';
+import {
+  GroupFund,
+  GroupFundSchema,
+} from '../finance/schemas/group-fund.schema';
+import {
+  GroupFundTransaction,
+  GroupFundTransactionSchema,
+} from '../finance/schemas/group-fund-transaction.schema';
+import {
+  EventFeeAdjustment,
+  EventFeeAdjustmentSchema,
+} from '../finance/schemas/event-fee-adjustment.schema';
 
 @Module({
   imports: [
@@ -66,6 +88,15 @@ import { PlansModule } from '../plans/plans.module';
       // For challenge events (schema-only — ChallengesModule imports THIS
       // module, so importing it back would close a cycle).
       { name: Challenge.name, schema: ChallengeSchema },
+      // Event Funds. Registered here, not in a module of their own:
+      // reviewPayment posts late payments through FinanceService, and
+      // FinanceService reads events/payments — a separate module would
+      // import this one and be imported back.
+      { name: EventExpense.name, schema: EventExpenseSchema },
+      { name: EventSettlement.name, schema: EventSettlementSchema },
+      { name: GroupFund.name, schema: GroupFundSchema },
+      { name: GroupFundTransaction.name, schema: GroupFundTransactionSchema },
+      { name: EventFeeAdjustment.name, schema: EventFeeAdjustmentSchema },
     ]),
     LocationsModule,
     UploadModule,
@@ -78,9 +109,10 @@ import { PlansModule } from '../plans/plans.module';
   controllers: [
     EventsController,
     EventTemplatesController,
+    FinanceController,
     PublicEventsController,
   ],
-  providers: [EventsService],
-  exports: [EventsService, MongooseModule],
+  providers: [EventsService, FinanceService],
+  exports: [EventsService, FinanceService, MongooseModule],
 })
 export class EventsModule {}

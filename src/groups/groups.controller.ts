@@ -210,6 +210,7 @@ export class GroupsController {
   }
 
   @Get(':id/payment-details')
+  @ApiTags('Payment & Funds')
   @ApiOperation({
     summary: 'Bank account + payment QR members pay against (members)',
     description:
@@ -223,6 +224,7 @@ export class GroupsController {
   }
 
   @Put(':id/payment-details')
+  @ApiTags('Payment & Funds')
   @ApiOperation({
     summary: 'Set the receiving bank account (cashier only)',
     description:
@@ -243,6 +245,7 @@ export class GroupsController {
   }
 
   @Put(':id/payment-details/qr')
+  @ApiTags('Payment & Funds')
   @UseInterceptors(FileInterceptor('file', multerMemoryImageOptions))
   @ApiOperation({
     summary: 'Upload or replace the payment QR image (cashier only)',

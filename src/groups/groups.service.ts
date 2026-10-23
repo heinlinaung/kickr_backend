@@ -20,6 +20,7 @@ import { UpdateGroupDto } from './dto/update-group.dto';
 import { AttachLocationDto } from './dto/attach-location.dto';
 import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import { UpdatePaymentDetailsDto } from './dto/update-payment-details.dto';
+import { FinanceService } from '../finance/finance.service';
 import { ImageKitService } from '../common/upload/imagekit.service';
 import { LocationsService } from '../locations/locations.service';
 import { EventsService } from '../events/events.service';
@@ -94,6 +95,7 @@ export class GroupsService {
     private readonly photosService: PhotosService,
     private readonly sportTypesService: SportTypesService,
     private readonly plansService: PlansService,
+    private readonly financeService: FinanceService,
     private config: ConfigService,
   ) {}
 
@@ -197,6 +199,10 @@ export class GroupsService {
    * role alone is ambiguous: a pending join request already stores
    * `role: 'member'`, so without the status an unapproved requester looks
    * like a full member.
+   *
+   * `fund` is the Event Funds summary (same object as GET /groups/:id/fund)
+   * for approved members; null for everyone else — the detail page is
+   * public, the group's money is not.
    */
   async findById(groupId: string, userId?: string) {
     const group = await this.groupModel.findById(groupId).lean();
@@ -220,8 +226,16 @@ export class GroupsService {
       delete payload.inviteCodeExpiry;
     }
 
+    const canSeeFund =
+      member?.status === 'approved' ||
+      (!!userId && group.cashierId?.toString() === userId);
+    const fund = canSeeFund
+      ? await this.financeService.buildGroupFund(groupId)
+      : null;
+
     return {
       ...payload,
+      fund,
       userRole: member?.role ?? null,
       memberStatus: member?.status ?? null,
       // Whether the CALLER holds this group's cashier seat, so the client can

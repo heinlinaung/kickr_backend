@@ -59,6 +59,18 @@ export class UpdateGroupDto {
   isPrivate?: boolean;
 
   @ApiProperty({
+    example: false,
+    required: false,
+    description:
+      'When true, any approved member can read the individual expense ' +
+      'entries (GET /events/:eventId/expenses). Default false: members see ' +
+      'only per-category totals in GET /events/:eventId/finance.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  showExpenseDetailsToMembers?: boolean;
+
+  @ApiProperty({
     example:
       'Be on time — arrive 15-30 minutes before kick-off\nNo alcohol before the match',
     required: false,

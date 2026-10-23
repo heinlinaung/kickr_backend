@@ -27,9 +27,11 @@ export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
  * reasons: a payment outlives the roster row, and the roster row is
  * rewritten by join/leave while a payment record should not be.
  *
- * The amount is deliberately NOT stored. It lives on the event (`price` +
- * `additionalPrice` when `takeAdditionalPrice` is set), so there is one
- * source of truth for what an event costs.
+ * What the event COSTS lives on the event (`price` + `additionalPrice` when
+ * `takeAdditionalPrice` is set, or the cashier's `updatedPrice`). What the
+ * member has PAID is tracked here since Event Funds (2026-10-19), because a
+ * price change can leave a member part-paid: `paidAmount` is the approved
+ * running total, `amount` what the current submission is for.
  */
 @Schema({ timestamps: true })
 export class EventPayment {
@@ -69,6 +71,22 @@ export class EventPayment {
   /** Why a rejection happened — shown to the member; null otherwise. */
   @Prop({ type: String, default: null })
   rejectReason: string | null;
+
+  /**
+   * Baht this submission is for — the balance owed when it was submitted
+   * (the full price first time, the difference on a top-up). Null on rows
+   * submitted before Event Funds; see `finance/money.ts#submissionCents`.
+   */
+  @Prop({ type: Number, default: null })
+  amount: number | null;
+
+  /**
+   * Baht approved so far on this row: an approval adds `amount`, un-approving
+   * takes it back. Null on rows reviewed before Event Funds, where approved
+   * meant "paid the fee in full"; see `finance/money.ts#paidCents`.
+   */
+  @Prop({ type: Number, default: null })
+  paidAmount: number | null;
 }
 
 export const EventPaymentSchema = SchemaFactory.createForClass(EventPayment);

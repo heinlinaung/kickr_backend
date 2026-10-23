@@ -16,6 +16,7 @@ import { AdminService } from './admin.service';
 import { TestDataService } from './test-data.service';
 import { AddUsersDto } from './dto/add-users.dto';
 import { SeedTestDataDto } from './dto/seed-test-data.dto';
+import { MarkPaymentsPaidDto } from './dto/mark-payments-paid.dto';
 
 /**
  * Server-to-server support endpoints. Authenticated by the ADMIN_KEY shared
@@ -45,6 +46,26 @@ export class AdminController {
   @Post('events/:eventId/players')
   addEventPlayers(@Param('eventId') eventId: string, @Body() dto: AddUsersDto) {
     return this.adminService.addEventPlayers(eventId, dto.userIds);
+  }
+
+  @Post('events/:eventId/payment')
+  @ApiOperation({
+    summary: 'Test data: mark joined players as paid',
+    description:
+      'Writes an APPROVED payment row covering the current price for each ' +
+      'user id, bypassing submit and cashier review. Users not joined to the ' +
+      'event, or already fully paid, are skipped with a reason. On a settled ' +
+      'group event the payment also posts to the group fund (LATE_PAYMENT).',
+  })
+  markEventPaymentsPaid(
+    @Param('eventId') eventId: string,
+    @Body() dto: MarkPaymentsPaidDto,
+  ) {
+    return this.adminService.markEventPaymentsPaid(
+      eventId,
+      dto.userIds,
+      dto.method,
+    );
   }
 
   // --- Test-data seeding -------------------------------------------------

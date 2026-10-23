@@ -82,6 +82,15 @@ import {
 } from './schemas/team.schema';
 import { SubmitPaymentDto } from './dto/submit-payment.dto';
 import { ReviewPaymentDto } from './dto/review-payment.dto';
+import { FinanceService } from '../finance/finance.service';
+import {
+  feePerPlayerCents,
+  fromCents,
+  memberBalance,
+  paidCents,
+  pricePerPlayerCents,
+  submissionCents,
+} from '../finance/money';
 import { CreateChallengeEventDto } from './dto/create-challenge-event.dto';
 import { ReviewProposalDto } from './dto/review-proposal.dto';
 import { AssignPlayersDto } from './dto/assign-players.dto';
@@ -198,6 +207,7 @@ export class EventsService {
     private readonly notificationsService: NotificationsService,
     private readonly sportTypesService: SportTypesService,
     private readonly plansService: PlansService,
+    private readonly financeService: FinanceService,
   ) {}
 
   /**
@@ -844,7 +854,7 @@ export class EventsService {
     if (scheduled >= limits.maxEventsPerWeek) {
       throw new BadRequestException(
         `Your plan allows at most ${limits.maxEventsPerWeek} events per ` +
-          'week — pick a different week or delete one of that week\'s events',
+          "week — pick a different week or delete one of that week's events",
       );
     }
 
@@ -1002,8 +1012,9 @@ export class EventsService {
       groupRules = (groupDoc as { rules?: string } | null)?.rules ?? '';
       isCashier =
         !!userId &&
-        (groupDoc as { cashierId?: Types.ObjectId | null } | null)?.cashierId?.toString() ===
-          userId;
+        (
+          groupDoc as { cashierId?: Types.ObjectId | null } | null
+        )?.cashierId?.toString() === userId;
 
       if (groupDoc) {
         const g = groupDoc as {
@@ -1316,7 +1327,11 @@ export class EventsService {
    * The organizer removes an anonymous row — the only exit it has, since an
    * accountless player cannot authenticate a self-leave.
    */
-  async removeAnonymous(eventId: string, requesterId: string, playerId: string) {
+  async removeAnonymous(
+    eventId: string,
+    requesterId: string,
+    playerId: string,
+  ) {
     await this.assertOrganizer(eventId, requesterId);
     if (!Types.ObjectId.isValid(playerId)) {
       throw new BadRequestException('Invalid player id');
@@ -1540,9 +1555,7 @@ export class EventsService {
   async restore(eventId: string, userId: string) {
     const event = await this.assertOrganizer(eventId, userId);
     if (event.status !== 'cancelled') {
-      throw new BadRequestException(
-        'Only a cancelled event can be restored',
-      );
+      throw new BadRequestException('Only a cancelled event can be restored');
     }
 
     const limits = await this.plansService.limitsFor(
@@ -1557,12 +1570,13 @@ export class EventsService {
     if (scheduled >= limits.maxEventsPerWeek) {
       throw new BadRequestException(
         `Restoring would exceed the plan's ${limits.maxEventsPerWeek} events ` +
-          "for that week — another event has taken the freed slot",
+          'for that week — another event has taken the freed slot',
       );
     }
 
     const backTo = event.statusBeforeCancel;
-    event.status = isEventStatus(backTo) && backTo !== 'cancelled' ? backTo : 'join';
+    event.status =
+      isEventStatus(backTo) && backTo !== 'cancelled' ? backTo : 'join';
     event.statusBeforeCancel = null;
     event.cancelReason = null;
     event.cancelledAt = null;
@@ -3059,35 +3073,114 @@ export class EventsService {
   // --- Payments -----------------------------------------------------------
 
   /**
-   * Payment rows for an event.
+   * Payment standing per member for an event, one page at a time.
    *
    * Role-aware rather than two routes: the CASHIER (who reviews) and the
-   * organizer (owner/admin/creator — oversight) get every member's status;
-   * anyone else gets only their own row — a member has no business reading
-   * who else has paid.
+   * organizer (owner/admin/creator — oversight) get every member; anyone
+   * else gets only their own line — a member has no business reading who
+   * else has paid.
    *
-   * Members with no row yet are absent rather than synthesised as unpaid. The
-   * caller knows the roster from `GET /events/:id/players`; inventing rows here
-   * would blur "not recorded" with "recorded as unpaid".
+   * One line per MEMBER, not per payment row: "unpaid" is mostly the absence
+   * of a row, so a list of rows alone could never answer `?status=unpaid`.
+   * Members are the joined registered roster plus anyone holding a payment
+   * row (a member who paid then left — that money was received). Guests are
+   * covered by their sponsor and anonymous players have no account, so
+   * neither is billed — same scope as the finance summary.
+   *
+   * `paid` means nothing is owed at the current price (`memberBalance`
+   * APPROVED / OVERPAID); everything else — no row, awaiting review,
+   * rejected, part-paid after a price rise — is `unpaid`. `balanceStatus`
+   * keeps the finer distinction for the client.
+   *
+   * Ordered by member id, which is also the cursor: rosters are small, so
+   * the lines are derived in memory and paged after filtering.
    */
-  async listPayments(eventId: string, userId: string) {
+  async listPayments(
+    eventId: string,
+    userId: string,
+    opts: {
+      status?: 'paid' | 'unpaid';
+      limit?: number;
+      cursor?: string;
+    } = {},
+  ) {
     const event = await this.eventModel
       .findById(eventId)
-      .select('_id groupId createdBy')
+      .select(
+        '_id groupId createdBy price additionalPrice takeAdditionalPrice updatedPrice',
+      )
       .lean();
     if (!event) throw new NotFoundException('Event not found');
+
+    const pageSize = clampLimit(opts.limit ?? NaN);
+    const after = opts.cursor ? decodeCursor(opts.cursor).i : null;
 
     const seesAll =
       (await this.isOrganizer(eventId, userId)) ||
       (await this.isPaymentReviewer(event, userId));
-    const filter: Record<string, unknown> = { eventId: event._id };
-    if (!seesAll) filter.memberId = new Types.ObjectId(userId);
+    const own = seesAll ? {} : { userId: new Types.ObjectId(userId) };
+    const ownPayment = seesAll ? {} : { memberId: new Types.ObjectId(userId) };
 
-    return this.paymentModel
-      .find(filter)
-      .populate('memberId', 'name username displayName profileImage')
-      .sort({ createdAt: 1 })
+    const [players, payments] = await Promise.all([
+      this.playerModel
+        .find({
+          eventId: event._id,
+          status: 'joined',
+          userId: { $exists: true, $ne: null },
+          ...own,
+        })
+        .select('userId')
+        .lean(),
+      this.paymentModel.find({ eventId: event._id, ...ownPayment }).lean(),
+    ]);
+
+    const feeCents = feePerPlayerCents(event);
+    const priceCents = pricePerPlayerCents(event);
+    const byMember = new Map(payments.map((p) => [p.memberId.toString(), p]));
+    const memberIds = [
+      ...new Set([
+        ...players.map((p) => p.userId!.toString()),
+        ...byMember.keys(),
+      ]),
+    ].sort();
+
+    const lines = memberIds
+      .filter((id) => after === null || id > after)
+      .map((memberId) => {
+        const payment = byMember.get(memberId) ?? null;
+        const balance = memberBalance(payment, priceCents, feeCents);
+        const paid =
+          balance.status === 'APPROVED' || balance.status === 'OVERPAID';
+        return {
+          memberId,
+          paymentStatus: (paid ? 'paid' : 'unpaid') as 'paid' | 'unpaid',
+          balanceStatus: balance.status,
+          paidAmount: fromCents(balance.paidCents),
+          owedAmount: fromCents(balance.owedCents),
+          payment,
+        };
+      })
+      .filter((line) => !opts.status || line.paymentStatus === opts.status);
+
+    const page = toPage(lines.slice(0, pageSize + 1), pageSize, (line) => ({
+      i: line.memberId,
+    }));
+
+    const users = await this.userModel
+      .find({
+        _id: { $in: page.items.map((l) => new Types.ObjectId(l.memberId)) },
+      })
+      .select('name username displayName profileImage')
       .lean();
+    const userById = new Map(users.map((u) => [u._id.toString(), u]));
+
+    return {
+      ...page,
+      items: page.items.map(({ memberId, ...line }) => ({
+        member: userById.get(memberId) ?? { _id: memberId },
+        ...line,
+      })),
+    };
   }
 
   /**
@@ -3125,6 +3218,20 @@ export class EventsService {
     }
   }
 
+  /** A user's display name for ledger notes; null when unknown. */
+  private async memberDisplayName(userId: string): Promise<string | null> {
+    const user = await this.userModel
+      .findById(userId)
+      .select('name username displayName')
+      .lean();
+    const u = user as {
+      name?: string;
+      username?: string;
+      displayName?: string;
+    } | null;
+    return u?.displayName || u?.name || u?.username || null;
+  }
+
   /** True when `userId` is this event's payment reviewer, without throwing. */
   private async isPaymentReviewer(
     event: { groupId?: Types.ObjectId | null; createdBy: Types.ObjectId },
@@ -3146,9 +3253,14 @@ export class EventsService {
    * trail — who claimed, with what proof, who verified — is complete.
    *
    * Resubmission is allowed from `submitted` (replace your own claim) and
-   * `rejected` (fix what the cashier flagged); an `approved` payment is
-   * settled and refuses further writes. The upsert plus the unique
+   * `rejected` (fix what the cashier flagged). An `approved` payment refuses
+   * further writes — UNLESS the cashier has since raised the price
+   * (`PATCH /events/:id/fee`) and the member is part-paid: then this is the
+   * top-up, for the difference only. The upsert plus the unique
    * (eventId, memberId) index keep it one row per member throughout.
+   *
+   * Each submission records `amount`, what it is for (the balance owed
+   * now), and carries forward `paidAmount`, what was approved before it.
    */
   async submitPayment(
     eventId: string,
@@ -3158,7 +3270,9 @@ export class EventsService {
   ) {
     const event = await this.eventModel
       .findById(eventId)
-      .select('title groupId createdBy')
+      .select(
+        'title groupId createdBy price additionalPrice takeAdditionalPrice updatedPrice',
+      )
       .lean();
     if (!event) throw new NotFoundException('Event not found');
 
@@ -3184,11 +3298,20 @@ export class EventsService {
       eventId: new Types.ObjectId(eventId),
       memberId: new Types.ObjectId(userId),
     });
-    if (existing?.status === 'approved') {
+    const feeCents = feePerPlayerCents(event);
+    const balance = memberBalance(
+      existing,
+      pricePerPlayerCents(event),
+      feeCents,
+    );
+    if (existing?.status === 'approved' && balance.owedCents === 0) {
       throw new BadRequestException(
         'This payment is already approved — nothing left to submit',
       );
     }
+    // A top-up on an approved row keeps that approval's receipt: it is the
+    // evidence for money already counted, and the row has one proof slot.
+    const keepPreviousProof = existing?.status === 'approved';
 
     // Proof only for bank transfers; a stray file on a cash claim is ignored
     // rather than stored, so a cash row can never carry a misleading image.
@@ -3205,7 +3328,7 @@ export class EventsService {
     }
     // The replaced proof is deleted AFTER the new upload succeeded, so a
     // failed resubmission never leaves the row pointing at a dead file.
-    if (existing?.proofFileId) {
+    if (existing?.proofFileId && !keepPreviousProof) {
       try {
         await this.imagekit.deleteFile(existing.proofFileId);
       } catch (err) {
@@ -3227,6 +3350,8 @@ export class EventsService {
           proofUrl,
           proofFileId,
           submittedAt: new Date(),
+          amount: fromCents(balance.owedCents),
+          paidAmount: fromCents(balance.paidCents),
           // A fresh submission voids the previous verdict.
           reviewedBy: null,
           reviewedAt: null,
@@ -3296,11 +3421,49 @@ export class EventsService {
       );
     }
 
+    // Money bookkeeping: approving adds this submission's amount to the
+    // row's paid total; un-approving (approved -> rejected) takes it back.
+    // Re-confirming the same verdict moves nothing.
+    const feeCents = feePerPlayerCents(event);
+    const paidBefore = paidCents(row, feeCents);
+    const submitted = submissionCents(
+      row,
+      pricePerPlayerCents(event),
+      feeCents,
+    );
+    let paidAfter = paidBefore;
+    if (dto.action === 'approve' && row.status !== 'approved') {
+      paidAfter = paidBefore + submitted;
+    } else if (dto.action === 'reject' && row.status === 'approved') {
+      paidAfter = Math.max(0, paidBefore - submitted);
+    }
+
     row.status = dto.action === 'approve' ? 'approved' : 'rejected';
     row.rejectReason = dto.action === 'reject' ? (dto.reason ?? null) : null;
     row.reviewedBy = new Types.ObjectId(requesterId);
     row.reviewedAt = new Date();
-    await row.save();
+    row.amount = fromCents(submitted);
+    row.paidAmount = fromCents(paidAfter);
+
+    if (event.groupId) {
+      // On a SETTLED event the verdict also posts to the group fund
+      // (LATE_PAYMENT / PAYMENT_REVERSAL) — in one transaction with the row,
+      // so the ledger never disagrees with the payment.
+      const memberName = await this.memberDisplayName(memberId);
+      await this.financeService.runInTransaction(async (session) => {
+        await row.save({ session });
+        await this.financeService.onPaymentReviewed(session, {
+          eventId,
+          memberId,
+          memberName,
+          paidBeforeCents: paidBefore,
+          paidAfterCents: paidAfter,
+          reviewerId: requesterId,
+        });
+      });
+    } else {
+      await row.save();
+    }
 
     try {
       await this.notificationsService.create({
@@ -3502,7 +3665,11 @@ export class EventsService {
    * terms. Accept unlocks the normal event lifecycle; reject stores the
    * reason the proposer will edit against.
    */
-  async reviewProposal(eventId: string, userId: string, dto: ReviewProposalDto) {
+  async reviewProposal(
+    eventId: string,
+    userId: string,
+    dto: ReviewProposalDto,
+  ) {
     const event = await this.eventModel.findById(eventId);
     if (!event) throw new NotFoundException('Event not found');
     if (event.type !== 'challenge' || !event.opponentGroupId) {
@@ -3528,7 +3695,9 @@ export class EventsService {
 
     await this.notifySideAdmins(
       event.groupId as Types.ObjectId,
-      dto.action === 'accept' ? 'Match proposal accepted' : 'Match proposal rejected',
+      dto.action === 'accept'
+        ? 'Match proposal accepted'
+        : 'Match proposal rejected',
       dto.action === 'accept'
         ? `'${event.title}' is on — assign your players`
         : `The proposal for '${event.title}' was rejected` +
@@ -3692,9 +3861,7 @@ export class EventsService {
     const event = await this.eventModel.findById(eventId);
     if (!event) throw new NotFoundException('Event not found');
     if (event.type !== 'challenge') {
-      throw new BadRequestException(
-        'Only challenge events carry invitations',
-      );
+      throw new BadRequestException('Only challenge events carry invitations');
     }
 
     const row = await this.playerModel.findOne({
@@ -3853,8 +4020,7 @@ export class EventsService {
   /** True when `userId` holds the captain role on this team. */
   private isTeamCaptain(team: TeamDocument, userId: string): boolean {
     return team.playerRoles.some(
-      (entry) =>
-        entry.userId.toString() === userId && entry.role === 'captain',
+      (entry) => entry.userId.toString() === userId && entry.role === 'captain',
     );
   }
 
@@ -3936,9 +4102,7 @@ export class EventsService {
       playerCount: dto.playerCount,
       goalkeeper: new Types.ObjectId(dto.players.goalkeeper),
       defenders: dto.players.defenders.map((id) => new Types.ObjectId(id)),
-      midfielders: dto.players.midfielders.map(
-        (id) => new Types.ObjectId(id),
-      ),
+      midfielders: dto.players.midfielders.map((id) => new Types.ObjectId(id)),
       forwards: dto.players.forwards.map((id) => new Types.ObjectId(id)),
       setBy: new Types.ObjectId(requesterId),
       setAt: new Date(),
@@ -4004,7 +4168,10 @@ export class EventsService {
         : [],
     ]);
 
-    const resolved = new Map<string, { name: string | null; isGuest: boolean }>();
+    const resolved = new Map<
+      string,
+      { name: string | null; isGuest: boolean }
+    >();
     for (const user of users as any[]) {
       resolved.set(user._id.toString(), {
         name: user.name ?? user.displayName ?? user.username ?? null,
@@ -4259,8 +4426,7 @@ function withIsFull<
     ...event,
     // No cap (challenge events may leave maxPlayers null) means never full.
     isFull:
-      event.maxPlayers != null &&
-      (event.joinedCount ?? 0) >= event.maxPlayers,
+      event.maxPlayers != null && (event.joinedCount ?? 0) >= event.maxPlayers,
   };
 }
 
