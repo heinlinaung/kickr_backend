@@ -7,7 +7,7 @@ import { ConfigurationService } from './configuration.service';
  * Public (no token) so the apps can load it before sign-in. Replaces the
  * separate GET /app-config, GET /regions and GET /sport-types reads.
  */
-@ApiTags('Configuration')
+@ApiTags('App config')
 @Controller('configuration')
 export class ConfigurationController {
   constructor(private readonly service: ConfigurationService) {}

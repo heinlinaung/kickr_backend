@@ -17,7 +17,7 @@ import { UpdateLocationDto } from './dto/update-location.dto';
 
 // Lives in LocationsModule rather than GroupsModule: GroupsModule already
 // imports LocationsModule, so the service dependency only points one way.
-@ApiTags('Group Locations')
+@ApiTags('Groups')
 @ApiBearerAuth()
 @Controller('groups/:groupId/locations')
 @UseGuards(JwtAuthGuard)

@@ -34,15 +34,6 @@ async function bootstrap() {
     .addBearerAuth()
     .build();
   const document = SwaggerModule.createDocument(app, config);
-  // Swagger UI orders tags by first appearance in `paths`, which follows Nest's
-  // module discovery. SportTypesModule is imported by Users/Groups/Events, so
-  // it's discovered early — move its paths to sit right after App config.
-  const isSportTypes = (p: string) => p.startsWith('/sport-types');
-  const otherPaths = Object.entries(document.paths).filter(([p]) => !isSportTypes(p));
-  const sportTypePaths = Object.entries(document.paths).filter(([p]) => isSportTypes(p));
-  const lastAppConfig = otherPaths.map(([p]) => p.startsWith('/app-config')).lastIndexOf(true);
-  otherPaths.splice(lastAppConfig + 1, 0, ...sportTypePaths);
-  document.paths = Object.fromEntries(otherPaths);
   // Method-level @ApiTags is appended to the controller's tag rather than
   // replacing it. Group/event payment endpoints tagged 'Payment & Funds' should
   // live only under that tag, so drop their controller tag.
@@ -51,6 +42,49 @@ async function bootstrap() {
       if (op?.tags?.includes('Payment & Funds')) op.tags = ['Payment & Funds'];
     }
   }
+  // Swagger UI orders tags by first appearance in `paths`, which follows Nest's
+  // module discovery (e.g. SportTypesModule is imported by Users/Groups/Events,
+  // so it's discovered early). Start from that order, apply the moves below,
+  // and pin the result in the top-level `tags`, which Swagger UI sorts by.
+  const tagOrder: string[] = [];
+  for (const ops of Object.values(document.paths)) {
+    for (const op of Object.values(ops) as { tags?: string[] }[]) {
+      for (const tag of op?.tags ?? []) if (!tagOrder.includes(tag)) tagOrder.push(tag);
+    }
+  }
+  const moveTag = (tag: string, where: 'before' | 'after', anchor: string) => {
+    const from = tagOrder.indexOf(tag);
+    if (from === -1 || !tagOrder.includes(anchor)) return;
+    tagOrder.splice(from, 1);
+    const to = tagOrder.indexOf(anchor);
+    tagOrder.splice(where === 'after' ? to + 1 : to, 0, tag);
+  };
+  moveTag('Sport types', 'after', 'App config');
+  moveTag('Ratings', 'after', 'Groups');
+  moveTag('Photos', 'after', 'Ratings');
+  moveTag('Tournaments', 'after', 'Groups');
+  moveTag('Payment & Funds', 'after', 'Tournaments');
+  moveTag('Awards', 'before', 'Ratings');
+  moveTag('Admin', 'after', 'Event invitations');
+  moveTag('Challenges', 'after', 'Groups');
+  moveTag('Tournaments', 'before', 'Awards');
+  document.tags = tagOrder.map((name) => ({ name }));
+  // Within a tag, Swagger UI lists operations in `paths` order.
+  const movePaths = (match: (p: string) => boolean, where: 'before' | 'after', anchor: string) => {
+    const pathEntries = Object.entries(document.paths).filter(([p]) => !match(p));
+    const moved = Object.entries(document.paths).filter(([p]) => match(p));
+    const anchorIndex = pathEntries.findIndex(([p]) => p === anchor);
+    if (anchorIndex === -1) return;
+    pathEntries.splice(where === 'after' ? anchorIndex + 1 : anchorIndex, 0, ...moved);
+    document.paths = Object.fromEntries(pathEntries);
+  };
+  // Put the group locations endpoints right after the invite link page under Groups.
+  movePaths((p) => p.startsWith('/groups/{groupId}/locations'), 'after', '/g/{code}');
+  // Under App config: configuration first, then app-config, then global
+  // football teams and formations after /app-config (PATCH).
+  movePaths((p) => p.startsWith('/configuration'), 'before', '/app-config/history');
+  movePaths((p) => p.startsWith('/global-football-teams'), 'after', '/app-config');
+  movePaths((p) => p.startsWith('/formations'), 'after', '/global-football-teams');
   // Basic auth in front of Swagger UI and its JSON (/api-docs-json) so the
   // browser shows a username/password prompt before the docs load.
   const swaggerUser = process.env.SWAGGER_USER ?? 'admin';

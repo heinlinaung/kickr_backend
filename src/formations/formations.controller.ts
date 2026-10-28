@@ -4,7 +4,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { FormationsService } from './formations.service';
 
-@ApiTags('Formations')
+@ApiTags('App config')
 @ApiBearerAuth()
 @Controller('formations')
 @UseGuards(JwtAuthGuard)

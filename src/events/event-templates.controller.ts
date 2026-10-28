@@ -20,7 +20,7 @@ import { CreateEventTemplateDto } from './dto/create-event-template.dto';
  * Its own controller rather than routes under `/events/:id` because templates
  * are a sibling collection, not a sub-resource of any one event.
  */
-@ApiTags('Event templates')
+@ApiTags('Events')
 @ApiBearerAuth()
 @Controller('event-templates')
 @UseGuards(JwtAuthGuard)
