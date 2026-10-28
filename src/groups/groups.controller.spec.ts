@@ -24,9 +24,6 @@ describe('GroupsController', () => {
       totalPages: 0,
     }),
     getQr: jest.fn().mockResolvedValue({ inviteCode: 'c', inviteLink: 'l' }),
-    listLocations: jest.fn().mockResolvedValue([]),
-    attachLocation: jest.fn().mockResolvedValue({ _id: 'g1' }),
-    detachLocation: jest.fn().mockResolvedValue({ _id: 'g1' }),
     listMembers: jest.fn().mockResolvedValue([]),
     removeMember: jest.fn().mockResolvedValue({ message: 'Member removed' }),
     leave: jest.fn().mockResolvedValue({ message: 'You have left the group' }),
@@ -175,28 +172,6 @@ describe('GroupsController', () => {
     expect(svc.getQr).toHaveBeenCalledWith('g1');
   });
 
-  describe('locations', () => {
-    it('GET delegates', async () => {
-      await controller.listLocations('g1');
-      expect(svc.listLocations).toHaveBeenCalledWith('g1');
-    });
-
-    it('POST delegates the dto', async () => {
-      const dto = { locationId: 'loc1' };
-      await controller.attachLocation('g1', user, dto);
-      expect(svc.attachLocation).toHaveBeenCalledWith('g1', 'requester-1', dto);
-    });
-
-    it('DELETE delegates the location id', async () => {
-      await controller.detachLocation('g1', 'loc1', user);
-      expect(svc.detachLocation).toHaveBeenCalledWith(
-        'g1',
-        'requester-1',
-        'loc1',
-      );
-    });
-  });
-
   describe('updateMemberRole', () => {
     it('passes the requester before the target user', async () => {
       const dto = { role: 'admin' };
@@ -281,8 +256,7 @@ describe('GroupsController', () => {
         'utf8',
       );
       expect(src).toContain("@Delete(':id')");
-      // Must not collide with the two existing sub-path deletes.
-      expect(src).toContain("@Delete(':id/locations/:locationId')");
+      // Must not collide with the existing sub-path delete.
       expect(src).toContain("@Delete(':id/members/:userId')");
     });
   });

@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   ForbiddenException,
+  BadRequestException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -27,6 +28,10 @@ import { UpdateLocationDto } from './dto/update-location.dto';
 const EDIT_ROLES = ['owner', 'admin', 'captain', 'vice-captain'];
 /** Group roles allowed to DELETE a group-owned location (structural change). */
 const DELETE_ROLES = ['owner', 'admin'];
+/** Group roles allowed to CREATE a location under a group. */
+const CREATE_ROLES = DELETE_ROLES;
+
+export const MAX_GROUP_LOCATIONS = 5;
 
 @Injectable()
 export class LocationsService {
@@ -46,42 +51,30 @@ export class LocationsService {
    * Locations are creator-owned, not a shared registry: this ALWAYS inserts a
    * new row. Two users adding the same pitch intentionally produce two rows,
    * so there is deliberately no name/proximity dedupe lookup here.
+   *
+   * Internal: `groupId` is trusted, so the caller must do its own gating
+   * (see createForGroup).
    */
   async create(
     userId: string,
     dto: CreateLocationDto,
-    groupIdOverride?: string,
+    groupId?: string,
   ): Promise<LocationDocument> {
-    // groupId is a DTO field, but it must be destructured out rather than
-    // spread: Mongoose's loose create() typing would let the raw string
-    // through with no compile error. The internal override (used by
-    // GroupsService.attachLocation) wins when supplied.
-    const { groupId: dtoGroupId, ...rest } = dto;
-    const owningGroup = groupIdOverride ?? dtoGroupId;
-
-    // Client-supplied owning groups must be checked: otherwise anyone could
-    // create a location owned by a group they have nothing to do with. The
-    // internal override is already gated by attachLocation's owner/admin check.
-    if (!groupIdOverride && dtoGroupId) {
-      await this.assertGroupManager(dtoGroupId, userId);
-    }
-
     return this.locationModel.create({
-      ...rest,
+      ...dto,
       createdBy: new Types.ObjectId(userId),
       // When owned by a group, that group's owner/admin/captain can manage it
       // (not just the creator).
-      groupId: owningGroup ? new Types.ObjectId(owningGroup) : null,
+      groupId: groupId ? new Types.ObjectId(groupId) : null,
     });
   }
 
   /**
    * Transfers still-personal locations to a group that has just adopted them.
    *
-   * Supports the mobile flow "create the location, then create the group":
-   * at creation time the group does not exist yet, so the location is
-   * necessarily personal. Once the group is created with those locationIds,
-   * the group takes ownership so its owner/admin/captain can maintain them.
+   * Supports creating a group with `locationIds`: once the group is created
+   * with those ids, the group takes ownership so its owner/admin/captain can
+   * maintain them.
    *
    * Only rows that are still personal (`groupId: null`) AND created by this
    * user are adopted — a location already owned by another group is left
@@ -108,34 +101,6 @@ export class LocationsService {
     );
   }
 
-  /** Only a group's owner/admin may declare that group the owner of a location. */
-  private async assertGroupManager(groupId: string, userId: string) {
-    const member = await this.memberModel.findOne({
-      groupId: new Types.ObjectId(groupId),
-      userId: new Types.ObjectId(userId),
-      status: 'approved',
-      role: { $in: DELETE_ROLES }, // owner | admin
-    });
-    if (!member) {
-      throw new ForbiddenException(
-        'Only a group owner or admin can create a location owned by that group',
-      );
-    }
-  }
-
-  async listMine(userId: string) {
-    return this.locationModel
-      .find({ createdBy: new Types.ObjectId(userId) })
-      .sort({ createdAt: -1 })
-      .lean();
-  }
-
-  async findById(locationId: string): Promise<LocationDocument> {
-    const location = await this.locationModel.findById(locationId).lean();
-    if (!location) throw new NotFoundException('Location not found');
-    return location;
-  }
-
   /**
    * Owner-gated. Loads the document and persists with .save() so the schema's
    * pre('validate') hook re-derives `geo` whenever lat/lng change.
@@ -147,7 +112,13 @@ export class LocationsService {
     dto: UpdateLocationDto,
   ): Promise<LocationDocument> {
     const location = await this.assertCanEdit(locationId, userId);
+    return this.applyUpdate(location, dto);
+  }
 
+  private applyUpdate(
+    location: LocationDocument,
+    dto: UpdateLocationDto,
+  ): Promise<LocationDocument> {
     const { name, lat, lng, url, metadata } = dto;
     if (name !== undefined) location.name = name;
     if (lat !== undefined) location.lat = lat;
@@ -156,19 +127,6 @@ export class LocationsService {
     if (metadata !== undefined) location.metadata = metadata;
 
     return location.save();
-  }
-
-  async remove(locationId: string, userId: string) {
-    await this.assertCanDelete(locationId, userId);
-    await this.locationModel.deleteOne({ _id: locationId });
-    // Also drop the reference from any group holding it, otherwise the stale id
-    // lingers in `Group.locations` — invisible in the populated list but still
-    // counting toward the 5-location cap.
-    await this.groupModel.updateMany(
-      { locations: new Types.ObjectId(locationId) },
-      { $pull: { locations: new Types.ObjectId(locationId) } },
-    );
-    return { message: 'Location deleted' };
   }
 
   /**
@@ -240,5 +198,158 @@ export class LocationsService {
       );
     }
     return location;
+  }
+
+  // ------------------------------------------- /groups/:groupId/locations
+
+  /** The group's locations, populated. Readable by any authenticated user. */
+  async listForGroup(groupId: string) {
+    const group = await this.groupModel
+      .findById(groupId)
+      .populate('locations')
+      .lean();
+    if (!group) throw new NotFoundException('Group not found');
+    return (group as any).locations ?? [];
+  }
+
+  async findForGroup(groupId: string, locationId: string) {
+    const location = await this.locationModel.findById(locationId).lean();
+    if (!location || !(await this.belongsToGroup(groupId, location))) {
+      throw new NotFoundException('Location not found in this group');
+    }
+    return location;
+  }
+
+  /**
+   * Owner/admin only. Creates a location owned by the group and attaches it to
+   * `Group.locations`, capped at MAX_GROUP_LOCATIONS.
+   */
+  async createForGroup(
+    groupId: string,
+    userId: string,
+    dto: CreateLocationDto,
+  ): Promise<LocationDocument> {
+    await this.assertGroupRole(groupId, userId, CREATE_ROLES);
+
+    const group = await this.groupModel
+      .findById(groupId)
+      .select('locations')
+      .lean();
+    if (!group) throw new NotFoundException('Group not found');
+    if ((group.locations ?? []).length >= MAX_GROUP_LOCATIONS) {
+      throw new BadRequestException(
+        `A group may have at most ${MAX_GROUP_LOCATIONS} locations`,
+      );
+    }
+
+    const location = await this.create(userId, dto, groupId);
+
+    // Re-check the cap atomically: a concurrent create may have filled the
+    // last slot since the count above.
+    const attached = await this.groupModel.findOneAndUpdate(
+      {
+        _id: new Types.ObjectId(groupId),
+        [`locations.${MAX_GROUP_LOCATIONS - 1}`]: { $exists: false },
+      },
+      { $addToSet: { locations: location._id } },
+    );
+    if (!attached) {
+      await this.locationModel.deleteOne({ _id: location._id });
+      throw new BadRequestException(
+        `A group may have at most ${MAX_GROUP_LOCATIONS} locations`,
+      );
+    }
+    return location;
+  }
+
+  /**
+   * Owner/admin/captain/vice-captain. Only locations OWNED by this group are
+   * editable here; one merely attached to it belongs to someone else.
+   */
+  async updateForGroup(
+    groupId: string,
+    locationId: string,
+    userId: string,
+    dto: UpdateLocationDto,
+  ): Promise<LocationDocument> {
+    await this.assertGroupRole(groupId, userId, EDIT_ROLES);
+    const location = await this.loadForGroup(groupId, locationId);
+    if (location.groupId?.toString() !== groupId) {
+      throw new ForbiddenException(
+        'This location is attached to the group but owned elsewhere',
+      );
+    }
+    return this.applyUpdate(location, dto);
+  }
+
+  /**
+   * Owner/admin only. A location owned by the group is deleted outright (and
+   * pulled from every group referencing it); one merely attached is only
+   * detached from this group, since the row is not the group's to delete.
+   */
+  async removeForGroup(groupId: string, locationId: string, userId: string) {
+    await this.assertGroupRole(groupId, userId, DELETE_ROLES);
+    const location = await this.loadForGroup(groupId, locationId);
+    const id = location._id;
+
+    if (location.groupId?.toString() !== groupId) {
+      await this.groupModel.updateOne(
+        { _id: new Types.ObjectId(groupId) },
+        { $pull: { locations: id } },
+      );
+      return { message: 'Location detached' };
+    }
+
+    await this.locationModel.deleteOne({ _id: id });
+    // Also drop the reference from any group holding it, otherwise the stale id
+    // lingers in `Group.locations` — invisible in the populated list but still
+    // counting toward the location cap.
+    await this.groupModel.updateMany(
+      { locations: id },
+      { $pull: { locations: id } },
+    );
+    return { message: 'Location deleted' };
+  }
+
+  private async loadForGroup(
+    groupId: string,
+    locationId: string,
+  ): Promise<LocationDocument> {
+    const location = await this.locationModel.findById(locationId);
+    if (!location || !(await this.belongsToGroup(groupId, location))) {
+      throw new NotFoundException('Location not found in this group');
+    }
+    return location;
+  }
+
+  /** Owned by the group, or attached to its `locations` list. */
+  private async belongsToGroup(
+    groupId: string,
+    location: { _id: Types.ObjectId; groupId?: Types.ObjectId | null },
+  ): Promise<boolean> {
+    if (location.groupId?.toString() === groupId) return true;
+    const attached = await this.groupModel.exists({
+      _id: new Types.ObjectId(groupId),
+      locations: location._id,
+    });
+    return !!attached;
+  }
+
+  private async assertGroupRole(
+    groupId: string,
+    userId: string,
+    allowedRoles: string[],
+  ) {
+    const member = await this.memberModel.findOne({
+      groupId: new Types.ObjectId(groupId),
+      userId: new Types.ObjectId(userId),
+      status: 'approved',
+      role: { $in: allowedRoles },
+    });
+    if (!member) {
+      throw new ForbiddenException(
+        "You do not have permission to manage this group's locations",
+      );
+    }
   }
 }

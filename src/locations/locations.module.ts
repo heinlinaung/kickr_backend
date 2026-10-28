@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
-import { LocationsController } from './locations.controller';
+import { GroupLocationsController } from './group-locations.controller';
 import { LocationsService } from './locations.service';
 import { Location, LocationSchema } from './schemas/location.schema';
 import {
@@ -19,7 +19,7 @@ import { Group, GroupSchema } from '../groups/schemas/group.schema';
       { name: Group.name, schema: GroupSchema },
     ]),
   ],
-  controllers: [LocationsController],
+  controllers: [GroupLocationsController],
   providers: [LocationsService],
   exports: [LocationsService, MongooseModule],
 })

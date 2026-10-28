@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { NextFunction, Request, Response } from 'express';
 import { AppModule } from './app.module';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
@@ -50,6 +51,23 @@ async function bootstrap() {
       if (op?.tags?.includes('Payment & Funds')) op.tags = ['Payment & Funds'];
     }
   }
+  // Basic auth in front of Swagger UI and its JSON (/api-docs-json) so the
+  // browser shows a username/password prompt before the docs load.
+  const swaggerUser = process.env.SWAGGER_USER ?? 'admin';
+  const swaggerPassword = process.env.SWAGGER_PASSWORD ?? '@dmiN123';
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (!req.path.startsWith('/api-docs')) return next();
+    const [scheme, encoded] = (req.headers.authorization ?? '').split(' ');
+    if (scheme === 'Basic' && encoded) {
+      const decoded = Buffer.from(encoded, 'base64').toString();
+      const sep = decoded.indexOf(':');
+      if (decoded.slice(0, sep) === swaggerUser && decoded.slice(sep + 1) === swaggerPassword) {
+        return next();
+      }
+    }
+    res.setHeader('WWW-Authenticate', 'Basic realm="KicKR API Docs"');
+    res.status(401).send('Authentication required');
+  });
   SwaggerModule.setup('api-docs', app, document);
 
   app.enableShutdownHooks();

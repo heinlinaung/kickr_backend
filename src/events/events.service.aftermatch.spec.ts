@@ -68,6 +68,7 @@ describe('EventsService — after-match (spec §4.4)', () => {
     imagekit.deleteFile = jest.fn().mockResolvedValue(undefined);
     awards.giveMvp = jest.fn().mockResolvedValue({ id: 'aw_1' });
     awards.revokeMvp = jest.fn().mockResolvedValue(undefined);
+    awards.getMvp = jest.fn().mockResolvedValue(null);
     awards.giveChallengeAward = jest.fn().mockResolvedValue(null);
     challengeModel.findById = jest.fn().mockReturnValue({
       select: jest.fn().mockReturnThis(),
@@ -318,6 +319,74 @@ describe('EventsService — after-match (spec §4.4)', () => {
         .catch((e) => e);
       expect(err).toBeInstanceOf(ForbiddenException);
       expect(err.getResponse().code).toBe('NOT_EVENT_ORGANIZER');
+    });
+  });
+
+  describe('MVP award gate — owner/admin only on group events', () => {
+    const groupEvent = (over: Record<string, unknown> = {}) =>
+      eventDoc({ groupId: new Types.ObjectId(GROUP_ID), ...over });
+
+    it('rejects the creator of a group event who is not owner/admin', async () => {
+      eventModel.findById.mockResolvedValue(groupEvent());
+      for (const call of [
+        service.getMvpAward(EVENT_ID, CREATOR),
+        service.awardMvp(EVENT_ID, CREATOR, { userId: PLAYER }),
+        service.revokeMvp(EVENT_ID, CREATOR),
+      ]) {
+        const err: any = await call.catch((e) => e);
+        expect(err).toBeInstanceOf(ForbiddenException);
+        expect(err.getResponse().code).toBe('NOT_EVENT_ORGANIZER');
+      }
+      expect(awards.giveMvp).not.toHaveBeenCalled();
+      expect(awards.revokeMvp).not.toHaveBeenCalled();
+    });
+
+    it('admits an owner/admin of either side of a challenge', async () => {
+      eventModel.findById.mockResolvedValue(
+        groupEvent({ opponentGroupId: new Types.ObjectId(OTHER_GROUP) }),
+      );
+      memberModel.findOne.mockResolvedValue({ role: 'admin' });
+      playerModel.findOne.mockResolvedValue({ _id: 'row' });
+
+      await service.awardMvp(EVENT_ID, OUTSIDER, { userId: PLAYER });
+
+      const filter = memberModel.findOne.mock.calls[0][0];
+      expect(filter.groupId.$in.map(String)).toEqual([GROUP_ID, OTHER_GROUP]);
+      expect(filter.role).toEqual({ $in: ['owner', 'admin'] });
+      expect(filter.status).toBe('approved');
+      expect(awards.giveMvp).toHaveBeenCalled();
+    });
+
+    it('404 for an unknown event', async () => {
+      eventModel.findById.mockResolvedValue(null);
+      await expect(
+        service.getMvpAward(EVENT_ID, CREATOR),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('getMvpAward — GET /events/:id/awards/mvp', () => {
+    it('returns the award to the organizer', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc());
+      awards.getMvp.mockResolvedValue({ id: 'aw_1' });
+      expect(await service.getMvpAward(EVENT_ID, CREATOR)).toEqual({
+        id: 'aw_1',
+      });
+      expect(awards.getMvp).toHaveBeenCalledWith(EVENT_ID);
+    });
+
+    it('null when no MVP has been given', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc());
+      expect(await service.getMvpAward(EVENT_ID, CREATOR)).toBeNull();
+    });
+
+    it('NOT_EVENT_ORGANIZER for anyone else', async () => {
+      eventModel.findById.mockResolvedValue(eventDoc());
+      const err: any = await service
+        .getMvpAward(EVENT_ID, OUTSIDER)
+        .catch((e) => e);
+      expect(err.getResponse().code).toBe('NOT_EVENT_ORGANIZER');
+      expect(awards.getMvp).not.toHaveBeenCalled();
     });
   });
 

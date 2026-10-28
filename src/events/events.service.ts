@@ -884,28 +884,38 @@ export class EventsService {
   }
 
   /**
-   * Tells the joined roster that the teams are set and kick-off is next.
+   * Tells the joined roster the event moved through `PATCH /:id/status`.
    *
    * Addressed to the people PLAYING, not to the group: someone who never
-   * joined has no stake in the line-up, and this is the notification that most
-   * needs to reach a phone in a pocket.
+   * joined has no stake in the line-up or the kick-off. The organizer who made
+   * the move is excluded — being told about your own action is noise.
    *
    * Guests are excluded, unavoidably rather than by choice — a guest has no
    * account, so no device token and no notification row. Their sponsor is the
    * contact, which is one more reason the sponsor relationship is load-bearing.
+   *
+   * `cancelled` never reaches here (it has its own endpoint and message).
    */
-  private async notifyRosterReadyToPlay(event: EventDocument): Promise<void> {
+  private async notifyRosterOfStatus(
+    event: EventDocument,
+    from: string,
+    actorId: string,
+  ): Promise<void> {
+    const message = statusChangeMessage(event.title, from, event.status);
+    if (!message) return;
+
     try {
-      const playerIds = await this.joinedPlayerIds(String(event._id));
+      const playerIds = (await this.joinedPlayerIds(String(event._id))).filter(
+        (id) => id !== actorId,
+      );
 
       await this.notificationsService.notifyUsers(playerIds, {
-        title: 'Teams are ready',
-        body: `${event.title} — check your team and get ready to play.`,
+        ...message,
         type: 'event',
         refId: String(event._id),
       });
     } catch (err) {
-      this.logger.error(`Failed to announce ready_to_play: ${err}`);
+      this.logger.error(`Failed to announce ${event.status}: ${err}`);
     }
   }
 
@@ -1450,16 +1460,14 @@ export class EventsService {
       );
     }
 
+    const from = event.status;
     event.status = to;
     await event.save();
 
-    // Tell the people actually playing that the teams are final. Fired only on
-    // the transition INTO ready_to_play, not on every save, so re-entering the
-    // state from `playing` is the only way to notify twice — and that is a
-    // deliberate act by the organizer.
-    if (to === 'ready_to_play') {
-      await this.notifyRosterReadyToPlay(event);
-    }
+    // Every lifecycle move is announced to the people actually playing. The
+    // message depends on direction as well as target: a revert out of
+    // ready_to_play must retract "teams are ready", not repeat it.
+    await this.notifyRosterOfStatus(event, from, userId);
 
     // Archive the team chats on the way into `done` (spec §4.1). Archived
     // rooms stay readable — this closes them to new messages, not to history.
@@ -2689,19 +2697,55 @@ export class EventsService {
     }
   }
 
-  /** `assertOrganizer` with the awards API's error code. */
+  /**
+   * The MVP award as it stands — `GET /events/:id/awards/mvp`. Null when no
+   * MVP has been given yet. Same gate as giving one.
+   */
+  async getMvpAward(eventId: string, userId: string) {
+    await this.assertAwardOrganizer(eventId, userId);
+    return this.awardsService.getMvp(eventId);
+  }
+
+  /**
+   * Gate for every `/events/:id/awards/mvp` route, with the awards API's
+   * error code.
+   *
+   * Deliberately NARROWER than `assertOrganizer`: on a group event only an
+   * approved owner/admin of the group (either side of a challenge) may
+   * manage the MVP award — the event's creator gets no say by virtue of
+   * creating it. An event without a group has no owner/admin, so there the
+   * creator remains the only authority.
+   */
   private async assertAwardOrganizer(eventId: string, userId: string) {
-    try {
-      return await this.assertOrganizer(eventId, userId);
-    } catch (err) {
-      if (err instanceof ForbiddenException) {
+    const event = await this.eventModel.findById(eventId);
+    if (!event) throw new NotFoundException('Event not found');
+
+    if (event.groupId) {
+      const member = await this.memberModel.findOne({
+        groupId: {
+          $in: [
+            event.groupId,
+            ...(event.opponentGroupId ? [event.opponentGroupId] : []),
+          ],
+        },
+        userId: new Types.ObjectId(userId),
+        status: 'approved',
+        role: { $in: [...ORGANIZER_ROLES] },
+      });
+      if (!member) {
         throw awardError(
           'NOT_EVENT_ORGANIZER',
-          'Only the event organizer can manage its MVP award',
+          "Only a group owner or admin can manage this event's MVP award",
         );
       }
-      throw err;
+    } else if (event.createdBy.toString() !== userId) {
+      throw awardError(
+        'NOT_EVENT_ORGANIZER',
+        "Only the event creator can manage this event's MVP award",
+      );
     }
+
+    return event;
   }
 
   /**
@@ -4611,6 +4655,59 @@ function startOfToday(): Date {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
   return d;
+}
+
+/**
+ * The push for one lifecycle move, or null for one that announces nothing.
+ *
+ * Keyed on direction as well as target: `preparation` reached from `join`
+ * means registration closed, but reached from `ready_to_play` it means the
+ * teams the roster was just told about are being reshuffled.
+ */
+function statusChangeMessage(
+  eventTitle: string,
+  from: string,
+  to: string,
+): { title: string; body: string } | null {
+  switch (to) {
+    case 'join':
+      return {
+        title: 'Registration reopened',
+        body: `${eventTitle} — registration is open again and teams will be rebuilt.`,
+      };
+    case 'preparation':
+      return from === 'ready_to_play'
+        ? {
+            title: 'Teams are being changed',
+            body: `${eventTitle} — the organizer is reshuffling the teams.`,
+          }
+        : {
+            title: 'Registration closed',
+            body: `${eventTitle} — the roster is set and teams are being prepared.`,
+          };
+    case 'ready_to_play':
+      return {
+        title: 'Teams are ready',
+        body: `${eventTitle} — check your team and get ready to play.`,
+      };
+    case 'playing':
+      return {
+        title: 'Kick-off',
+        body: `${eventTitle} has started.`,
+      };
+    case 'after_match':
+      return {
+        title: 'Match finished',
+        body: `${eventTitle} — the match is over.`,
+      };
+    case 'done':
+      return {
+        title: `${eventTitle} is complete`,
+        body: 'Results are final.',
+      };
+    default:
+      return null;
+  }
 }
 
 /** Escapes user input so it can be embedded in a RegExp literally. */

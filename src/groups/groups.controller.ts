@@ -27,7 +27,6 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { GroupsService } from './groups.service';
 import { CreateGroupDto } from './dto/create-group.dto';
 import { UpdateGroupDto } from './dto/update-group.dto';
-import { AttachLocationDto } from './dto/attach-location.dto';
 import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import { SetCashierDto } from './dto/set-cashier.dto';
 import { UpdatePaymentDetailsDto } from './dto/update-payment-details.dto';
@@ -265,33 +264,6 @@ export class GroupsController {
 
   // Group rules have no dedicated routes: they are just the `rules` field on
   // POST /groups, PATCH /groups/:id and GET /groups/:id.
-
-  @Get(':id/locations')
-  listLocations(@Param('id') id: string) {
-    return this.groupsService.listLocations(id);
-  }
-
-  @Post(':id/locations')
-  attachLocation(
-    @Param('id') id: string,
-    @CurrentUser() user: any,
-    @Body() dto: AttachLocationDto,
-  ) {
-    return this.groupsService.attachLocation(id, user._id.toString(), dto);
-  }
-
-  @Delete(':id/locations/:locationId')
-  detachLocation(
-    @Param('id') id: string,
-    @Param('locationId') locationId: string,
-    @CurrentUser() user: any,
-  ) {
-    return this.groupsService.detachLocation(
-      id,
-      user._id.toString(),
-      locationId,
-    );
-  }
 
   // Self-service: any member (admin/captain/member) may leave. The owner is
   // refused — see GroupsService.leave.

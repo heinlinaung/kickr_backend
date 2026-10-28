@@ -142,6 +142,15 @@ export class AwardsService {
     return this.toMvpView(award);
   }
 
+  /** The event's MVP award, or null when none has been given. */
+  async getMvp(eventId: string) {
+    const award = await this.awardModel.findOne({
+      type: 'MVP',
+      eventId: new Types.ObjectId(eventId),
+    });
+    return award ? this.toMvpView(award) : null;
+  }
+
   /** Take back the event's MVP. `AWARD_NOT_FOUND` when there is none. */
   async revokeMvp(eventId: string) {
     const result = await this.awardModel.deleteOne({
