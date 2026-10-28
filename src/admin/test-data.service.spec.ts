@@ -105,7 +105,7 @@ describe('TestDataService', () => {
     groups.create = jest
       .fn()
       .mockResolvedValue({ _id: new Types.ObjectId() });
-    locations.create = jest
+    locations.createForGroup = jest
       .fn()
       .mockImplementation(() =>
         Promise.resolve({ _id: new Types.ObjectId() }),

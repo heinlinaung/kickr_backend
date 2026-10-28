@@ -213,6 +213,7 @@ export function eventsProviders(doubles: EventsTestDoubles = {}) {
     awards = {
       giveMvp: jest.fn().mockResolvedValue({}),
       revokeMvp: jest.fn().mockResolvedValue(undefined),
+      getMvp: jest.fn().mockResolvedValue(null),
       giveChallengeAward: jest.fn().mockResolvedValue(null),
     },
   } = doubles;

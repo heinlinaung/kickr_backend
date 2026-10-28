@@ -16,7 +16,10 @@ import {
   GroupMember,
   GroupMemberDocument,
 } from '../groups/schemas/group-member.schema';
-import { Location, LocationDocument } from '../locations/schemas/location.schema';
+import {
+  Location,
+  LocationDocument,
+} from '../locations/schemas/location.schema';
 import { Event, EventDocument } from '../events/schemas/event.schema';
 import {
   EventPlayer,
@@ -30,7 +33,10 @@ import {
   EventTeamChat,
   EventTeamChatDocument,
 } from '../events/schemas/event-team-chat.schema';
-import { EventLike, EventLikeDocument } from '../events/schemas/event-like.schema';
+import {
+  EventLike,
+  EventLikeDocument,
+} from '../events/schemas/event-like.schema';
 import { CognitoService } from '../auth/cognito/cognito.service';
 import {
   cognitoErrorName,
@@ -428,7 +434,10 @@ export class TestDataService {
         // clear failure into 22 × 6s of waiting before the same answer. The
         // per-call gap below is what avoids provoking the rate limit; backoff
         // handles the burst case.
-        if (!isCognitoThrottle(err) || attempt >= SIGNUP_RETRY_DELAYS_MS.length) {
+        if (
+          !isCognitoThrottle(err) ||
+          attempt >= SIGNUP_RETRY_DELAYS_MS.length
+        ) {
           throw err;
         }
 
@@ -467,12 +476,15 @@ export class TestDataService {
     const locationIds: string[] = [];
 
     for (let i = 1; i <= 3; i++) {
-      const location = await this.locationsService.create(owner.id, {
-        name: `Test Pitch ${i}`,
-        lat: 13.75 + i / 100,
-        lng: 100.5 + i / 100,
+      const location = await this.locationsService.createForGroup(
         groupId,
-      } as any);
+        owner.id,
+        {
+          name: `Test Pitch ${i}`,
+          lat: 13.75 + i / 100,
+          lng: 100.5 + i / 100,
+        },
+      );
       const id = (location._id as Types.ObjectId).toString();
       locationIds.push(id);
       run.locationIds.push(location._id as Types.ObjectId);
@@ -788,9 +800,7 @@ export class TestDataService {
 
     // --- stage: done ----------------------------------------------------
     await this.eventsService.setStatus(eventId, owner.id, 'done');
-    const chats = await this.teamChatModel
-      .find({ eventId: event._id })
-      .lean();
+    const chats = await this.teamChatModel.find({ eventId: event._id }).lean();
     record(
       'team chats archived on done',
       chats.length > 0 && chats.every((c) => c.archived),
@@ -821,7 +831,11 @@ export class TestDataService {
   ): Promise<void> {
     try {
       await fn();
-      record(name, want === 'resolve', want === 'reject' ? 'expected a rejection but it succeeded' : undefined);
+      record(
+        name,
+        want === 'resolve',
+        want === 'reject' ? 'expected a rejection but it succeeded' : undefined,
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       record(name, want === 'reject', want === 'resolve' ? message : undefined);
@@ -879,24 +893,32 @@ export class TestDataService {
       await this.teamChatModel.deleteMany({ eventId });
       await this.likeModel.deleteMany({ eventId });
     }
-    deleted.events = (await this.eventModel.deleteMany({
-      _id: { $in: run.eventIds },
-    })).deletedCount;
+    deleted.events = (
+      await this.eventModel.deleteMany({
+        _id: { $in: run.eventIds },
+      })
+    ).deletedCount;
 
-    deleted.locations = (await this.locationModel.deleteMany({
-      _id: { $in: run.locationIds },
-    })).deletedCount;
+    deleted.locations = (
+      await this.locationModel.deleteMany({
+        _id: { $in: run.locationIds },
+      })
+    ).deletedCount;
 
     for (const groupId of run.groupIds) {
       await this.memberModel.deleteMany({ groupId });
     }
-    deleted.groups = (await this.groupModel.deleteMany({
-      _id: { $in: run.groupIds },
-    })).deletedCount;
+    deleted.groups = (
+      await this.groupModel.deleteMany({
+        _id: { $in: run.groupIds },
+      })
+    ).deletedCount;
 
-    deleted.users = (await this.userModel.deleteMany({
-      _id: { $in: run.userIds },
-    })).deletedCount;
+    deleted.users = (
+      await this.userModel.deleteMany({
+        _id: { $in: run.userIds },
+      })
+    ).deletedCount;
 
     let cognitoDeleted = 0;
     let cognitoFailed = 0;

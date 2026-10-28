@@ -705,25 +705,44 @@ describe('EventsService — lifecycle', () => {
         expect(payload.refId).toBe(String(EVENT_ID));
       });
 
-      it.each(['preparation', 'playing', 'after_match', 'done'])(
-        'does not fire on the move to %s',
-        async (to) => {
-          // Only the transition INTO ready_to_play announces the line-up.
-          const from =
-            to === 'preparation'
-              ? 'ready_to_play'
-              : to === 'playing'
-                ? 'ready_to_play'
-                : to === 'after_match'
-                  ? 'playing'
-                  : 'after_match';
-          eventModel.findById.mockResolvedValue(eventDoc({ status: from }));
+      it.each([
+        ['join', 'preparation', 'Registration closed'],
+        ['preparation', 'join', 'Registration reopened'],
+        ['ready_to_play', 'preparation', 'Teams are being changed'],
+        ['ready_to_play', 'playing', 'Kick-off'],
+        ['playing', 'after_match', 'Match finished'],
+        ['after_match', 'done', 'Friday five is complete'],
+      ])('announces %s -> %s as "%s"', async (from, to, title) => {
+        eventModel.findById.mockResolvedValue(
+          eventDoc({ status: from, title: 'Friday five' }),
+        );
 
-          await service.setStatus(EVENT_ID, CREATOR, to);
+        await service.setStatus(EVENT_ID, CREATOR, to);
 
-          expect(notifications.notifyUsers).not.toHaveBeenCalled();
-        },
-      );
+        const [recipients, payload] = notifications.notifyUsers.mock.calls[0];
+        expect(recipients).toEqual([M1]);
+        expect(payload.title).toBe(title);
+        expect(payload.type).toBe('event');
+        expect(payload.refId).toBe(String(EVENT_ID));
+      });
+
+      it('does not notify the organizer who made the move', async () => {
+        playerModel.find = jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnThis(),
+          sort: jest.fn().mockReturnThis(),
+          lean: jest
+            .fn()
+            .mockResolvedValue([
+              { userId: new Types.ObjectId(CREATOR) },
+              { userId: new Types.ObjectId(M1) },
+            ]),
+        });
+
+        await advance();
+
+        const [recipients] = notifications.notifyUsers.mock.calls[0];
+        expect(recipients).toEqual([M1]);
+      });
 
       it('still advances the status when notifying throws', async () => {
         // The transition is the transaction; the notification is a side effect.

@@ -182,6 +182,24 @@ describe('AwardsService', () => {
     });
   });
 
+  describe('getMvp', () => {
+    it("returns the event's MVP award", async () => {
+      awardModel.findOne.mockResolvedValue(awardDoc());
+      const view = await service.getMvp(EVENT_ID);
+      expect(view).toMatchObject({
+        id: AWARD_ID,
+        type: 'MVP',
+        recipient: { kind: 'USER', id: PLAYER },
+        eventId: EVENT_ID,
+      });
+      expect(awardModel.findOne.mock.calls[0][0].type).toBe('MVP');
+    });
+
+    it('null when the event has no MVP', async () => {
+      expect(await service.getMvp(EVENT_ID)).toBeNull();
+    });
+  });
+
   describe('revokeMvp', () => {
     it('AWARD_NOT_FOUND when the event has no MVP', async () => {
       awardModel.deleteOne.mockResolvedValue({ deletedCount: 0 });

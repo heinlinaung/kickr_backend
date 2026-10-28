@@ -17,12 +17,14 @@ import {
 } from './schemas/group-member.schema';
 import { CreateGroupDto } from './dto/create-group.dto';
 import { UpdateGroupDto } from './dto/update-group.dto';
-import { AttachLocationDto } from './dto/attach-location.dto';
 import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import { UpdatePaymentDetailsDto } from './dto/update-payment-details.dto';
 import { FinanceService } from '../finance/finance.service';
 import { ImageKitService } from '../common/upload/imagekit.service';
-import { LocationsService } from '../locations/locations.service';
+import {
+  LocationsService,
+  MAX_GROUP_LOCATIONS,
+} from '../locations/locations.service';
 import { EventsService } from '../events/events.service';
 import { PhotosService } from '../photos/photos.service';
 import { SportTypesService } from '../sport-types/sport-types.service';
@@ -73,8 +75,6 @@ function escapeRegex(input: string): string {
 
 @Injectable()
 export class GroupsService {
-  private static readonly MAX_LOCATIONS = 5;
-
   private readonly logger = new Logger(GroupsService.name);
 
   constructor(
@@ -866,95 +866,6 @@ export class GroupsService {
     return member;
   }
 
-  async listLocations(groupId: string) {
-    const group = await this.groupModel
-      .findById(groupId)
-      .populate('locations')
-      .lean();
-    if (!group) throw new NotFoundException('Group not found');
-    return (group as any).locations ?? [];
-  }
-
-  async attachLocation(
-    groupId: string,
-    userId: string,
-    dto: AttachLocationDto,
-  ): Promise<GroupDocument> {
-    await this.assertOwnerOrAdmin(groupId, userId);
-
-    const current = await this.groupModel
-      .findById(groupId)
-      .select('locations')
-      .lean();
-    if (!current) throw new NotFoundException('Group not found');
-    if (
-      ((current as any).locations ?? []).length >= GroupsService.MAX_LOCATIONS
-    ) {
-      throw new BadRequestException(
-        `A group may have at most ${GroupsService.MAX_LOCATIONS} locations`,
-      );
-    }
-
-    let locationId: string;
-    if (dto.locationId) {
-      // you may only attach locations you own
-      await this.locationsService.assertOwnedBy(dto.locationId, userId);
-      locationId = dto.locationId;
-    } else if (dto.location) {
-      // Created in a group context -> owned by the group, so the group's
-      // owner/admin/captain can manage it afterwards.
-      const created = await this.locationsService.create(
-        userId,
-        dto.location,
-        groupId,
-      );
-      locationId = created._id.toString();
-    } else {
-      throw new BadRequestException('Provide either locationId or location');
-    }
-
-    const group = await this.groupModel
-      .findByIdAndUpdate(
-        groupId,
-        { $addToSet: { locations: new Types.ObjectId(locationId) } },
-        { new: true },
-      )
-      .lean();
-    if (!group) throw new NotFoundException('Group not found');
-
-    // Attaching one of your still-personal locations hands it to the group so
-    // the group's owner/admin/captain can maintain it. Locations already owned
-    // by another group are left untouched.
-    await this.locationsService.adoptPersonalLocations(
-      [new Types.ObjectId(locationId)],
-      userId,
-      groupId,
-    );
-
-    return group;
-  }
-
-  /**
-   * Detaching only removes the group's reference: the Location row stays in its
-   * owner's library, where it may still be attached to other groups.
-   */
-  async detachLocation(
-    groupId: string,
-    userId: string,
-    locationId: string,
-  ): Promise<GroupDocument> {
-    await this.assertOwnerOrAdmin(groupId, userId);
-    const group = await this.groupModel
-      .findByIdAndUpdate(
-        groupId,
-        { $pull: { locations: new Types.ObjectId(locationId) } },
-        { new: true },
-      )
-      .lean();
-    if (!group) throw new NotFoundException('Group not found');
-    return group;
-  }
-
   /**
    * Validates the count and the caller's ownership of every supplied location id
    * and maps them to ObjectIds. Returns undefined when nothing was supplied, so
@@ -965,9 +876,9 @@ export class GroupsService {
     userId: string,
   ): Promise<Types.ObjectId[] | undefined> {
     if (!locationIds || locationIds.length === 0) return undefined;
-    if (locationIds.length > GroupsService.MAX_LOCATIONS) {
+    if (locationIds.length > MAX_GROUP_LOCATIONS) {
       throw new BadRequestException(
-        `A group may have at most ${GroupsService.MAX_LOCATIONS} locations`,
+        `A group may have at most ${MAX_GROUP_LOCATIONS} locations`,
       );
     }
     for (const id of locationIds) {

@@ -1016,11 +1016,25 @@ export class EventsController {
     return this.eventsService.submitMvp(id, user._id.toString(), dto);
   }
 
+  @Get(':id/awards/mvp')
+  @ApiOperation({
+    summary: "The event's MVP award",
+    description:
+      'Group owner/admin only (either side of a challenge); on an event ' +
+      'without a group, its creator. `null` when no MVP has been given yet.',
+  })
+  @ApiResponse({ status: 200, description: 'The MVP award, or null' })
+  @ApiResponse({ status: 403, description: 'NOT_EVENT_ORGANIZER' })
+  getMvpAward(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.eventsService.getMvpAward(id, user._id.toString());
+  }
+
   @Post(':id/awards/mvp')
   @ApiOperation({
     summary: 'Give the MVP award to a participant',
     description:
-      'Organizer-only, once the match is over (after_match or done). One MVP ' +
+      'Group owner/admin only (either side of a challenge; on an event ' +
+      'without a group, its creator), once the match is over (after_match or done). One MVP ' +
       'per event: the same player again only updates `note`; a different ' +
       'player is MVP_ALREADY_AWARDED — DELETE first. The player is notified ' +
       'and the award shows on their Awards tab. `result.mvpUserId` follows.',
@@ -1060,8 +1074,8 @@ export class EventsController {
   @ApiOperation({
     summary: 'Take back the MVP award',
     description:
-      "Organizer-only. Removes it from the player's Awards tab and clears " +
-      'the MVP (and goal/assist) off the result; the score is kept.',
+      "Group owner/admin only. Removes it from the player's Awards tab and " +
+      'clears the MVP (and goal/assist) off the result; the score is kept.',
   })
   @ApiResponse({ status: 204, description: 'Taken back' })
   @ApiResponse({ status: 403, description: 'NOT_EVENT_ORGANIZER' })

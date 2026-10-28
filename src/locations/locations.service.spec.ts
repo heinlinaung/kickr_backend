@@ -20,7 +20,13 @@ describe('LocationsService', () => {
   };
 
   const memberModel: any = { findOne: jest.fn() };
-  const groupModel: any = { updateMany: jest.fn().mockResolvedValue({}) };
+  const groupModel: any = {
+    updateMany: jest.fn().mockResolvedValue({}),
+    updateOne: jest.fn().mockResolvedValue({}),
+    findById: jest.fn(),
+    findOneAndUpdate: jest.fn(),
+    exists: jest.fn().mockResolvedValue(null),
+  };
 
   const OWNER = new Types.ObjectId().toString();
   const OTHER = new Types.ObjectId().toString();
@@ -30,6 +36,7 @@ describe('LocationsService', () => {
     jest.clearAllMocks();
     memberModel.findOne.mockResolvedValue(null);
     groupModel.updateMany.mockResolvedValue({});
+    groupModel.exists.mockResolvedValue(null);
     const m = await Test.createTestingModule({
       providers: [
         LocationsService,
@@ -68,6 +75,7 @@ describe('LocationsService', () => {
       expect(arg.createdBy.toString()).toBe(OWNER);
       // geo is derived by the schema hook, never stamped by the service
       expect(arg.geo).toBeUndefined();
+      expect(arg.groupId).toBeNull();
       // NO DEDUPE: creating must not consult existing rows in any way
       expect(locationModel.findOne).not.toHaveBeenCalled();
       expect(locationModel.find).not.toHaveBeenCalled();
@@ -85,21 +93,6 @@ describe('LocationsService', () => {
       expect(locationModel.create).toHaveBeenCalledTimes(2);
       expect((first as any)._id).toBe('a');
       expect((second as any)._id).toBe('b');
-    });
-  });
-
-  describe('listMine', () => {
-    it('filters by createdBy and sorts newest first', async () => {
-      const lean = jest.fn().mockResolvedValue([{ _id: LOC_ID }]);
-      const sort = jest.fn().mockReturnValue({ lean });
-      locationModel.find.mockReturnValue({ sort });
-
-      const res = await service.listMine(OWNER);
-
-      const filter = locationModel.find.mock.calls[0][0];
-      expect(filter.createdBy.toString()).toBe(OWNER);
-      expect(sort).toHaveBeenCalledWith({ createdAt: -1 });
-      expect(res).toEqual([{ _id: LOC_ID }]);
     });
   });
 
@@ -169,58 +162,6 @@ describe('LocationsService', () => {
       } as any);
 
       expect(doc.createdBy.toString()).toBe(OWNER);
-    });
-  });
-
-  describe('findById', () => {
-    it('throws NotFoundException when missing', async () => {
-      locationModel.findById.mockReturnValue({
-        lean: jest.fn().mockResolvedValue(null),
-      });
-      await expect(service.findById(LOC_ID)).rejects.toBeInstanceOf(
-        NotFoundException,
-      );
-    });
-
-    it('returns the row when present', async () => {
-      locationModel.findById.mockReturnValue({
-        lean: jest.fn().mockResolvedValue({ _id: LOC_ID, name: 'Pitch' }),
-      });
-      const res = await service.findById(LOC_ID);
-      expect((res as any).name).toBe('Pitch');
-    });
-  });
-
-  describe('remove', () => {
-    it('throws NotFoundException when the row is missing', async () => {
-      locationModel.findById.mockResolvedValue(null);
-      await expect(service.remove(LOC_ID, OWNER)).rejects.toBeInstanceOf(
-        NotFoundException,
-      );
-      expect(locationModel.deleteOne).not.toHaveBeenCalled();
-    });
-
-    it('throws ForbiddenException for a non-owner and does not delete', async () => {
-      locationModel.findById.mockResolvedValue({
-        _id: LOC_ID,
-        createdBy: new Types.ObjectId(OWNER),
-      });
-      await expect(service.remove(LOC_ID, OTHER)).rejects.toBeInstanceOf(
-        ForbiddenException,
-      );
-      expect(locationModel.deleteOne).not.toHaveBeenCalled();
-    });
-
-    it('deletes the row for the owner', async () => {
-      locationModel.findById.mockResolvedValue({
-        _id: LOC_ID,
-        createdBy: new Types.ObjectId(OWNER),
-      });
-      locationModel.deleteOne.mockResolvedValue({ deletedCount: 1 });
-
-      await service.remove(LOC_ID, OWNER);
-
-      expect(locationModel.deleteOne).toHaveBeenCalledWith({ _id: LOC_ID });
     });
   });
 
@@ -349,9 +290,9 @@ describe('LocationsService', () => {
     it('captain may EDIT but NOT DELETE a group-owned location', async () => {
       locationModel.findById.mockResolvedValue(groupLocation());
       asRole('captain');
-      await expect(service.remove(LOC_ID, OTHER)).rejects.toBeInstanceOf(
-        ForbiddenException,
-      );
+      await expect(
+        service.assertCanDelete(LOC_ID, OTHER),
+      ).rejects.toBeInstanceOf(ForbiddenException);
     });
 
     it('referee gets NO location rights — it is a label only', async () => {
@@ -364,9 +305,9 @@ describe('LocationsService', () => {
       await expect(
         service.update(LOC_ID, OTHER, { name: 'Nope' }),
       ).rejects.toBeInstanceOf(ForbiddenException);
-      await expect(service.remove(LOC_ID, OTHER)).rejects.toBeInstanceOf(
-        ForbiddenException,
-      );
+      await expect(
+        service.assertCanDelete(LOC_ID, OTHER),
+      ).rejects.toBeInstanceOf(ForbiddenException);
     });
 
     it('vice-captain may EDIT but NOT DELETE a group-owned location', async () => {
@@ -374,18 +315,17 @@ describe('LocationsService', () => {
       // owner/admin — vice-captain inherits captain's limit too.
       locationModel.findById.mockResolvedValue(groupLocation());
       asRole('vice-captain');
-      await expect(service.remove(LOC_ID, OTHER)).rejects.toBeInstanceOf(
-        ForbiddenException,
-      );
+      await expect(
+        service.assertCanDelete(LOC_ID, OTHER),
+      ).rejects.toBeInstanceOf(ForbiddenException);
     });
 
     it('admin MAY delete a group-owned location', async () => {
       locationModel.findById.mockResolvedValue(groupLocation());
       asRole('admin');
-      locationModel.deleteOne.mockResolvedValue({ deletedCount: 1 });
-      await expect(service.remove(LOC_ID, OTHER)).resolves.toEqual(
-        expect.objectContaining({ message: expect.any(String) }),
-      );
+      await expect(
+        service.assertCanDelete(LOC_ID, OTHER),
+      ).resolves.toBeDefined();
     });
 
     it('only considers APPROVED memberships', async () => {
@@ -395,83 +335,6 @@ describe('LocationsService', () => {
       expect(memberModel.findOne).toHaveBeenCalledWith(
         expect.objectContaining({ status: 'approved' }),
       );
-    });
-  });
-
-  describe('remove cleans up group references', () => {
-    it('pulls the deleted id out of every group that referenced it', async () => {
-      locationModel.findById.mockResolvedValue({
-        _id: LOC_ID,
-        createdBy: { toString: () => OWNER },
-        groupId: null,
-      });
-      locationModel.deleteOne.mockResolvedValue({ deletedCount: 1 });
-
-      await service.remove(LOC_ID, OWNER);
-
-      // otherwise a stale id lingers in Group.locations — invisible in the
-      // populated list but still counting toward the 5-location cap
-      expect(groupModel.updateMany).toHaveBeenCalledTimes(1);
-      const [filter, update] = groupModel.updateMany.mock.calls[0];
-      expect(filter.locations.toString()).toBe(LOC_ID);
-      expect(update.$pull.locations.toString()).toBe(LOC_ID);
-    });
-  });
-
-  describe('create with groupId (client-supplied owning group)', () => {
-    const GROUP_ID = new Types.ObjectId().toString();
-
-    it('rejects when the caller is not an owner/admin of that group', async () => {
-      memberModel.findOne.mockResolvedValue(null); // not a manager
-      await expect(
-        service.create(OWNER, {
-          name: 'Club Ground',
-          lat: 1,
-          lng: 2,
-          groupId: GROUP_ID,
-        } as any),
-      ).rejects.toBeInstanceOf(ForbiddenException);
-      expect(locationModel.create).not.toHaveBeenCalled();
-    });
-
-    it('rejects a CAPTAIN creating a group-owned location (owner/admin only)', async () => {
-      memberModel.findOne.mockImplementation((f: any) =>
-        Promise.resolve(
-          (f?.role?.$in ?? []).includes('captain') ? { role: 'captain' } : null,
-        ),
-      );
-      await expect(
-        service.create(OWNER, {
-          name: 'X',
-          lat: 1,
-          lng: 2,
-          groupId: GROUP_ID,
-        } as any),
-      ).rejects.toBeInstanceOf(ForbiddenException);
-    });
-
-    it('stores groupId when the caller is an admin of that group', async () => {
-      memberModel.findOne.mockResolvedValue({ role: 'admin' });
-      locationModel.create.mockResolvedValue({ _id: LOC_ID });
-
-      await service.create(OWNER, {
-        name: 'Club Ground',
-        lat: 1,
-        lng: 2,
-        groupId: GROUP_ID,
-      });
-
-      const arg = locationModel.create.mock.calls[0][0];
-      expect(arg.groupId.toString()).toBe(GROUP_ID);
-      // the raw string must not leak through the spread
-      expect(typeof arg.groupId).not.toBe('string');
-    });
-
-    it('creates a personal location (groupId null) when omitted, with no membership check', async () => {
-      locationModel.create.mockResolvedValue({ _id: LOC_ID });
-      await service.create(OWNER, { name: 'Mine', lat: 1, lng: 2 });
-      expect(memberModel.findOne).not.toHaveBeenCalled();
-      expect(locationModel.create.mock.calls[0][0].groupId).toBeNull();
     });
   });
 
@@ -517,6 +380,203 @@ describe('LocationsService', () => {
         new Types.ObjectId().toString(),
       );
       expect(locationModel.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  // ------------------------------------------- /groups/:groupId/locations
+  describe('group-scoped CRUD', () => {
+    const GROUP_ID = new Types.ObjectId().toString();
+    const ELSEWHERE = new Types.ObjectId().toString();
+
+    const asRole = (role: string) =>
+      memberModel.findOne.mockImplementation((filter: any) => {
+        const allowed = filter?.role?.$in ?? [];
+        return Promise.resolve(
+          allowed.includes(role) ? { role, status: 'approved' } : null,
+        );
+      });
+
+    /** findById(...).select(...).lean() or findById(...).populate(...).lean() */
+    const groupQuery = (value: any) => {
+      const lean = jest.fn().mockResolvedValue(value);
+      const chain = { lean, select: jest.fn(), populate: jest.fn() };
+      chain.select.mockReturnValue(chain);
+      chain.populate.mockReturnValue(chain);
+      return chain;
+    };
+
+    const ownedDoc = (groupId = GROUP_ID): any => {
+      const doc: any = {
+        _id: new Types.ObjectId(LOC_ID),
+        name: 'Club Ground',
+        createdBy: new Types.ObjectId(OWNER),
+        groupId: new Types.ObjectId(groupId),
+      };
+      doc.save = jest.fn().mockResolvedValue(doc);
+      return doc;
+    };
+
+    describe('createForGroup', () => {
+      const dto = { name: 'Club Ground', lat: 1, lng: 2 };
+
+      it('rejects a captain (owner/admin only) without creating', async () => {
+        asRole('captain');
+        await expect(
+          service.createForGroup(GROUP_ID, OTHER, dto),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+        expect(locationModel.create).not.toHaveBeenCalled();
+      });
+
+      it('404s when the group is missing', async () => {
+        asRole('admin');
+        groupModel.findById.mockReturnValue(groupQuery(null));
+        await expect(
+          service.createForGroup(GROUP_ID, OTHER, dto),
+        ).rejects.toBeInstanceOf(NotFoundException);
+      });
+
+      it('rejects a 6th location, naming the limit of 5', async () => {
+        asRole('owner');
+        groupModel.findById.mockReturnValue(
+          groupQuery({
+            locations: Array.from({ length: 5 }, () => new Types.ObjectId()),
+          }),
+        );
+        await expect(
+          service.createForGroup(GROUP_ID, OWNER, dto),
+        ).rejects.toThrow(/5/);
+        expect(locationModel.create).not.toHaveBeenCalled();
+      });
+
+      it('creates a group-owned row and attaches it under the cap', async () => {
+        asRole('admin');
+        groupModel.findById.mockReturnValue(groupQuery({ locations: [] }));
+        const newId = new Types.ObjectId();
+        locationModel.create.mockResolvedValue({ _id: newId });
+        groupModel.findOneAndUpdate.mockResolvedValue({ _id: GROUP_ID });
+
+        await service.createForGroup(GROUP_ID, OTHER, dto);
+
+        const arg = locationModel.create.mock.calls[0][0];
+        expect(arg.groupId.toString()).toBe(GROUP_ID);
+        expect(arg.createdBy.toString()).toBe(OTHER);
+        const [filter, update] = groupModel.findOneAndUpdate.mock.calls[0];
+        expect(filter['locations.4']).toEqual({ $exists: false });
+        expect(update.$addToSet.locations).toBe(newId);
+      });
+
+      it('rolls the row back when a concurrent create filled the last slot', async () => {
+        asRole('owner');
+        groupModel.findById.mockReturnValue(groupQuery({ locations: [] }));
+        const newId = new Types.ObjectId();
+        locationModel.create.mockResolvedValue({ _id: newId });
+        groupModel.findOneAndUpdate.mockResolvedValue(null);
+
+        await expect(
+          service.createForGroup(GROUP_ID, OWNER, dto),
+        ).rejects.toThrow(/5/);
+        expect(locationModel.deleteOne).toHaveBeenCalledWith({ _id: newId });
+      });
+    });
+
+    describe('listForGroup / findForGroup', () => {
+      it('returns the populated locations', async () => {
+        const q = groupQuery({ locations: [{ _id: LOC_ID }] });
+        groupModel.findById.mockReturnValue(q);
+        await expect(service.listForGroup(GROUP_ID)).resolves.toEqual([
+          { _id: LOC_ID },
+        ]);
+        expect(q.populate).toHaveBeenCalledWith('locations');
+      });
+
+      it('404s a location that neither belongs to nor is attached to the group', async () => {
+        locationModel.findById.mockReturnValue({
+          lean: jest.fn().mockResolvedValue(ownedDoc(ELSEWHERE)),
+        });
+        groupModel.exists.mockResolvedValue(null);
+        await expect(
+          service.findForGroup(GROUP_ID, LOC_ID),
+        ).rejects.toBeInstanceOf(NotFoundException);
+      });
+
+      it('returns an attached location owned elsewhere', async () => {
+        locationModel.findById.mockReturnValue({
+          lean: jest.fn().mockResolvedValue(ownedDoc(ELSEWHERE)),
+        });
+        groupModel.exists.mockResolvedValue({ _id: GROUP_ID });
+        await expect(
+          service.findForGroup(GROUP_ID, LOC_ID),
+        ).resolves.toBeDefined();
+      });
+    });
+
+    describe('updateForGroup', () => {
+      it('lets a captain edit a group-owned location via save()', async () => {
+        asRole('captain');
+        const doc = ownedDoc();
+        locationModel.findById.mockResolvedValue(doc);
+
+        await service.updateForGroup(GROUP_ID, LOC_ID, OTHER, { name: 'New' });
+
+        expect(doc.name).toBe('New');
+        expect(doc.save).toHaveBeenCalledTimes(1);
+      });
+
+      it('rejects a plain member, even the creator, without a group role', async () => {
+        asRole('member');
+        locationModel.findById.mockResolvedValue(ownedDoc());
+        await expect(
+          service.updateForGroup(GROUP_ID, LOC_ID, OWNER, { name: 'X' }),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+      });
+
+      it('refuses to edit an attached location owned by another group', async () => {
+        asRole('owner');
+        const doc = ownedDoc(ELSEWHERE);
+        locationModel.findById.mockResolvedValue(doc);
+        groupModel.exists.mockResolvedValue({ _id: GROUP_ID });
+        await expect(
+          service.updateForGroup(GROUP_ID, LOC_ID, OWNER, { name: 'X' }),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+        expect(doc.save).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('removeForGroup', () => {
+      it('rejects a captain', async () => {
+        asRole('captain');
+        await expect(
+          service.removeForGroup(GROUP_ID, LOC_ID, OTHER),
+        ).rejects.toBeInstanceOf(ForbiddenException);
+        expect(locationModel.deleteOne).not.toHaveBeenCalled();
+      });
+
+      it('deletes a group-owned row and pulls it from every group', async () => {
+        asRole('admin');
+        locationModel.findById.mockResolvedValue(ownedDoc());
+
+        const res = await service.removeForGroup(GROUP_ID, LOC_ID, OTHER);
+
+        expect(res).toEqual({ message: 'Location deleted' });
+        expect(locationModel.deleteOne).toHaveBeenCalled();
+        const [filter, update] = groupModel.updateMany.mock.calls[0];
+        expect(filter.locations.toString()).toBe(LOC_ID);
+        expect(update.$pull.locations.toString()).toBe(LOC_ID);
+      });
+
+      it('only detaches a location owned elsewhere', async () => {
+        asRole('owner');
+        locationModel.findById.mockResolvedValue(ownedDoc(ELSEWHERE));
+        groupModel.exists.mockResolvedValue({ _id: GROUP_ID });
+
+        const res = await service.removeForGroup(GROUP_ID, LOC_ID, OWNER);
+
+        expect(res).toEqual({ message: 'Location detached' });
+        expect(locationModel.deleteOne).not.toHaveBeenCalled();
+        const [filter, update] = groupModel.updateOne.mock.calls[0];
+        expect(filter._id.toString()).toBe(GROUP_ID);
+        expect(update.$pull.locations.toString()).toBe(LOC_ID);
+      });
     });
   });
 });
