@@ -1,5 +1,11 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsArray, IsOptional, MinLength } from 'class-validator';
+import {
+  IsString,
+  IsArray,
+  IsOptional,
+  MinLength,
+  IsMongoId,
+} from 'class-validator';
 
 export class RegisterTeamDto {
   @ApiProperty({ example: 'Team Alpha', minLength: 2 })
@@ -7,7 +13,10 @@ export class RegisterTeamDto {
   @MinLength(2)
   name: string;
 
-  @ApiProperty({ example: ['665f1a2b3c4d5e6f7a8b9c0d', '665f1a2b3c4d5e6f7a8b9c0e'], type: [String] })
+  @ApiProperty({
+    example: ['665f1a2b3c4d5e6f7a8b9c0d', '665f1a2b3c4d5e6f7a8b9c0e'],
+    type: [String],
+  })
   @IsArray()
   @IsString({ each: true })
   players: string[];
@@ -16,4 +25,14 @@ export class RegisterTeamDto {
   @IsOptional()
   @IsString()
   captainId?: string;
+
+  @ApiProperty({
+    example: '665f1a2b3c4d5e6f7a8b9c0f',
+    required: false,
+    description:
+      'The Group (club) the team comes from; used to keep club-mates apart in the group draw',
+  })
+  @IsOptional()
+  @IsMongoId()
+  clubId?: string;
 }

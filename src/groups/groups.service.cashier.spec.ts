@@ -23,10 +23,7 @@ import { FinanceService } from '../finance/finance.service';
 import { PhotosService } from '../photos/photos.service';
 import { SportTypesService } from '../sport-types/sport-types.service';
 import { PlansService } from '../plans/plans.service';
-import {
-  plansDouble,
-  sportTypesDouble,
-} from '../events/events.test-providers';
+import { plansDouble, sportTypesDouble } from '../events/events.test-providers';
 
 const GROUP_ID = '507f1f77bcf86cd799439021';
 const OWNER = '507f191e810c19729de860f1';
@@ -35,11 +32,15 @@ const MEMBER = '507f191e810c19729de860f3';
 const STRANGER = '507f191e810c19729de860f4';
 
 describe('GroupsService — cashier & payment details', () => {
+  // findById counts the group's active tournaments.
+  const tournamentModel = { countDocuments: jest.fn().mockResolvedValue(0) };
   let service: GroupsService;
   const groupModel: any = {};
   const memberModel: any = {};
   const imagekit = {
-    upload: jest.fn().mockResolvedValue({ url: 'https://ik/qr.png', fileId: 'qr1' }),
+    upload: jest
+      .fn()
+      .mockResolvedValue({ url: 'https://ik/qr.png', fileId: 'qr1' }),
     deleteFile: jest.fn().mockResolvedValue(undefined),
   };
 
@@ -59,7 +60,10 @@ describe('GroupsService — cashier & payment details', () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
-    imagekit.upload.mockResolvedValue({ url: 'https://ik/qr.png', fileId: 'qr1' });
+    imagekit.upload.mockResolvedValue({
+      url: 'https://ik/qr.png',
+      fileId: 'qr1',
+    });
     groupModel.findById = jest.fn().mockReturnValue(chain(groupRow()));
     groupModel.findByIdAndUpdate = jest
       .fn()
@@ -74,7 +78,10 @@ describe('GroupsService — cashier & payment details', () => {
         { provide: ImageKitService, useValue: imagekit },
         { provide: LocationsService, useValue: {} },
         { provide: getModelToken(Message.name), useValue: {} },
-        { provide: getModelToken(Tournament.name), useValue: {} },
+        {
+          provide: getModelToken(Tournament.name),
+          useValue: tournamentModel,
+        },
         { provide: getModelToken(Location.name), useValue: {} },
         { provide: EventsService, useValue: {} },
         {
@@ -267,6 +274,29 @@ describe('GroupsService — cashier & payment details', () => {
     it('is false — never undefined — without a caller', async () => {
       const res: any = await service.findById(GROUP_ID);
       expect(res.isCashier).toBe(false);
+    });
+  });
+
+  describe('findById → hasTournament on group detail', () => {
+    beforeEach(() => {
+      memberModel.findOne = jest.fn().mockReturnValue(chain(null));
+    });
+
+    it('counts only active tournaments of this group', async () => {
+      tournamentModel.countDocuments.mockResolvedValueOnce(2);
+      const res: any = await service.findById(GROUP_ID);
+      expect(res.hasTournament).toBe(true);
+      expect(res.tournamentCount).toBe(2);
+      const filter = tournamentModel.countDocuments.mock.calls.at(-1)[0];
+      expect(filter.groupId.toString()).toBe(GROUP_ID);
+      expect(filter.status).toEqual({ $nin: ['COMPLETED', 'CANCELLED'] });
+    });
+
+    it('is false with none', async () => {
+      tournamentModel.countDocuments.mockResolvedValueOnce(0);
+      const res: any = await service.findById(GROUP_ID);
+      expect(res.hasTournament).toBe(false);
+      expect(res.tournamentCount).toBe(0);
     });
   });
 

@@ -15,7 +15,7 @@ export class Notification {
   @Prop({ required: true })
   body: string;
 
-  @Prop({ required: true, enum: ['event', 'group'] })
+  @Prop({ required: true, enum: ['event', 'group', 'tournament'] })
   type: string;
 
   @Prop({ type: String })

@@ -26,7 +26,8 @@ import { AppConfigService } from './app-config.service';
 import { CreateAppConfigDto } from './dto/create-app-config.dto';
 import { UpdateAppConfigDto } from './dto/update-app-config.dto';
 
-const ROW = '`{ revision, appUpdate, majorUpdate, updatedBy, createdAt }`';
+const ROW =
+  '`{ revision, appUpdate, majorUpdate, features, updatedBy, createdAt }`';
 
 /** Guards + Swagger auth docs for the superadmin-only write routes. */
 const SuperadminOnly = applyDecorators(
@@ -83,7 +84,7 @@ export class AppConfigController {
   })
   @ApiResponse({
     status: 400,
-    description: 'Invalid field, or minimumVersion above latestVersion',
+    description: 'Invalid field or minimumVersion above latestVersion',
   })
   @ApiOperation({
     summary: 'Save a complete app config (superadmin)',
@@ -103,7 +104,7 @@ export class AppConfigController {
   })
   @ApiResponse({
     status: 400,
-    description: 'Invalid field, or minimumVersion above latestVersion',
+    description: 'Invalid field or minimumVersion above latestVersion',
   })
   @ApiResponse({ status: 404, description: 'No config has been saved yet' })
   @ApiOperation({

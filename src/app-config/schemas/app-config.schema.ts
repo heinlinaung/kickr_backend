@@ -63,6 +63,20 @@ export class MajorUpdate {
 const MajorUpdateSchema = SchemaFactory.createForClass(MajorUpdate);
 
 /**
+ * Switches for features the apps can show or hide without a release. Off by
+ * default, so a feature stays hidden until a superadmin turns it on.
+ */
+@Schema({ _id: false })
+export class Features {
+  @Prop({ default: false })
+  tournament: boolean;
+
+  @Prop({ default: false })
+  groupChallenge: boolean;
+}
+const FeaturesSchema = SchemaFactory.createForClass(Features);
+
+/**
  * Client app configuration — what the mobile apps read at startup to decide
  * whether to prompt for (or force) an update.
  *
@@ -85,6 +99,13 @@ export class AppConfig {
 
   @Prop({ type: MajorUpdateSchema, required: true })
   majorUpdate: MajorUpdate;
+
+  /**
+   * Revisions saved before this field existed have none; the service reads
+   * them as every feature off.
+   */
+  @Prop({ type: FeaturesSchema, default: () => ({}) })
+  features: Features;
 
   /** The superadmin who saved this revision. */
   @Prop({ type: Types.ObjectId, ref: 'User', default: null })

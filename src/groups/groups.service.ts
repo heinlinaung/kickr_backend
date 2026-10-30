@@ -233,9 +233,18 @@ export class GroupsService {
       ? await this.financeService.buildGroupFund(groupId)
       : null;
 
+    // Active = not yet COMPLETED or CANCELLED; the list itself is
+    // GET /tournaments/group/:groupId.
+    const tournamentCount = await this.tournamentModel.countDocuments({
+      groupId: new Types.ObjectId(groupId),
+      status: { $nin: ['COMPLETED', 'CANCELLED'] },
+    });
+
     return {
       ...payload,
       fund,
+      hasTournament: tournamentCount > 0,
+      tournamentCount,
       userRole: member?.role ?? null,
       memberStatus: member?.status ?? null,
       // Whether the CALLER holds this group's cashier seat, so the client can

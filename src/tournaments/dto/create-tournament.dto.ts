@@ -1,6 +1,14 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsString, IsOptional, IsEnum, IsNumber, IsDateString, MinLength } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsEnum,
+  IsNumber,
+  IsDateString,
+  MinLength,
+} from 'class-validator';
 import { Type } from 'class-transformer';
+import { TOURNAMENT_FORMATS } from '../tournament.constants';
 
 export class CreateTournamentDto {
   @ApiProperty({ example: 'Summer Cup 2026', minLength: 2 })
@@ -13,9 +21,26 @@ export class CreateTournamentDto {
   @IsString()
   groupId?: string;
 
-  @ApiProperty({ enum: ['knockout', 'league'], example: 'knockout' })
+  @ApiProperty({
+    enum: TOURNAMENT_FORMATS,
+    required: false,
+    default: 'KNOCKOUT',
+    description:
+      'Settings start at their defaults; change them with PUT /tournaments/{id}/format',
+  })
+  @IsOptional()
+  @IsEnum(TOURNAMENT_FORMATS)
+  format?: (typeof TOURNAMENT_FORMATS)[number];
+
+  @ApiProperty({
+    enum: ['knockout', 'league'],
+    required: false,
+    deprecated: true,
+    description: 'Use `format`',
+  })
+  @IsOptional()
   @IsEnum(['knockout', 'league'])
-  type: string;
+  type?: string;
 
   @ApiProperty({ example: 8 })
   @Type(() => Number)

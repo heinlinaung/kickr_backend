@@ -28,7 +28,29 @@ export class PublicGroupsController {
       'PUBLIC — no token required, and the full document is returned ' +
       'whether the group is private or not. With a valid token the response ' +
       "also carries the caller's `userRole`, `memberStatus` and `isCashier`;" +
-      ' anonymous callers get null/false for those.',
+      ' anonymous callers get null/false for those.\n\n' +
+      "`hasTournament` / `tournamentCount` count the group's active " +
+      'tournaments (any status but `COMPLETED` or `CANCELLED`), so the ' +
+      'client can show a Tournaments entry without another call. List them ' +
+      'with `GET /tournaments/group/{groupId}`.',
+  })
+  @ApiResponse({
+    status: 200,
+    description: 'Group document plus caller flags and tournament summary',
+    schema: {
+      example: {
+        data: {
+          _id: '665f1c2e8b3a4d0012a3b4c5',
+          name: 'Sunday Ballers',
+          fund: null,
+          hasTournament: true,
+          tournamentCount: 2,
+          userRole: 'admin',
+          memberStatus: 'approved',
+          isCashier: false,
+        },
+      },
+    },
   })
   @ApiResponse({ status: 404, description: 'No such group' })
   findOne(@Param('id') id: string, @CurrentUser() user: any) {

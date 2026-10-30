@@ -68,6 +68,7 @@ async function bootstrap() {
   moveTag('Admin', 'after', 'Event invitations');
   moveTag('Challenges', 'after', 'Groups');
   moveTag('Tournaments', 'before', 'Awards');
+  moveTag('Tournament invitations', 'after', 'Tournaments');
   document.tags = tagOrder.map((name) => ({ name }));
   // Within a tag, Swagger UI lists operations in `paths` order.
   const movePaths = (match: (p: string) => boolean, where: 'before' | 'after', anchor: string) => {

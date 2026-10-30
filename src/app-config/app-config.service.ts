@@ -10,17 +10,20 @@ import {
   AppConfig,
   AppConfigDocument,
   AppUpdate,
+  Features,
   MajorUpdate,
 } from './schemas/app-config.schema';
 import {
   AppUpdateDto,
   CreateAppConfigDto,
+  FeaturesDto,
   MajorUpdateDto,
 } from './dto/create-app-config.dto';
 import { UpdateAppConfigDto } from './dto/update-app-config.dto';
 
-const PUBLIC_FIELDS = 'revision appUpdate majorUpdate createdAt -_id';
-const ADMIN_FIELDS = 'revision appUpdate majorUpdate updatedBy createdAt -_id';
+const PUBLIC_FIELDS = 'revision appUpdate majorUpdate features createdAt -_id';
+const ADMIN_FIELDS =
+  'revision appUpdate majorUpdate features updatedBy createdAt -_id';
 
 const PLATFORMS = ['ios', 'android'] as const;
 
@@ -45,7 +48,7 @@ export class AppConfigService {
       .select(PUBLIC_FIELDS)
       .lean();
     if (!latest) throw new NotFoundException('App config has not been set');
-    return latest;
+    return withReadDefaults(latest);
   }
 
   /**
@@ -54,12 +57,13 @@ export class AppConfigService {
    */
   async findHistory(limit = 20, before?: number) {
     const filter = before !== undefined ? { revision: { $lt: before } } : {};
-    return this.appConfigModel
+    const rows = await this.appConfigModel
       .find(filter)
       .sort({ revision: -1 })
       .limit(limit)
       .select(ADMIN_FIELDS)
       .lean();
+    return rows.map(withReadDefaults);
   }
 
   async findRevision(revision: number) {
@@ -70,7 +74,7 @@ export class AppConfigService {
     if (!row) {
       throw new NotFoundException(`App config revision ${revision} not found`);
     }
-    return row;
+    return withReadDefaults(row);
   }
 
   // --- Admin writes ------------------------------------------------------
@@ -84,6 +88,7 @@ export class AppConfigService {
       {
         appUpdate: withAppUpdateDefaults(dto.appUpdate),
         majorUpdate: withMajorUpdateDefaults(dto.majorUpdate),
+        features: withFeatureDefaults(dto.features),
       },
       userId,
     );
@@ -118,11 +123,20 @@ export class AppConfigService {
       };
     }
 
-    return this.insertRevision({ appUpdate, majorUpdate }, userId);
+    const features = {
+      ...withFeatureDefaults(current.features),
+      ...defined(dto.features),
+    };
+
+    return this.insertRevision({ appUpdate, majorUpdate, features }, userId);
   }
 
   private async insertRevision(
-    config: { appUpdate: AppUpdate; majorUpdate: MajorUpdate },
+    config: {
+      appUpdate: AppUpdate;
+      majorUpdate: MajorUpdate;
+      features: Features;
+    },
     userId: string,
   ) {
     for (const platform of PLATFORMS) {
@@ -161,6 +175,22 @@ export class AppConfigService {
       }
     }
   }
+}
+
+export function withFeatureDefaults(
+  features?: FeaturesDto | Features,
+): Features {
+  return {
+    tournament: features?.tournament ?? false,
+    groupChallenge: features?.groupChallenge ?? false,
+  };
+}
+
+/** Fills the fields that revisions saved before they existed lack. */
+function withReadDefaults<T extends { features?: Features }>(
+  row: T,
+): T & { features: Features } {
+  return { ...row, features: withFeatureDefaults(row.features) };
 }
 
 function withAppUpdateDefaults(appUpdate: AppUpdateDto): AppUpdate {

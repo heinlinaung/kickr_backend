@@ -17,13 +17,15 @@ export class ConfigurationController {
     status: 200,
     description:
       '`{ config: { revision, appUpdate, majorUpdate, createdAt } | null, ' +
+      'features: { tournament, groupChallenge }, ' +
       'regions: { myanmar: [{ id, name }], ... }, ' +
       'sportTypes: [{ value, name, subTypes, playerRoles, sortOrder, matchProvided }] }`',
   })
   @ApiOperation({
     summary: 'App startup configuration (public)',
     description:
-      'The latest app config (`null` until one is saved), regions grouped ' +
+      'The latest app config (`null` until one is saved), the feature ' +
+      'switches (all `false` until a config is saved), regions grouped ' +
       'by country id with countries in display order, and the sport types ' +
       'in display order.',
   })
