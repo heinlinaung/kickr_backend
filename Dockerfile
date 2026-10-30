@@ -50,7 +50,7 @@ EXPOSE 3000
 # is 30s, so one slow DNS/TLS round trip plus a Nest retry already exceeds 30s.
 # A shorter period would mark a perfectly healthy container unhealthy on boot.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-  CMD node -e "require('http').get('http://127.0.0.1:'+(process.env.PORT||3000)+'/api-docs-json',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))"
+  CMD node -e "require('http').get('http://127.0.0.1:'+(process.env.PORT||3000)+'/health',r=>process.exit(r.statusCode<400?0:1)).on('error',()=>process.exit(1))"
 
 # dist/src/main, NOT dist/main: tsconfig sets no `rootDir`, so TypeScript infers
 # it from the common ancestor of all inputs. Because scripts/ is compiled

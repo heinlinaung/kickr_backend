@@ -28,6 +28,7 @@ import { AwardsModule } from './awards/awards.module';
 import { AppConfigModule } from './app-config/app-config.module';
 import { CountriesModule } from './countries/countries.module';
 import { ConfigurationModule } from './configuration/configuration.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -85,6 +86,7 @@ import { ConfigurationModule } from './configuration/configuration.module';
     AppConfigModule,
     CountriesModule,
     ConfigurationModule,
+    HealthModule,
   ],
   providers: [
     // Removed with ThrottlerModule above. It CANNOT be left registered on its
