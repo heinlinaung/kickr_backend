@@ -176,13 +176,19 @@ jobs:
             # perfectly healthy container.
             #
             # Curling the published port tests the thing that actually matters
-            # anyway: that the API answers. /api-docs-json only responds once
-            # Nest has finished bootstrapping, which for this app means Mongo
-            # connected — it binds no port at all until then.
+            # anyway: that the API answers. /health only responds once Nest has
+            # finished bootstrapping, which for this app means Mongo connected —
+            # it binds no port at all until then.
+            #
+            # This probes /health, NOT /api-docs-json. It used to be the latter,
+            # which broke when basic auth went in front of the docs: the app
+            # came up perfectly and answered every probe with 401 until the loop
+            # timed out. A liveness probe must not depend on an endpoint that
+            # can be gated for reasons unrelated to liveness.
             echo "Waiting for the API to respond..."
             ready=""
             for i in $(seq 1 40); do
-              if curl -fsS -o /dev/null --max-time 5 http://127.0.0.1:3000/api-docs-json; then
+              if curl -fsS -o /dev/null --max-time 5 http://127.0.0.1:3000/health; then
                 echo "API responding after ${i} checks."
                 ready=1
                 break
