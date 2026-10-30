@@ -98,6 +98,37 @@ describe('AppConfigService', () => {
     });
   });
 
+  describe('features', () => {
+    it('defaults to every feature off', async () => {
+      const out = await service.create(CONFIG, USER_ID);
+      expect(out.features).toEqual({
+        tournament: false,
+        groupChallenge: false,
+      });
+    });
+
+    it('PATCH merges flags', async () => {
+      await service.create(
+        { ...CONFIG, features: { tournament: true } },
+        USER_ID,
+      );
+      const out = await service.update(
+        { features: { groupChallenge: true } },
+        USER_ID,
+      );
+      expect(out.features).toEqual({ tournament: true, groupChallenge: true });
+    });
+
+    it('reads revisions saved before the field existed as defaults', async () => {
+      rows.push({ ...CONFIG, revision: 1 });
+      const out = await service.findLatest();
+      expect(out.features).toEqual({
+        tournament: false,
+        groupChallenge: false,
+      });
+    });
+  });
+
   describe('update', () => {
     it('404s when there is no config to update', async () => {
       await expect(service.update({}, USER_ID)).rejects.toBeInstanceOf(
@@ -121,6 +152,10 @@ describe('AppConfigService', () => {
       });
       expect(out.appUpdate.android).toEqual(platformUpdate);
       expect(out.majorUpdate).toEqual(CONFIG.majorUpdate);
+      expect(out.features).toEqual({
+        tournament: false,
+        groupChallenge: false,
+      });
       expect(rows[0].appUpdate.ios.latestVersion).toBe('1.0.1');
     });
   });

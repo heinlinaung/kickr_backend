@@ -21,6 +21,16 @@ export class HttpExceptionFilter implements ExceptionFilter {
         ? { message: exceptionResponse }
         : (exceptionResponse as object);
 
+    // A 429 that knows when the window frees up says so the standard way.
+    const retryAfter = (error as { retryAfterSeconds?: unknown })
+      .retryAfterSeconds;
+    if (
+      status === HttpStatus.TOO_MANY_REQUESTS &&
+      typeof retryAfter === 'number'
+    ) {
+      response.setHeader('Retry-After', String(retryAfter));
+    }
+
     response.status(status).json({
       statusCode: status,
       timestamp: new Date().toISOString(),

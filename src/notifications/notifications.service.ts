@@ -20,7 +20,7 @@ import {
 export interface NotifyPayload {
   title: string;
   body: string;
-  type: 'event' | 'group';
+  type: 'event' | 'group' | 'tournament';
   refId: string;
 }
 
@@ -175,7 +175,7 @@ export class NotificationsService {
     userId: string;
     title: string;
     body: string;
-    type: 'event' | 'group';
+    type: 'event' | 'group' | 'tournament';
     refId: string;
   }) {
     return this.notifModel.create({

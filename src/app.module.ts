@@ -28,6 +28,7 @@ import { AwardsModule } from './awards/awards.module';
 import { AppConfigModule } from './app-config/app-config.module';
 import { CountriesModule } from './countries/countries.module';
 import { ConfigurationModule } from './configuration/configuration.module';
+import { FriendsModule } from './friends/friends.module';
 import { HealthModule } from './health/health.module';
 
 @Module({
@@ -86,6 +87,7 @@ import { HealthModule } from './health/health.module';
     AppConfigModule,
     CountriesModule,
     ConfigurationModule,
+    FriendsModule,
     HealthModule,
   ],
   providers: [

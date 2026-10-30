@@ -4,7 +4,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { GlobalFootballTeamsService } from './global-football-teams.service';
 
-@ApiTags('Global football teams')
+@ApiTags('App config')
 @ApiBearerAuth()
 @Controller('global-football-teams')
 @UseGuards(JwtAuthGuard)

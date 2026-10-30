@@ -17,3 +17,8 @@
 export function groupDeepLink(groupId: string): string {
   return `kickrsport://group/${groupId}`;
 }
+
+/** The tournament details screen: `kickrsport://tournament/<tournamentId>`. */
+export function tournamentDeepLink(tournamentId: string): string {
+  return `kickrsport://tournament/${tournamentId}`;
+}

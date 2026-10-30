@@ -4,7 +4,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ShuffleService } from './shuffle.service';
 
-@ApiTags('Shuffle')
+@ApiTags('Events')
 @ApiBearerAuth()
 @Controller('events/:id/shuffle')
 @UseGuards(JwtAuthGuard)

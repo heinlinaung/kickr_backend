@@ -7,6 +7,7 @@ import { SportTypesService } from '../sport-types/sport-types.service';
 import { ConfigurationService } from './configuration.service';
 
 describe('ConfigurationService', () => {
+  const features = { tournament: true, groupChallenge: false };
   const config = { revision: 2, appUpdate: {}, majorUpdate: {} };
   const regions = { myanmar: [{ id: 'yangon', name: 'Yangon' }] };
   const sportTypes = [{ value: 'football', subTypes: ['futsal'] }];
@@ -32,18 +33,20 @@ describe('ConfigurationService', () => {
   });
 
   it('combines config, regions and sport types', async () => {
-    appConfig.findLatest.mockResolvedValue(config);
+    appConfig.findLatest.mockResolvedValue({ ...config, features });
     await expect(service.find()).resolves.toEqual({
       config,
+      features,
       regions,
       sportTypes,
     });
   });
 
-  it('returns config: null before any config is saved', async () => {
+  it('returns config: null and every feature off before any config is saved', async () => {
     appConfig.findLatest.mockRejectedValue(new NotFoundException());
     await expect(service.find()).resolves.toEqual({
       config: null,
+      features: { tournament: false, groupChallenge: false },
       regions,
       sportTypes,
     });

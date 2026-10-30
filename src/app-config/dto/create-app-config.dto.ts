@@ -97,6 +97,18 @@ export class MajorUpdateDto {
   android: MajorUpdatePlatformDto;
 }
 
+export class FeaturesDto {
+  @ApiProperty({ example: true, required: false, default: false })
+  @IsOptional()
+  @IsBoolean()
+  tournament?: boolean;
+
+  @ApiProperty({ example: false, required: false, default: false })
+  @IsOptional()
+  @IsBoolean()
+  groupChallenge?: boolean;
+}
+
 /** A complete config. Saving it makes it the new latest revision. */
 export class CreateAppConfigDto {
   @ApiProperty({ type: AppUpdateDto })
@@ -108,4 +120,14 @@ export class CreateAppConfigDto {
   @ValidateNested()
   @Type(() => MajorUpdateDto)
   majorUpdate: MajorUpdateDto;
+
+  @ApiProperty({
+    type: FeaturesDto,
+    required: false,
+    description: 'Feature switches; any left out are off',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => FeaturesDto)
+  features?: FeaturesDto;
 }

@@ -1,6 +1,9 @@
 // src/configuration/configuration.service.ts
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { AppConfigService } from '../app-config/app-config.service';
+import {
+  AppConfigService,
+  withFeatureDefaults,
+} from '../app-config/app-config.service';
 import { CountriesService } from '../countries/countries.service';
 import { SportTypesService } from '../sport-types/sport-types.service';
 
@@ -18,7 +21,8 @@ export class ConfigurationService {
    *
    * `config` is null until a superadmin saves the first revision, so the rest
    * of the payload stays usable on a fresh deploy instead of the whole call
-   * failing with 404.
+   * failing with 404. `features` is always present — every feature off until
+   * a config is saved — so the apps can read it without a null check.
    */
   async find() {
     const [config, { regions }, sportTypes] = await Promise.all([
@@ -29,6 +33,15 @@ export class ConfigurationService {
       this.countries.findRegionsMap(),
       this.sportTypes.findAll(),
     ]);
-    return { config, regions, sportTypes };
+    if (!config) {
+      return {
+        config: null,
+        features: withFeatureDefaults(),
+        regions,
+        sportTypes,
+      };
+    }
+    const { features, ...rest } = config;
+    return { config: rest, features, regions, sportTypes };
   }
 }

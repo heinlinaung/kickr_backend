@@ -9,7 +9,11 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { APP_VERSION, APP_VERSION_MESSAGE } from './create-app-config.dto';
+import {
+  APP_VERSION,
+  APP_VERSION_MESSAGE,
+  FeaturesDto,
+} from './create-app-config.dto';
 
 // Every field optional at every level: a PATCH sends only what changes, and
 // the service fills the rest from the current latest revision.
@@ -111,4 +115,11 @@ export class UpdateAppConfigDto {
   @ValidateNested()
   @Type(() => UpdateMajorUpdateDto)
   majorUpdate?: UpdateMajorUpdateDto;
+
+  // FeaturesDto is already all-optional; flags left out keep their value.
+  @ApiProperty({ type: FeaturesDto, required: false })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => FeaturesDto)
+  features?: FeaturesDto;
 }
