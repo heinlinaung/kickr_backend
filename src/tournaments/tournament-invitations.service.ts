@@ -21,6 +21,7 @@ import { TournamentsService } from './tournaments.service';
 import {
   APPROVED_REGISTRATION,
   PRE_START_STATUSES,
+  isRegistrationOpen,
 } from './tournament.constants';
 import { TournamentErrorCode, tournamentError } from './tournaments.errors';
 import {
@@ -282,7 +283,7 @@ export class TournamentInvitationsService {
       throw this.closed();
     }
     // Pre-start but not open (DRAFT, closed for now): it may reopen.
-    if (tournament.status !== 'REGISTRATION_OPEN') throw this.closed();
+    if (!isRegistrationOpen(tournament)) throw this.closed();
     if (tournament.currentTeams >= tournament.maxTeams) {
       throw tournamentError('TOURNAMENT_FULL', 'This tournament is full');
     }

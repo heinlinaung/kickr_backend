@@ -290,6 +290,11 @@ describe('GroupsService — cashier & payment details', () => {
       const filter = tournamentModel.countDocuments.mock.calls.at(-1)[0];
       expect(filter.groupId.toString()).toBe(GROUP_ID);
       expect(filter.status).toEqual({ $nin: ['COMPLETED', 'CANCELLED'] });
+      // Expired tournaments (past endDate) don't count either.
+      expect(filter.$or).toEqual([
+        { endDate: null },
+        { endDate: { $gt: expect.any(Date) } },
+      ]);
     });
 
     it('is false with none', async () => {

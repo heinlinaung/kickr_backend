@@ -779,9 +779,20 @@ describe('EventsService — lifecycle', () => {
       await service.listByGroup(GROUP_ID, STRANGER);
 
       const filter = eventModel.find.mock.calls[0][0];
-      expect(filter.groupId.toString()).toBe(GROUP_ID);
+      expect(filter.$or[0].groupId.toString()).toBe(GROUP_ID);
       // no isPublic constraint for members
       expect(filter).not.toHaveProperty('isPublic');
+    });
+
+    it("includes challenge events where the group is the opponent, only once accepted", async () => {
+      memberModel.findOne.mockResolvedValue({ role: 'member' });
+
+      await service.listByGroup(GROUP_ID, STRANGER);
+
+      const opponentBranch = eventModel.find.mock.calls[0][0].$or[1];
+      expect(opponentBranch.type).toBe('challenge');
+      expect(opponentBranch.opponentGroupId.toString()).toBe(GROUP_ID);
+      expect(opponentBranch.proposedStatus).toBe('accepted');
     });
 
     it('restricts a non-member to public events only', async () => {
@@ -790,6 +801,27 @@ describe('EventsService — lifecycle', () => {
       await service.listByGroup(GROUP_ID, STRANGER);
 
       expect(eventModel.find.mock.calls[0][0].isPublic).toBe(true);
+    });
+
+    it("also shows a non-member the events they are invited to or joined", async () => {
+      memberModel.findOne.mockResolvedValue(null);
+      const EVENT = new Types.ObjectId();
+      playerModel.find = jest.fn().mockReturnValue({
+        select: () => ({ lean: () => Promise.resolve([{ eventId: EVENT }]) }),
+      });
+
+      await service.listByGroup(GROUP_ID, STRANGER);
+
+      expect(playerModel.find.mock.calls[0][0].status).toEqual({
+        $in: ['joined', 'invited'],
+      });
+      const filter = eventModel.find.mock.calls[0][0];
+      expect(filter).not.toHaveProperty('isPublic');
+      expect(filter.$or[0].groupId.toString()).toBe(GROUP_ID);
+      expect(filter.$and[0].$or).toEqual([
+        { _id: { $in: [EVENT] } },
+        { isPublic: true },
+      ]);
     });
 
     it('requires the membership to be approved, not merely pending', async () => {
@@ -818,6 +850,20 @@ describe('EventsService — lifecycle', () => {
         ).rejects.toBeInstanceOf(ForbiddenException);
         // The gate must refuse before querying events at all.
         expect(eventModel.find).not.toHaveBeenCalled();
+      });
+
+      it('lets an invited non-member through, showing only their events', async () => {
+        privateGroup();
+        memberModel.findOne.mockResolvedValue(null);
+        const EVENT = new Types.ObjectId();
+        playerModel.find = jest.fn().mockReturnValue({
+          select: () => ({ lean: () => Promise.resolve([{ eventId: EVENT }]) }),
+        });
+
+        await service.listByGroup(GROUP_ID, STRANGER);
+
+        const filter = eventModel.find.mock.calls[0][0];
+        expect(filter.$and[0].$or).toEqual([{ _id: { $in: [EVENT] } }]);
       });
 
       it('shows an approved member every event', async () => {

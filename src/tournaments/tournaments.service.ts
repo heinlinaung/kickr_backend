@@ -26,7 +26,16 @@ import { Group, GroupDocument } from '../groups/schemas/group.schema';
 import { CreateTournamentDto } from './dto/create-tournament.dto';
 import { RegisterTeamDto } from './dto/register-team.dto';
 import { TournamentPhasesService } from './tournament-phases.service';
-import { TOURNAMENT_STATUSES, TournamentFormat } from './tournament.constants';
+import {
+  TOURNAMENT_STATUSES,
+  TournamentFormat,
+  activeTournamentFilter,
+  computeEndDate,
+  computeRegistrationCloseAt,
+  historyTournamentFilter,
+  isRegistrationOpen,
+  registrationDeadlineFilter,
+} from './tournament.constants';
 import type { TournamentStatus } from './tournament.constants';
 import { JoinTournamentByCodeDto } from './dto/join-by-code.dto';
 import { tournamentError } from './tournaments.errors';
@@ -70,9 +79,33 @@ export class TournamentsService {
         );
     }
     const { format, type, ...rest } = dto;
+    const now = new Date();
+    const startDate = dto.startDate ? new Date(dto.startDate) : undefined;
+    // Days count from the start date, or from now when none is set.
+    const endDate = dto.totalDays
+      ? computeEndDate(startDate ?? now, dto.totalDays)
+      : null;
+    // Registration opens on creation, so its days count from now.
+    const registrationCloseAt = dto.registerCloseDuration
+      ? computeRegistrationCloseAt(now, dto.registerCloseDuration)
+      : null;
+    if (registrationCloseAt && startDate && registrationCloseAt > startDate) {
+      throw tournamentError(
+        'INVALID_REQUEST',
+        'Registration must close on or before the start date',
+      );
+    }
+    if (registrationCloseAt && endDate && registrationCloseAt > endDate) {
+      throw tournamentError(
+        'INVALID_REQUEST',
+        'Registration must close on or before the tournament ends',
+      );
+    }
     const tournament = await this.tournamentModel.create({
       ...rest,
-      startDate: dto.startDate ? new Date(dto.startDate) : undefined,
+      startDate,
+      endDate,
+      registrationCloseAt,
       groupId: dto.groupId ? new Types.ObjectId(dto.groupId) : null,
       createdBy: new Types.ObjectId(userId),
     });
@@ -96,12 +129,46 @@ export class TournamentsService {
   }
 
   /**
-   * A group's tournaments, newest first, for the group detail screen.
+   * A group's running tournaments, newest first, for the group detail
+   * screen. Finished (COMPLETED / CANCELLED) and expired (past `endDate`)
+   * ones are left out; they are in `listGroupHistory`.
+   */
+  async listByGroup(groupId: string, userId: string, status?: string) {
+    return this.listGroupTournaments(
+      groupId,
+      userId,
+      activeTournamentFilter(),
+      status,
+      { createdAt: -1 },
+    );
+  }
+
+  /**
+   * A group's past tournaments: COMPLETED, CANCELLED or past their
+   * `endDate`. Most recently ended first.
+   */
+  async listGroupHistory(groupId: string, userId: string, status?: string) {
+    return this.listGroupTournaments(
+      groupId,
+      userId,
+      historyTournamentFilter(),
+      status,
+      { endDate: -1, updatedAt: -1 },
+    );
+  }
+
+  /**
    * Same gate as the group's events: a private group's tournaments are only
    * visible to approved members (403 otherwise, so the client can show a
    * join prompt instead of an empty list).
    */
-  async listByGroup(groupId: string, userId: string, status?: string) {
+  private async listGroupTournaments(
+    groupId: string,
+    userId: string,
+    scope: Record<string, unknown>,
+    status: string | undefined,
+    sort: Record<string, 1 | -1>,
+  ) {
     if (!Types.ObjectId.isValid(groupId)) {
       throw new BadRequestException('Invalid group id');
     }
@@ -135,7 +202,12 @@ export class TournamentsService {
       filter.status = status;
     }
 
-    return this.tournamentModel.find(filter).sort({ createdAt: -1 }).lean();
+    // `scope` may carry its own `status` / `$or`; AND it in so neither
+    // overwrites the caller's status filter.
+    return this.tournamentModel
+      .find({ $and: [filter, scope] })
+      .sort(sort)
+      .lean();
   }
 
   async registerTeam(
@@ -143,11 +215,13 @@ export class TournamentsService {
     userId: string,
     dto: RegisterTeamDto,
   ) {
-    // Atomic: only increment if status='registering' and currentTeams < maxTeams
+    // Atomic: only increment while registration is open (status and
+    // deadline) and currentTeams < maxTeams
     const updated = await this.tournamentModel.findOneAndUpdate(
       {
         _id: tournamentId,
         status: 'REGISTRATION_OPEN',
+        ...registrationDeadlineFilter(),
         $expr: { $lt: ['$currentTeams', '$maxTeams'] },
       },
       { $inc: { currentTeams: 1 } },
@@ -157,7 +231,7 @@ export class TournamentsService {
       const t = await this.tournamentModel.findById(tournamentId).lean();
       if (!t) throw new NotFoundException('Tournament not found');
       throw new BadRequestException(
-        t.status !== 'REGISTRATION_OPEN'
+        !isRegistrationOpen(t)
           ? 'Tournament is not accepting registrations'
           : 'Tournament is full',
       );
@@ -236,7 +310,9 @@ export class TournamentsService {
     if (!normalized) return null;
     const t = await this.tournamentModel
       .findOne({ inviteCode: normalized })
-      .select('title format status startDate maxTeams currentTeams groupId')
+      .select(
+        'title format status startDate registrationCloseAt maxTeams currentTeams groupId',
+      )
       .lean();
     if (!t) return null;
     const host = t.groupId
@@ -248,10 +324,10 @@ export class TournamentsService {
       format: t.format,
       status: t.status,
       startDate: t.startDate ?? null,
+      registrationCloseAt: t.registrationCloseAt ?? null,
       maxTeams: t.maxTeams,
       currentTeams: t.currentTeams,
-      registrationOpen:
-        t.status === 'REGISTRATION_OPEN' && t.currentTeams < t.maxTeams,
+      registrationOpen: isRegistrationOpen(t) && t.currentTeams < t.maxTeams,
       hostGroup: host
         ? { _id: host._id, name: host.name, logo: host.logo ?? null }
         : null,

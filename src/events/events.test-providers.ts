@@ -65,7 +65,10 @@ export const TEST_SPORT_TYPES = [
   // exercise the shorter table.
   {
     value: 'football',
-    subTypes: ['futsal', 'stadium'],
+    subTypes: [
+      { value: 'futsal', name: 'Futsal', sortOrder: 1 },
+      { value: 'stadium', name: 'Stadium', sortOrder: 2 },
+    ],
     sortOrder: 1,
     matchProvided: true,
   },
@@ -94,15 +97,16 @@ export function sportTypesDouble() {
         );
       }
       if (!subType) return;
-      if (!sport.subTypes.includes(subType)) {
-        if (sport.subTypes.length === 0) {
+      const subTypes = sport.subTypes.map((st) => st.value);
+      if (!subTypes.includes(subType)) {
+        if (subTypes.length === 0) {
           throw new BadRequestException(
             `subType is not valid for sportType '${sportType}'`,
           );
         }
         throw new BadRequestException(
           `Unknown subType '${subType}' for sportType '${sportType}'. ` +
-            `Valid values: ${sport.subTypes.join(', ')}`,
+            `Valid values: ${subTypes.join(', ')}`,
         );
       }
     }),

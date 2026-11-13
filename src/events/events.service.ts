@@ -52,7 +52,10 @@ import { awardError } from '../awards/awards.errors';
 import { CancelEventDto } from './dto/cancel-event.dto';
 import { CreateEventTemplateDto } from './dto/create-event-template.dto';
 import { LocationsService } from '../locations/locations.service';
-import { SportTypesService } from '../sport-types/sport-types.service';
+import {
+  SportTypesService,
+  subTypeValues,
+} from '../sport-types/sport-types.service';
 import { PlansService } from '../plans/plans.service';
 import { weekOf } from '../plans/plans';
 import { ImageKitService } from '../common/upload/imagekit.service';
@@ -99,6 +102,7 @@ import { ReviewProposalDto } from './dto/review-proposal.dto';
 import { AssignPlayersDto } from './dto/assign-players.dto';
 import { ResubmitProposalDto } from './dto/resubmit-proposal.dto';
 import { RespondInvitationDto } from './dto/respond-invitation.dto';
+import { SideReadyDto } from './dto/side-ready.dto';
 import { JoinAnonymousDto } from './dto/join-anonymous.dto';
 import {
   Challenge,
@@ -625,6 +629,12 @@ export class EventsService {
       status: 'approved',
     });
 
+    // A non-member may still be on the roster of — or hold a pending
+    // invitation to — one of this group's events (e.g. a challenge match
+    // where they were invited from the other side). Those events are theirs
+    // to see, so they are surfaced alongside the public ones.
+    const rosterEventIds = member ? [] : await this.rosterEventIds(userId);
+
     // A private group hides its whole schedule, not just its private events:
     // being able to see that the group exists (it is searchable) must not also
     // reveal when and where it plays. Approval is the gate — a pending request
@@ -633,17 +643,44 @@ export class EventsService {
     // 403 rather than an empty list on purpose. The caller CAN see this group
     // in search, so the honest answer is "join to see this", which also lets
     // the client render a join prompt instead of a misleading "no events yet".
-    if (group.isPrivate && !member) {
+    // A caller who is invited to / joined one of its events is let through,
+    // but sees only those events (the isPublic arm is dropped below).
+    if (group.isPrivate && !member && !rosterEventIds.length) {
       throw new ForbiddenException(
         'This group is private — join it to see its events',
       );
     }
 
+    const groupOid = new Types.ObjectId(groupId);
     const filter: Record<string, unknown> = {
-      groupId: new Types.ObjectId(groupId),
+      // The group's own events, plus challenge matches where this group is
+      // the OPPONENT — but only once it has accepted the proposal. A pending
+      // or rejected proposal stays off the opponent's schedule (it is
+      // reviewed via the challenge flow, not listed as a fixture).
+      $or: [
+        { groupId: groupOid },
+        {
+          type: 'challenge',
+          opponentGroupId: groupOid,
+          proposedStatus: 'accepted',
+        },
+      ],
     };
-    // A public group still hides its individually-private events.
-    if (!member) filter.isPublic = true;
+    // A public group still hides its individually-private events. Challenge
+    // events are always private, so non-members never see the opponent rows
+    // — unless they are invited to / on the roster of that specific event.
+    if (!member) {
+      if (!rosterEventIds.length) {
+        filter.isPublic = true;
+      } else {
+        const visible: Record<string, unknown>[] = [
+          { _id: { $in: rosterEventIds } },
+        ];
+        if (!group.isPrivate) visible.push({ isPublic: true });
+        // $and so this disjunction does not overwrite the group-scope $or.
+        filter.$and = [{ $or: visible }];
+      }
+    }
 
     if (status !== undefined) {
       if (!isEventStatus(status)) {
@@ -1412,6 +1449,7 @@ export class EventsService {
 
     player.status = 'cancelled';
     await player.save();
+    if (player.groupId) await this.clearSideReady(event, player.groupId);
 
     // Same guarded decrement as `leave`: the $gt keeps a double-removal from
     // driving the count negative.
@@ -1460,9 +1498,38 @@ export class EventsService {
       );
     }
 
+    // A challenge enters ready_to_play only through POST /events/:id/side/ready
+    // — when BOTH sides have declared their squads final. A single organizer
+    // could otherwise kick the match into its build stage alone.
+    if (
+      event.type === 'challenge' &&
+      event.status === 'join' &&
+      to === 'ready_to_play'
+    ) {
+      throw new BadRequestException(
+        'A challenge event moves to ready_to_play once BOTH groups mark ' +
+          'themselves ready — use POST /events/:id/side/ready',
+      );
+    }
+
     const from = event.status;
     event.status = to;
+    // Back to join: the squads are open again, so neither side is ready any
+    // more and the auto-built side teams no longer describe the roster.
+    const revertedChallenge =
+      event.type === 'challenge' && from === 'ready_to_play' && to === 'join';
+    if (revertedChallenge) {
+      event.hostReadyAt = null;
+      event.opponentReadyAt = null;
+    }
     await event.save();
+    if (revertedChallenge) {
+      await this.teamModel.deleteMany({ eventId: event._id });
+      await this.playerModel.updateMany(
+        { eventId: event._id },
+        { $set: { team: null } },
+      );
+    }
 
     // Every lifecycle move is announced to the people actually playing. The
     // message depends on direction as well as target: a revert out of
@@ -1801,7 +1868,7 @@ export class EventsService {
    */
   async applyGroupSportType(groupId: string, sportType: string) {
     const sport = await this.sportTypesService.findByValue(sportType);
-    const validSubTypes = sport?.subTypes ?? [];
+    const validSubTypes = sport ? subTypeValues(sport) : [];
     const groupObjectId = new Types.ObjectId(groupId);
 
     await this.eventModel.updateMany(
@@ -1941,6 +2008,12 @@ export class EventsService {
 
     const eventObjectId = event._id;
     let names = this.resolveTeamNames(dto);
+    // Per-team owning group, parallel to `names`. A normal event's teams all
+    // belong to the event's group; a challenge's two teams belong one to each
+    // side, so each side's admins can build their own squad.
+    let teamGroupIds: (Types.ObjectId | null)[] = names.map(
+      () => event.groupId ?? null,
+    );
     // A challenge is one group against another: exactly two teams, named by
     // the jersey colors the two sides agreed in the proposal. Challenger's
     // color first — the shuffle relies on this order to keep the sides.
@@ -1954,6 +2027,20 @@ export class EventsService {
         event.challengeColors?.challengerColor ?? String(TEAM_COLOURS[0]),
         event.challengeColors?.challengedColor ?? String(TEAM_COLOURS[1]),
       ];
+      // Sides come from the CHALLENGE, not groupId/opponentGroupId: the
+      // proposer (groupId) may be either the challenger or the challenged.
+      const challenge = event.challengeId
+        ? await this.challengeModel
+            .findById(event.challengeId)
+            .select('challengerGroupId challengedGroupId')
+            .lean()
+        : null;
+      if (challenge) {
+        teamGroupIds = [
+          challenge.challengerGroupId,
+          challenge.challengedGroupId,
+        ];
+      }
     }
 
     // Record the organizer's choice on the event, so `event.teamCount` and the
@@ -1983,9 +2070,9 @@ export class EventsService {
     );
 
     const teams = await this.teamModel.insertMany(
-      names.map((name) => ({
+      names.map((name, index) => ({
         eventId: eventObjectId,
-        groupId: event.groupId ?? null,
+        groupId: teamGroupIds[index] ?? null,
         name,
         players: [],
         numberOfPlayers: dto.numberOfPlayers,
@@ -2066,12 +2153,19 @@ export class EventsService {
    * organizer may hand-edit the result. Validated against the joined roster and
    * against the OTHER teams, so a player cannot end up in two teams — which
    * would corrupt standings and per-player stats.
+   *
+   * On a challenge event each team belongs to one side (`team.groupId`): a
+   * side's owner/admin may edit only their own team, and only with players
+   * assigned for that side. `skipCallerSideCheck` is for the server-side
+   * shuffle, which fills BOTH teams in one call and already splits by side —
+   * the player-side check still runs for it.
    */
   async assignTeamPlayers(
     eventId: string,
     teamId: string,
     userId: string,
     dto: AssignTeamPlayersDto,
+    { skipCallerSideCheck = false }: { skipCallerSideCheck?: boolean } = {},
   ) {
     const event = await this.assertOrganizer(eventId, userId);
     const matchProvided = await this.matchProvidedFor(event);
@@ -2105,6 +2199,16 @@ export class EventsService {
     if (duplicate) {
       throw new BadRequestException(
         `Player ${duplicate} is listed twice in this team`,
+      );
+    }
+
+    if (event.type === 'challenge' && team.groupId) {
+      await this.assertChallengeTeamSide(
+        event,
+        team,
+        userId,
+        roster,
+        skipCallerSideCheck,
       );
     }
 
@@ -2371,6 +2475,9 @@ export class EventsService {
             playerIds: dealt[index]?.playerIds ?? [],
             guestIds: dealtGuests[index]?.playerIds ?? [],
           },
+          // The shuffle fills both sides' teams in one go; it has already
+          // split players by side, so only the player check applies.
+          { skipCallerSideCheck: true },
         ),
       );
     }
@@ -3716,6 +3823,53 @@ export class EventsService {
   }
 
   /**
+   * Challenge-team guard for `assignTeamPlayers`.
+   *
+   *  - Caller: a side's owner/admin edits only the team of their own side.
+   *    The event creator with no side role left keeps control of both, in
+   *    line with `assertOrganizer`.
+   *  - Players: every id must have been assigned FOR this team's side
+   *    (`EventPlayer.groupId`), so the clubs are never mixed by hand.
+   */
+  private async assertChallengeTeamSide(
+    event: EventDocument,
+    team: { name: string; groupId: Types.ObjectId | null },
+    userId: string,
+    roster: string[],
+    skipCallerSideCheck: boolean,
+  ) {
+    const teamSide = team.groupId!.toString();
+
+    if (!skipCallerSideCheck) {
+      const side = await this.callerSide(event, userId);
+      if (side && side.toString() !== teamSide) {
+        throw new ForbiddenException(
+          `${team.name} belongs to the other group — you can only edit your own group's team`,
+        );
+      }
+    }
+
+    if (!roster.length) return;
+    const rows = await this.playerModel
+      .find({
+        eventId: event._id,
+        userId: { $in: roster.map((id) => new Types.ObjectId(id)) },
+        status: 'joined',
+      })
+      .select('userId groupId')
+      .lean();
+    const sideOf = new Map(
+      rows.map((r) => [r.userId?.toString(), r.groupId?.toString()]),
+    );
+    const wrongSide = roster.find((id) => sideOf.get(id) !== teamSide);
+    if (wrongSide) {
+      throw new BadRequestException(
+        `Player ${wrongSide} plays for the other group and cannot join ${team.name}`,
+      );
+    }
+  }
+
+  /**
    * The group (of the event's two sides) where the caller is owner/admin —
    * their SIDE. Null when they hold neither seat.
    */
@@ -4052,11 +4206,216 @@ export class EventsService {
       }
     }
 
+    // New invitations reopen the squad: the side is no longer ready.
+    if (invited.length) await this.clearSideReady(event, sideGroupId);
+
     return {
       message: `${invited.length} player(s) invited`,
       invited,
       skipped,
     };
+  }
+
+  /**
+   * A challenge side declares its squad final — `POST /events/:id/side/ready`.
+   *
+   * Each side's owner/admin marks their OWN side. Marking ready needs at least
+   * one accepted player on that side and no unanswered invitations (a squad
+   * still waiting on answers is not final). When the second side marks ready
+   * the server moves the event `join -> ready_to_play` and builds the two side
+   * teams from the roster — nobody creates teams by hand.
+   *
+   * `ready: false` takes it back while the event is still in `join`.
+   */
+  async setSideReady(eventId: string, userId: string, dto: SideReadyDto) {
+    const ready = dto.ready ?? true;
+    const event = await this.eventModel.findById(eventId);
+    if (!event) throw new NotFoundException('Event not found');
+    if (event.type !== 'challenge' || !event.opponentGroupId) {
+      throw new BadRequestException(
+        'Only a challenge event has sides to mark ready',
+      );
+    }
+    this.assertProposalAccepted(event);
+    if (event.status !== 'join') {
+      throw new BadRequestException(
+        `Readiness can only change while the event is in join (event is '${event.status}')`,
+      );
+    }
+
+    const sideGroupId = await this.resolveCallerSide(
+      event,
+      userId,
+      dto.groupId,
+    );
+    const field = this.readyFieldFor(event, sideGroupId);
+    const otherField =
+      field === 'hostReadyAt' ? 'opponentReadyAt' : 'hostReadyAt';
+    const otherSide =
+      field === 'hostReadyAt'
+        ? event.opponentGroupId
+        : (event.groupId as Types.ObjectId);
+
+    if (!ready) {
+      await this.eventModel.updateOne(
+        { _id: event._id, status: 'join' },
+        { $set: { [field]: null } },
+      );
+      if (event[field]) {
+        await this.notifySideAdmins(
+          otherSide,
+          'Opponent not ready',
+          `The other group is no longer ready for '${event.title}'`,
+          event._id.toString(),
+        );
+      }
+      return { message: 'Your side is no longer ready', ready: false };
+    }
+
+    const [joined, pending] = await Promise.all([
+      this.playerModel.countDocuments({
+        eventId: event._id,
+        groupId: sideGroupId,
+        status: 'joined',
+      }),
+      this.playerModel.countDocuments({
+        eventId: event._id,
+        groupId: sideGroupId,
+        status: 'invited',
+      }),
+    ]);
+    if (joined < 1) {
+      throw new BadRequestException(
+        'At least one of your players must accept the invitation before your side can be ready',
+      );
+    }
+    if (pending > 0) {
+      throw new BadRequestException(
+        `${pending} invitation(s) on your side are still unanswered — ` +
+          'wait for them or unassign those players first',
+      );
+    }
+
+    // Atomic: two admins marking ready at once must not both miss each other.
+    const updated = await this.eventModel.findOneAndUpdate(
+      { _id: event._id, status: 'join' },
+      { $set: { [field]: new Date() } },
+      { new: true },
+    );
+    if (!updated) {
+      throw new BadRequestException('The event is no longer in join');
+    }
+
+    if (!updated[otherField]) {
+      await this.notifySideAdmins(
+        otherSide,
+        'Opponent is ready',
+        `The other group is ready for '${event.title}' — assign your players and mark your side ready`,
+        event._id.toString(),
+      );
+      return {
+        message: 'Your side is ready — waiting for the other group',
+        ready: true,
+        status: 'join',
+      };
+    }
+
+    // Both ready. Only ONE caller wins this guarded transition.
+    const moved = await this.eventModel.findOneAndUpdate(
+      {
+        _id: event._id,
+        status: 'join',
+        hostReadyAt: { $ne: null },
+        opponentReadyAt: { $ne: null },
+      },
+      { $set: { status: 'ready_to_play' } },
+      { new: true },
+    );
+    if (!moved) {
+      return {
+        message: 'Your side is ready',
+        ready: true,
+        status: updated.status,
+      };
+    }
+
+    await this.notifyRosterOfStatus(moved, 'join', userId);
+    await this.notifySideAdmins(
+      otherSide,
+      'Match is ready to play',
+      `Both groups are ready — '${event.title}' is ready to play`,
+      event._id.toString(),
+    );
+
+    // Build the two side teams from the roster. Best-effort: the status move
+    // stands even if this fails, and an organizer can still generate/shuffle
+    // by hand in ready_to_play.
+    try {
+      await this.shuffleTeams(eventId, userId);
+    } catch (err) {
+      this.logger.warn(`Auto team build failed for ${eventId}: ${err}`);
+    }
+
+    return {
+      message: 'Both groups are ready — the match is ready to play',
+      ready: true,
+      status: 'ready_to_play',
+    };
+  }
+
+  /**
+   * The caller's side for a side-scoped action. `requested` disambiguates a
+   * caller who runs BOTH groups; otherwise the single side they admin.
+   */
+  private async resolveCallerSide(
+    event: EventDocument,
+    userId: string,
+    requested?: string,
+  ): Promise<Types.ObjectId> {
+    if (requested) {
+      const sides = [event.groupId, event.opponentGroupId].map(String);
+      if (!sides.includes(requested)) {
+        throw new BadRequestException(
+          'groupId must be one of the two groups in this challenge',
+        );
+      }
+      const gid = new Types.ObjectId(requested);
+      await this.assertSideAdmin(
+        gid,
+        userId,
+        'Only an owner/admin of that group can act for its side',
+      );
+      return gid;
+    }
+    const side = await this.callerSide(event, userId);
+    if (!side) {
+      throw new ForbiddenException(
+        'Only an owner/admin of one of the two groups can mark a side ready',
+      );
+    }
+    return side;
+  }
+
+  private readyFieldFor(
+    event: { groupId?: Types.ObjectId | null },
+    sideGroupId: Types.ObjectId,
+  ): 'hostReadyAt' | 'opponentReadyAt' {
+    return String(event.groupId) === String(sideGroupId)
+      ? 'hostReadyAt'
+      : 'opponentReadyAt';
+  }
+
+  /** A roster change on one side reopens it: that side is no longer ready. */
+  private async clearSideReady(
+    event: EventDocument,
+    sideGroupId: Types.ObjectId,
+  ) {
+    if (event.type !== 'challenge') return;
+    const field = this.readyFieldFor(event, sideGroupId);
+    await this.eventModel.updateOne(
+      { _id: event._id, status: 'join' },
+      { $set: { [field]: null } },
+    );
   }
 
   /**
@@ -4098,6 +4457,7 @@ export class EventsService {
         { _id: event._id },
         { $inc: { joinedCount: 1 } },
       );
+      if (row.groupId) await this.clearSideReady(event, row.groupId);
       return { message: 'Invitation accepted — you are on the squad' };
     }
 
@@ -4126,6 +4486,13 @@ export class EventsService {
         'Players are unassigned only on challenge events',
       );
     }
+    // The side teams are built from the roster on entering ready_to_play, so
+    // the roster is frozen from then on — revert to join to change it.
+    if (!canLeave(event.status)) {
+      throw new BadRequestException(
+        'The roster is frozen once the match is ready — move the event back to join to change it',
+      );
+    }
     if (!Types.ObjectId.isValid(targetUserId)) {
       throw new BadRequestException('Invalid user id');
     }
@@ -4144,6 +4511,7 @@ export class EventsService {
     const wasJoined = row.status === 'joined';
     row.status = 'cancelled';
     await row.save();
+    if (row.groupId) await this.clearSideReady(event, row.groupId);
     // Only an ACCEPTED player ever counted.
     if (wasJoined) {
       await this.eventModel.updateOne(
@@ -4209,10 +4577,24 @@ export class EventsService {
       );
     }
 
-    // Drop any existing entry, then re-add only if the role is non-default.
-    team.playerRoles = team.playerRoles.filter(
-      (entry) => entry.userId.toString() !== targetUserId,
-    );
+    // One captain per team: naming a new captain hands the armband over —
+    // the previous captain is demoted to the default `player` (stored as
+    // absence) in the same save, so there is never a moment with two.
+    let replacedCaptainId: string | null = null;
+    if (dto.role === 'captain') {
+      const previous = team.playerRoles.find(
+        (entry) =>
+          entry.role === 'captain' && entry.userId.toString() !== targetUserId,
+      );
+      if (previous) replacedCaptainId = previous.userId.toString();
+    }
+
+    // Drop the target's existing entry (and the replaced captain's), then
+    // re-add only if the role is non-default.
+    team.playerRoles = team.playerRoles.filter((entry) => {
+      const id = entry.userId.toString();
+      return id !== targetUserId && id !== replacedCaptainId;
+    });
     if (dto.role !== DEFAULT_TEAM_MEMBER_ROLE) {
       team.playerRoles.push({
         userId: new Types.ObjectId(targetUserId),
@@ -4226,7 +4608,26 @@ export class EventsService {
       teamId: String(team._id),
       userId: targetUserId,
       role: dto.role,
+      // Set when this call demoted a previous captain, so the client can
+      // update both players without refetching the team.
+      replacedCaptainId,
     };
+  }
+
+  /**
+   * Remove a player's team role, returning them to the default `player`.
+   * Same permission, archive and squad checks as `setTeamMemberRole` — it is
+   * that call with the default role, which is stored as absence.
+   */
+  removeTeamMemberRole(
+    eventId: string,
+    teamId: string,
+    targetUserId: string,
+    requesterId: string,
+  ) {
+    return this.setTeamMemberRole(eventId, teamId, targetUserId, requesterId, {
+      role: DEFAULT_TEAM_MEMBER_ROLE,
+    });
   }
 
   // --- Team formation -------------------------------------------------------
@@ -4571,6 +4972,24 @@ export class EventsService {
       .select('groupId')
       .lean();
     return rows.map((row) => row.groupId);
+  }
+
+  /**
+   * Event ids the caller is on the roster of OR holds a pending invitation to
+   * (challenge assignments start `invited`). Used where an invitation alone
+   * should grant visibility of the event, e.g. GET /events/group/:groupId.
+   */
+  private async rosterEventIds(userId: string): Promise<unknown[]> {
+    if (!Types.ObjectId.isValid(userId)) return [];
+
+    const rows = await this.playerModel
+      .find({
+        userId: new Types.ObjectId(userId),
+        status: { $in: ['joined', 'invited'] },
+      })
+      .select('eventId')
+      .lean();
+    return rows.map((row) => row.eventId);
   }
 
   /** Event ids the caller is currently on the roster of (a left event is not one). */

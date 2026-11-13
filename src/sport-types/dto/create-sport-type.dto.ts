@@ -1,5 +1,5 @@
 // src/sport-types/dto/create-sport-type.dto.ts
-import { ApiHideProperty, ApiProperty } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
 import {
   ArrayMaxSize,
   IsArray,
@@ -11,8 +11,9 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 
 /**
  * Sport values and subTypes are stored verbatim on groups, events and users,
@@ -34,6 +35,43 @@ export const trimString = ({ value }: { value: unknown }): unknown =>
 
 export const normaliseSlugs = ({ value }: { value: unknown }): unknown =>
   Array.isArray(value) ? (value as unknown[]).map(slug) : value;
+
+/** One entry of `subTypes` on create / update. */
+export class SubTypeDto {
+  @ApiProperty({
+    example: 'futsal',
+    description:
+      'The format ID events store as `subType`. Lowercase slug, unique within ' +
+      'the sport. Keep it the same to rename; change `name` instead.',
+  })
+  @Transform(normaliseSlug)
+  @IsString()
+  @Matches(SPORT_SLUG, { message: `subType value ${SPORT_SLUG_MESSAGE}` })
+  value: string;
+
+  @ApiProperty({
+    example: 'Futsal',
+    required: false,
+    description: 'Display label. Defaults to `value`.',
+  })
+  @IsOptional()
+  @Transform(trimString)
+  @IsString()
+  @MinLength(1)
+  @MaxLength(50)
+  name?: string;
+
+  @ApiProperty({
+    example: 1,
+    required: false,
+    description:
+      'Display position. Defaults to its position in the array (1-based).',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  sortOrder?: number;
+}
 
 export class CreateSportTypeDto {
   @ApiProperty({
@@ -60,20 +98,23 @@ export class CreateSportTypeDto {
   @MaxLength(50)
   name?: string;
 
-  // Formats an EVENT of this sport may set as `subType`. Hidden from Swagger:
-  // sub-types are managed through the /sport-types/:value/sub-types endpoints.
-  // Still accepted here (deduplicated) for the seed script and old clients.
-  @ApiHideProperty()
+  @ApiProperty({
+    type: [SubTypeDto],
+    required: false,
+    example: [
+      { value: 'futsal', name: 'Futsal', sortOrder: 1 },
+      { value: 'stadium', name: 'Stadium', sortOrder: 2 },
+    ],
+    description:
+      'Formats an event of this sport may set as `subType`. Omit or send [] ' +
+      'for a sport without formats. 400 on a repeated `value`.',
+  })
   @IsOptional()
-  @Transform(normaliseSlugs)
   @IsArray()
   @ArrayMaxSize(50)
-  @IsString({ each: true })
-  @Matches(SPORT_SLUG, {
-    each: true,
-    message: `each subType ${SPORT_SLUG_MESSAGE}`,
-  })
-  subTypes?: string[];
+  @ValidateNested({ each: true })
+  @Type(() => SubTypeDto)
+  subTypes?: SubTypeDto[];
 
   @ApiProperty({
     type: [String],

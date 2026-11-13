@@ -93,6 +93,30 @@ export class Tournament {
   @Prop()
   startDate: Date;
 
+  /** How many days the tournament runs, from `startDate` (or creation). */
+  @Prop({ type: Number })
+  totalDays?: number;
+
+  /**
+   * `startDate` (or creation time) + `totalDays`. Once past, the tournament
+   * drops out of the active listing and shows in history instead.
+   * Absent on tournaments created before `totalDays` existed.
+   */
+  @Prop({ type: Date, default: null })
+  endDate?: Date | null;
+
+  /** How many days registration stays open, from creation. */
+  @Prop({ type: Number })
+  registerCloseDuration?: number;
+
+  /**
+   * Creation time + `registerCloseDuration`. Past it, registration is
+   * refused even while the status is still REGISTRATION_OPEN. Cleared when
+   * the organizer reopens registration after it passed.
+   */
+  @Prop({ type: Date, default: null })
+  registrationCloseAt?: Date | null;
+
   /**
    * Short code behind the tournament's QR / share link (`{APP_BASE_URL}/t/{code}`).
    * Minted on the first `GET /tournaments/:id/qr`. It never expires: a printed
@@ -107,3 +131,5 @@ export const TournamentSchema = SchemaFactory.createForClass(Tournament);
 
 // Sparse: tournaments that never shared a link have no code.
 TournamentSchema.index({ inviteCode: 1 }, { unique: true, sparse: true });
+// Group listing / history: split on status and endDate, newest first.
+TournamentSchema.index({ groupId: 1, endDate: 1, createdAt: -1 });

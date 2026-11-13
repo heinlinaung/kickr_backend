@@ -13,8 +13,9 @@
  * The seed list is the UNION of the old enums, so no existing document holds a
  * value the collection does not know.
  *
- * `subTypes` are the formats an EVENT of that sport may set as `subType` —
- * only football has any (futsal, stadium). Groups and events store the plain
+ * `subTypes` are the formats an EVENT of that sport may set as `subType`, as
+ * `{ value, name, sortOrder }` — only football has any (futsal, stadium).
+ * Re-running also converts rows still storing subTypes as plain strings. Groups and events store the plain
  * `value` string, never an ObjectId ref, so seeding order and _ids carry no
  * meaning beyond `sortOrder` display order.
  *
@@ -48,17 +49,22 @@ loadEnv();
 
 const APPLY = process.argv.includes('--apply');
 
+type SeedSubType = { value: string; name: string; sortOrder: number };
+
 const SPORT_TYPES: {
   value: string;
   name: string;
-  subTypes: string[];
+  subTypes: SeedSubType[];
   playerRoles: string[];
   sortOrder: number;
 }[] = [
   {
     value: 'football',
     name: 'Football',
-    subTypes: ['futsal', 'stadium'],
+    subTypes: [
+      { value: 'futsal', name: 'Futsal', sortOrder: 1 },
+      { value: 'stadium', name: 'Stadium', sortOrder: 2 },
+    ],
     // Same roles as the profile's FOOTBALL_POSITIONS.
     playerRoles: [
       'goalkeeper',
@@ -105,11 +111,19 @@ const SPORT_TYPES: {
   },
 ];
 
-function sameStringArray(a: unknown, b: string[]): boolean {
-  return (
-    Array.isArray(a) && a.length === b.length && b.every((v, i) => a[i] === v)
-  );
+/** Same subTypes, same order — a stored plain-string list never matches. */
+function sameSubTypes(a: unknown, b: SeedSubType[]): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
 }
+
+const subTypeLabel = (list: unknown): string =>
+  Array.isArray(list)
+    ? list
+        .map((st) =>
+          typeof st === 'string' ? st : String((st as SeedSubType).value),
+        )
+        .join(', ')
+    : String(list);
 
 async function main() {
   const uri = process.env.MONGODB_URI;
@@ -144,7 +158,7 @@ async function main() {
 
     if (!current) {
       console.log(
-        `+ insert  ${sport.value} (subTypes [${sport.subTypes.join(', ')}], ` +
+        `+ insert  ${sport.value} (subTypes [${subTypeLabel(sport.subTypes)}], ` +
           `sortOrder ${sport.sortOrder})`,
       );
       if (APPLY) {
@@ -165,14 +179,14 @@ async function main() {
     const backfillRoles = !Array.isArray(current.playerRoles);
     if (
       current.sortOrder !== sport.sortOrder ||
-      !sameStringArray(current.subTypes, sport.subTypes) ||
+      !sameSubTypes(current.subTypes, sport.subTypes) ||
       backfillMatch ||
       backfillName ||
       backfillRoles
     ) {
       console.log(
-        `~ update  ${sport.value}: subTypes [${String(current.subTypes)}] -> ` +
-          `[${sport.subTypes.join(', ')}], sortOrder ` +
+        `~ update  ${sport.value}: subTypes [${subTypeLabel(current.subTypes)}] -> ` +
+          `[${subTypeLabel(sport.subTypes)}], sortOrder ` +
           `${String(current.sortOrder)} -> ${sport.sortOrder}` +
           (backfillMatch ? ', matchProvided -> true' : '') +
           (backfillName ? `, name -> ${sport.name}` : '') +

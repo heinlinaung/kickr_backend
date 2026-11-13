@@ -5,6 +5,26 @@ import { HydratedDocument } from 'mongoose';
 export type SportTypeDocument = HydratedDocument<SportType>;
 
 /**
+ * One format a sport can be played in, e.g. football's futsal. Events store
+ * `value` as their `subType`, so it never changes; `name` is the label and
+ * can be renamed freely.
+ */
+@Schema({ _id: false })
+export class SubType {
+  @Prop({ required: true, trim: true, lowercase: true })
+  value: string;
+
+  @Prop({ required: true, trim: true })
+  name: string;
+
+  /** Display position within the sport. */
+  @Prop({ required: true })
+  sortOrder: number;
+}
+
+export const SubTypeSchema = SchemaFactory.createForClass(SubType);
+
+/**
  * A sport a group or event can be about — reference data, replacing the three
  * hardcoded (and mutually inconsistent) sportType enums that used to live on
  * the group schema, the event schema and the event DTOs.
@@ -41,12 +61,13 @@ export class SportType {
   name: string;
 
   /**
-   * The formats this sport can be played in, e.g. football's
-   * `['futsal', 'stadium']`. Empty for sports with no formats — an event of
-   * such a sport must not carry a `subType` at all.
+   * The formats this sport can be played in, e.g. football's futsal and
+   * stadium. Empty for sports with no formats — an event of such a sport must
+   * not carry a `subType` at all. Rows written before subTypes were objects
+   * hold plain strings; the service reads those as `{ value, name: value }`.
    */
-  @Prop({ type: [String], default: [] })
-  subTypes: string[];
+  @Prop({ type: [SubTypeSchema], default: [] })
+  subTypes: SubType[];
 
   /**
    * The roles a player can take in this sport, in display order, e.g.
