@@ -296,7 +296,7 @@ or `after_match`.
 | `PATCH` | `/events/:id/status` | organizer | **NEW** — advance the lifecycle. |
 | `POST` | `/events/:id/join` | any user | Gated to `join` + capacity. |
 | `DELETE` | `/events/:id/join` | any user | Gated to `join`. |
-| `GET` | `/events/:id/players` | any user | Joined players. |
+| `GET` | `/events/:id/players` | any user | Joined players. **Challenge events:** every invited player with `flag` = `approved` / `reject` / `not_submit`; filter with `?flag=` and `?groupId=`. |
 | `POST` | `/events/:id/guests` | joined member | Add a `+1`/`+2` guest — **uncapped for group owner/admin** (2026-09-08). Pending until approved. See §13. |
 | `GET` | `/events/:id/guests` | any user | **NEW** — guests on the event. Role-aware. See §13. |
 | `PATCH` | `/events/:id/guests/:guestId/approval` | organizer | **NEW** — approve or reject a guest. See §13. |

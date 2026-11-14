@@ -791,11 +791,47 @@ describe('EventsService — group challenge', () => {
       );
     });
 
-    it('refuses while invitations on the side are unanswered', async () => {
-      playerModel.countDocuments = counts(2, 1);
-      await expect(service.setSideReady(EVENT_ID, ADMIN_B, {})).rejects.toThrow(
-        /still unanswered/,
+    it('withdraws unanswered invitations on the side and still marks ready', async () => {
+      const rowIds = [new Types.ObjectId(), new Types.ObjectId()];
+      playerModel.find = jest.fn().mockReturnValue(
+        chain([
+          { _id: rowIds[0], userId: new Types.ObjectId(PLAYER_B) },
+          { _id: rowIds[1], userId: new Types.ObjectId(STRANGER) },
+        ]),
       );
+      eventModel.findOneAndUpdate.mockResolvedValueOnce(
+        eventDoc({ opponentReadyAt: new Date(), hostReadyAt: null }),
+      );
+
+      const res = await service.setSideReady(EVENT_ID, ADMIN_B, {});
+
+      expect(playerModel.find.mock.calls[0][0]).toMatchObject({
+        groupId: new Types.ObjectId(GROUP_B),
+        status: 'invited',
+      });
+      expect(playerModel.updateMany).toHaveBeenCalledWith(
+        { _id: { $in: rowIds }, status: 'invited' },
+        { $set: { status: 'cancelled' } },
+      );
+      expect(res).toMatchObject({
+        ready: true,
+        withdrawn: [PLAYER_B, STRANGER],
+      });
+      expect(notifications.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: PLAYER_B,
+          title: 'Invitation withdrawn',
+        }),
+      );
+    });
+
+    it('withdraws nothing when every invitation is answered', async () => {
+      eventModel.findOneAndUpdate.mockResolvedValueOnce(
+        eventDoc({ opponentReadyAt: new Date(), hostReadyAt: null }),
+      );
+      const res = await service.setSideReady(EVENT_ID, ADMIN_B, {});
+      expect(playerModel.updateMany).not.toHaveBeenCalled();
+      expect(res).toMatchObject({ withdrawn: [] });
     });
 
     it('first side ready: stamps its flag, waits, tells the other side', async () => {

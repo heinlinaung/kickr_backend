@@ -50,6 +50,10 @@ import { GiveMvpAwardDto } from '../awards/dto/give-mvp-award.dto';
 import { AwardsService } from '../awards/awards.service';
 import { awardError } from '../awards/awards.errors';
 import { CancelEventDto } from './dto/cancel-event.dto';
+import {
+  ListPlayersQueryDto,
+  PlayerFlag,
+} from './dto/list-players-query.dto';
 import { CreateEventTemplateDto } from './dto/create-event-template.dto';
 import { LocationsService } from '../locations/locations.service';
 import {
@@ -1925,8 +1929,28 @@ export class EventsService {
    *
    * A guest row has no `userId` to populate, so the client reads `guestName`
    * and `type` instead. Branch on `type`, not on the presence of `userId`.
+   *
+   * A CHALLENGE event answers differently — see `listChallengePlayers`.
    */
-  async listPlayers(eventId: string) {
+  async listPlayers(eventId: string, query: ListPlayersQueryDto = {}) {
+    if (!Types.ObjectId.isValid(eventId)) {
+      throw new BadRequestException('Invalid event id');
+    }
+    const event = await this.eventModel
+      .findById(eventId)
+      .select('type groupId opponentGroupId')
+      .lean();
+    if (!event) throw new NotFoundException('Event not found');
+
+    if (event.type === 'challenge') {
+      return this.listChallengePlayers(event, query);
+    }
+    if (query.flag || query.groupId) {
+      throw new BadRequestException(
+        '`flag` and `groupId` filters apply only to challenge events',
+      );
+    }
+
     return (
       this.playerModel
         .find({
@@ -1941,6 +1965,51 @@ export class EventsService {
         .populate('addedByUserId', 'name profileImage')
         .lean()
     );
+  }
+
+  /**
+   * The challenge view of `/players`: EVERY player either side invited, each
+   * tagged with their answer — `approved` (joined), `reject` (declined or
+   * withdrawn, i.e. cancelled) or `not_submit` (still invited). Filterable by
+   * `flag` and by side (`groupId`).
+   */
+  private async listChallengePlayers(
+    event: { _id: unknown; groupId?: unknown; opponentGroupId?: unknown },
+    query: ListPlayersQueryDto,
+  ) {
+    const statusFor: Record<PlayerFlag, string> = {
+      approved: 'joined',
+      reject: 'cancelled',
+      not_submit: 'invited',
+    };
+    const flagFor: Record<string, PlayerFlag> = {
+      joined: 'approved',
+      cancelled: 'reject',
+      invited: 'not_submit',
+    };
+
+    const filter: Record<string, unknown> = {
+      eventId: event._id,
+      status: query.flag
+        ? statusFor[query.flag]
+        : { $in: Object.values(statusFor) },
+    };
+    if (query.groupId) {
+      const sides = [event.groupId, event.opponentGroupId].map(String);
+      if (!sides.includes(query.groupId)) {
+        throw new BadRequestException(
+          'groupId must be one of the two groups in this challenge',
+        );
+      }
+      filter.groupId = new Types.ObjectId(query.groupId);
+    }
+
+    const rows = await this.playerModel
+      .find(filter)
+      .populate('userId', 'name profileImage footballPosition')
+      .populate('groupId', 'name')
+      .lean();
+    return rows.map((row) => ({ ...row, flag: flagFor[row.status] }));
   }
 
   // --- Step 2: teams, fixtures, scores, standings -------------------------
@@ -4220,8 +4289,9 @@ export class EventsService {
    * A challenge side declares its squad final — `POST /events/:id/side/ready`.
    *
    * Each side's owner/admin marks their OWN side. Marking ready needs at least
-   * one accepted player on that side and no unanswered invitations (a squad
-   * still waiting on answers is not final). When the second side marks ready
+   * one accepted player on that side; any invitations on that side still
+   * unanswered are withdrawn (cancelled, players notified), since marking
+   * ready finalises the squad. When the second side marks ready
    * the server moves the event `join -> ready_to_play` and builds the two side
    * teams from the roster — nobody creates teams by hand.
    *
@@ -4272,29 +4342,23 @@ export class EventsService {
       return { message: 'Your side is no longer ready', ready: false };
     }
 
-    const [joined, pending] = await Promise.all([
-      this.playerModel.countDocuments({
-        eventId: event._id,
-        groupId: sideGroupId,
-        status: 'joined',
-      }),
-      this.playerModel.countDocuments({
-        eventId: event._id,
-        groupId: sideGroupId,
-        status: 'invited',
-      }),
-    ]);
+    const joined = await this.playerModel.countDocuments({
+      eventId: event._id,
+      groupId: sideGroupId,
+      status: 'joined',
+    });
     if (joined < 1) {
       throw new BadRequestException(
         'At least one of your players must accept the invitation before your side can be ready',
       );
     }
-    if (pending > 0) {
-      throw new BadRequestException(
-        `${pending} invitation(s) on your side are still unanswered — ` +
-          'wait for them or unassign those players first',
-      );
-    }
+
+    // Marking ready finalises the squad: invitations nobody answered are
+    // withdrawn so they cannot be accepted later (which would clear the flag).
+    const withdrawn = await this.withdrawPendingInvitations(
+      event,
+      sideGroupId,
+    );
 
     // Atomic: two admins marking ready at once must not both miss each other.
     const updated = await this.eventModel.findOneAndUpdate(
@@ -4317,6 +4381,7 @@ export class EventsService {
         message: 'Your side is ready — waiting for the other group',
         ready: true,
         status: 'join',
+        withdrawn,
       };
     }
 
@@ -4336,6 +4401,7 @@ export class EventsService {
         message: 'Your side is ready',
         ready: true,
         status: updated.status,
+        withdrawn,
       };
     }
 
@@ -4360,7 +4426,48 @@ export class EventsService {
       message: 'Both groups are ready — the match is ready to play',
       ready: true,
       status: 'ready_to_play',
+      withdrawn,
     };
+  }
+
+  /**
+   * Cancels every still-`invited` row on one side of a challenge and tells
+   * those players their invitation was withdrawn. Returns their user ids.
+   * Invited rows never counted toward joinedCount, so nothing to decrement.
+   */
+  private async withdrawPendingInvitations(
+    event: EventDocument,
+    sideGroupId: Types.ObjectId,
+  ): Promise<string[]> {
+    const pending = await this.playerModel
+      .find({ eventId: event._id, groupId: sideGroupId, status: 'invited' })
+      .select('_id userId')
+      .lean();
+    if (!pending.length) return [];
+
+    // Guarded on status so a row accepted in the meantime is left alone.
+    await this.playerModel.updateMany(
+      { _id: { $in: pending.map((r) => r._id) }, status: 'invited' },
+      { $set: { status: 'cancelled' } },
+    );
+
+    const userIds = pending
+      .map((r) => r.userId?.toString())
+      .filter(Boolean) as string[];
+    for (const uid of userIds) {
+      try {
+        await this.notificationsService.create({
+          userId: uid,
+          title: 'Invitation withdrawn',
+          body: `Your side finalised its squad for '${event.title}' — your invitation was withdrawn`,
+          type: 'event',
+          refId: event._id.toString(),
+        });
+      } catch (err) {
+        this.logger.warn(`Withdrawal notification failed: ${err}`);
+      }
+    }
+    return userIds;
   }
 
   /**

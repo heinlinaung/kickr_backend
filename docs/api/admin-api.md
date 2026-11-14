@@ -59,6 +59,7 @@ Ships blank in `.env.example`. Leave it blank in any environment that shouldn't 
 |---|---|---|---|
 | `POST` | `/admin/groups/:groupId/members` | `{ "userIds": [...] }` | Adds users as **approved** members, skipping owner approval |
 | `POST` | `/admin/events/:eventId/players` | `{ "userIds": [...] }` | Adds users as **joined** players, ignoring the event's lifecycle state |
+| `POST` | `/admin/events/:eventId/players_approved` | `{ "groupId"?: "...", "userIds"?: [...] }` | Accepts pending invitations on the players' behalf — same as each calling `POST /events/:id/invitation/respond` with `accept`. `userIds` omitted = all pending (within `groupId`). Ids with no pending invitation are skipped (`no_pending_invitation`) |
 
 Test-data endpoints are documented separately in **§9**:
 

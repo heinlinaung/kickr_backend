@@ -17,6 +17,7 @@ import { TestDataService } from './test-data.service';
 import { AddUsersDto } from './dto/add-users.dto';
 import { SeedTestDataDto } from './dto/seed-test-data.dto';
 import { MarkPaymentsPaidDto } from './dto/mark-payments-paid.dto';
+import { ApproveInvitationsDto } from './dto/approve-invitations.dto';
 
 /**
  * Server-to-server support endpoints. Authenticated by the ADMIN_KEY shared
@@ -46,6 +47,27 @@ export class AdminController {
   @Post('events/:eventId/players')
   addEventPlayers(@Param('eventId') eventId: string, @Body() dto: AddUsersDto) {
     return this.adminService.addEventPlayers(eventId, dto.userIds);
+  }
+
+  @Post('events/:eventId/players_approved')
+  @ApiOperation({
+    summary: "Accept pending invitations on the players' behalf",
+    description:
+      'Admin equivalent of each invited player calling POST ' +
+      '/events/:id/invitation/respond with action=accept. Optional groupId ' +
+      'limits to one side; userIds omitted accepts every pending invitation ' +
+      '(within groupId). Ids without a pending invitation are skipped with ' +
+      'reason no_pending_invitation.',
+  })
+  approveInvitations(
+    @Param('eventId') eventId: string,
+    @Body() dto: ApproveInvitationsDto,
+  ) {
+    return this.adminService.approveInvitations(
+      eventId,
+      dto.userIds,
+      dto.groupId,
+    );
   }
 
   @Post('events/:eventId/payment')

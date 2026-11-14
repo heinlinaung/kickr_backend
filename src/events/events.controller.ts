@@ -43,6 +43,7 @@ import { ReviewPaymentDto } from './dto/review-payment.dto';
 import { ReviewProposalDto } from './dto/review-proposal.dto';
 import { AssignPlayersDto } from './dto/assign-players.dto';
 import { SideReadyDto } from './dto/side-ready.dto';
+import { ListPlayersQueryDto } from './dto/list-players-query.dto';
 import { ResubmitProposalDto } from './dto/resubmit-proposal.dto';
 import { RespondInvitationDto } from './dto/respond-invitation.dto';
 import { AddGuestDto } from './dto/add-guest.dto';
@@ -367,8 +368,24 @@ export class EventsController {
   }
 
   @Get(':id/players')
-  players(@Param('id') id: string) {
-    return this.eventsService.listPlayers(id);
+  @ApiOperation({
+    summary: 'List the players of an event',
+    description:
+      'Normal events: the roster — joined players and approved guests. ' +
+      'Challenge events: EVERY invited player on both sides, each with a ' +
+      '`flag` — `approved` (accepted), `reject` (declined or invitation ' +
+      'withdrawn; see `inviteRejectReason`) or `not_submit` (not answered ' +
+      'yet). Filter with `?flag=` and/or `?groupId=` (one side).',
+  })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Invalid id, `flag`/`groupId` on a non-challenge event, or `groupId` ' +
+      'not one of the two challenge groups',
+  })
+  @ApiResponse({ status: 404, description: 'Event not found' })
+  players(@Param('id') id: string, @Query() query: ListPlayersQueryDto) {
+    return this.eventsService.listPlayers(id, query);
   }
 
   /**
@@ -768,7 +785,9 @@ export class EventsController {
       'Challenge events only, while the event is in join and the proposal ' +
       'is accepted. The caller marks THEIR OWN side (pass `groupId` only if ' +
       'you are owner/admin of both groups). Needs at least one accepted ' +
-      'player on your side and no unanswered invitations. When BOTH sides ' +
+      'player on your side. Invitations on your side still unanswered are ' +
+      'withdrawn (cancelled, players notified) and returned as `withdrawn`. ' +
+      'When BOTH sides ' +
       'are ready the event moves join -> ready_to_play automatically and the ' +
       'two side teams are built from the roster — no manual team creation. ' +
       '`ready: false` takes it back. Inviting, accepting or unassigning a ' +
@@ -779,7 +798,7 @@ export class EventsController {
     status: 400,
     description:
       'Not a challenge event, proposal not accepted, event not in join, no ' +
-      'accepted players, or invitations still unanswered',
+      'accepted players',
   })
   @ApiResponse({
     status: 403,

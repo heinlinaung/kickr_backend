@@ -25,16 +25,19 @@ To mark a side ready:
 
 - the event is a challenge, its proposal is `accepted`, and it is in `join`
 - that side has **at least 1 player who accepted** the invitation
-- that side has **no unanswered invitations** (wait for them, or unassign those players)
+
+Any invitation on that side that is **still unanswered is withdrawn** when the side
+marks ready (row → `cancelled`, the player gets an "Invitation withdrawn"
+notification). Their user ids come back in `withdrawn`.
 
 Responses:
 
 ```json
 // first side
-{ "message": "Your side is ready — waiting for the other group", "ready": true, "status": "join" }
+{ "message": "Your side is ready — waiting for the other group", "ready": true, "status": "join", "withdrawn": [] }
 
 // second side: the event moves to ready_to_play
-{ "message": "Both groups are ready — the match is ready to play", "ready": true, "status": "ready_to_play" }
+{ "message": "Both groups are ready — the match is ready to play", "ready": true, "status": "ready_to_play", "withdrawn": ["<userId>"] }
 
 // ready: false
 { "message": "Your side is no longer ready", "ready": false }
@@ -43,13 +46,14 @@ Responses:
 Errors:
 
 - `400`: not a challenge event, proposal not accepted, event not in `join`, no
-  accepted players on the side, invitations still unanswered, or `groupId` is
+  accepted players on the side, or `groupId` is
   not one of the two groups
 - `403`: caller is not an owner/admin of either group (or of the given `groupId`)
 
 Notifications:
 
 - The other group's admins get "Opponent is ready" or "Opponent not ready".
+- Players whose unanswered invitation was withdrawn get "Invitation withdrawn".
 - When the event moves to `ready_to_play`, every player on the roster gets the
   usual status notification.
 
