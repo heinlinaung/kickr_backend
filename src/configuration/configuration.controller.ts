@@ -19,7 +19,7 @@ export class ConfigurationController {
       '`{ config: { revision, appUpdate, majorUpdate, createdAt } | null, ' +
       'features: { tournament, groupChallenge }, ' +
       'regions: { myanmar: [{ id, name }], ... }, ' +
-      'sportTypes: [{ value, name, subTypes, playerRoles, sortOrder, matchProvided }] }`',
+      'sportTypes: [{ value, name, subTypes: [{ value, name, sortOrder }], playerRoles, sortOrder, matchProvided }] }`',
   })
   @ApiOperation({
     summary: 'App startup configuration (public)',

@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { ClientSession, Model, Types } from 'mongoose';
 import { Group, GroupDocument } from '../groups/schemas/group.schema';
@@ -17,6 +21,7 @@ import {
 } from '../events/schemas/event-payment.schema';
 import { User, UserDocument } from '../users/schemas/user.schema';
 import { FinanceService } from '../finance/finance.service';
+import { EventsService } from '../events/events.service';
 import {
   feePerPlayerCents,
   fromCents,
@@ -32,7 +37,8 @@ export type SkipReason =
   | 'group_full'
   | 'event_full'
   | 'not_joined'
-  | 'already_paid';
+  | 'already_paid'
+  | 'no_pending_invitation';
 
 export interface BulkAddResult {
   added: string[];
@@ -62,6 +68,7 @@ export class AdminService {
     @InjectModel(EventPayment.name)
     private paymentModel: Model<EventPaymentDocument>,
     private readonly financeService: FinanceService,
+    private readonly eventsService: EventsService,
   ) {}
 
   async addGroupMembers(
@@ -278,6 +285,88 @@ export class AdminService {
     }
 
     return finalise(result);
+  }
+
+  /**
+   * Accept pending invitations on the invited players' behalf — the admin
+   * equivalent of each player calling `POST /events/:id/invitation/respond`
+   * with `accept`. Goes through EventsService so joinedCount and side
+   * readiness update exactly as a real accept would. `userIds` omitted means
+   * every pending invitation (within `groupId`, if given).
+   */
+  async approveInvitations(
+    eventId: string,
+    userIds?: string[],
+    groupId?: string,
+  ): Promise<BulkAddResult> {
+    const event = await this.loadChallengeEvent(eventId, groupId);
+    const pending = await this.playerModel
+      .find(this.invitedFilter(event._id, groupId))
+      .select('userId')
+      .lean();
+    const pendingIds = new Set(
+      pending.map((r) => r.userId?.toString()).filter(Boolean) as string[],
+    );
+
+    const ids = userIds?.length ? dedupe(userIds) : [...pendingIds];
+    const result = emptyResult();
+
+    for (const userId of ids) {
+      if (!pendingIds.has(userId)) {
+        result.skipped.push({ userId, reason: 'no_pending_invitation' });
+        continue;
+      }
+      try {
+        await this.eventsService.respondInvitation(eventId, userId, {
+          action: 'accept',
+        });
+        result.added.push(userId);
+      } catch (err) {
+        // Answered concurrently between the lookup and the accept.
+        if (err instanceof NotFoundException) {
+          result.skipped.push({ userId, reason: 'no_pending_invitation' });
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    return finalise(result);
+  }
+
+  private async loadChallengeEvent(eventId: string, groupId?: string) {
+    if (!Types.ObjectId.isValid(eventId)) {
+      throw new BadRequestException('Invalid event id');
+    }
+    if (groupId && !Types.ObjectId.isValid(groupId)) {
+      throw new BadRequestException('Invalid group id');
+    }
+    const event = await this.eventModel
+      .findById(eventId)
+      .select('type groupId opponentGroupId')
+      .lean();
+    if (!event) throw new NotFoundException('Event not found');
+    if (event.type !== 'challenge') {
+      throw new BadRequestException('Only challenge events carry invitations');
+    }
+    if (
+      groupId &&
+      String(event.groupId) !== groupId &&
+      String(event.opponentGroupId) !== groupId
+    ) {
+      throw new BadRequestException(
+        'groupId must be one of the two groups in this challenge',
+      );
+    }
+    return event;
+  }
+
+  private invitedFilter(eventId: Types.ObjectId, groupId?: string) {
+    return {
+      eventId,
+      status: 'invited',
+      ...(groupId ? { groupId: new Types.ObjectId(groupId) } : {}),
+    };
   }
 
   /** One query for the whole batch rather than a findById per id. */

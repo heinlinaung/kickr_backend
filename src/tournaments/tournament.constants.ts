@@ -24,6 +24,75 @@ export const TOURNAMENT_STATUSES = [
 ] as const;
 export type TournamentStatus = (typeof TOURNAMENT_STATUSES)[number];
 
+/** Statuses that end a tournament for good. */
+export const FINISHED_STATUSES: readonly TournamentStatus[] = [
+  'COMPLETED',
+  'CANCELLED',
+];
+
+/** Bounds of `totalDays` on create. */
+export const MIN_TOTAL_DAYS = 1;
+export const MAX_TOTAL_DAYS = 365;
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** The moment a tournament of `totalDays` days starting at `start` expires. */
+export function computeEndDate(start: Date, totalDays: number): Date {
+  return new Date(start.getTime() + totalDays * DAY_MS);
+}
+
+/** Bounds of `registerCloseDuration` (days) on create. */
+export const MIN_REGISTER_CLOSE_DAYS = 1;
+export const MAX_REGISTER_CLOSE_DAYS = 365;
+
+/** When registration closes: `days` days after it opened (`openedAt`). */
+export function computeRegistrationCloseAt(openedAt: Date, days: number): Date {
+  return new Date(openedAt.getTime() + days * DAY_MS);
+}
+
+/**
+ * Mongo filter for tournaments whose registration deadline has not passed.
+ * No `registrationCloseAt` means no deadline.
+ */
+export function registrationDeadlineFilter(now: Date = new Date()) {
+  return {
+    $or: [{ registrationCloseAt: null }, { registrationCloseAt: { $gt: now } }],
+  };
+}
+
+/** Whether a tournament takes new teams right now (status and deadline). */
+export function isRegistrationOpen(
+  t: { status: string; registrationCloseAt?: Date | null },
+  now: Date = new Date(),
+): boolean {
+  return (
+    t.status === 'REGISTRATION_OPEN' &&
+    (!t.registrationCloseAt || t.registrationCloseAt > now)
+  );
+}
+
+/**
+ * Mongo filter for tournaments still running: not COMPLETED / CANCELLED and
+ * not past their `endDate`. Tournaments created before `totalDays` existed
+ * have no `endDate` and never expire by date.
+ */
+export function activeTournamentFilter(now: Date = new Date()) {
+  return {
+    status: { $nin: [...FINISHED_STATUSES] },
+    $or: [{ endDate: null }, { endDate: { $gt: now } }],
+  };
+}
+
+/** The complement of `activeTournamentFilter`: finished or expired. */
+export function historyTournamentFilter(now: Date = new Date()) {
+  return {
+    $or: [
+      { status: { $in: [...FINISHED_STATUSES] } },
+      { endDate: { $lte: now } },
+    ],
+  };
+}
+
 /** Statuses in which the format can still be changed freely. */
 export const PRE_START_STATUSES: readonly TournamentStatus[] = [
   'DRAFT',

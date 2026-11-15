@@ -42,6 +42,8 @@ import { SubmitPaymentDto } from './dto/submit-payment.dto';
 import { ReviewPaymentDto } from './dto/review-payment.dto';
 import { ReviewProposalDto } from './dto/review-proposal.dto';
 import { AssignPlayersDto } from './dto/assign-players.dto';
+import { SideReadyDto } from './dto/side-ready.dto';
+import { ListPlayersQueryDto } from './dto/list-players-query.dto';
 import { ResubmitProposalDto } from './dto/resubmit-proposal.dto';
 import { RespondInvitationDto } from './dto/respond-invitation.dto';
 import { AddGuestDto } from './dto/add-guest.dto';
@@ -258,7 +260,12 @@ export class EventsController {
     summary: "All of one group's events, soonest first",
     description:
       'Approved members see every event in the group, public or private. ' +
-      'Everyone else sees only the public ones. Expired and `done` events are ' +
+      'Everyone else sees only the public ones, plus any event they are ' +
+      'invited to or joined (e.g. a challenge match they were invited to). ' +
+      'A private group 403s non-members unless they hold such an ' +
+      'invitation/roster spot, in which case only those events are listed. Also includes challenge ' +
+      'events where this group is the opponent (`opponentGroupId`), once ' +
+      'the group has accepted the proposal. Expired and `done` events are ' +
       'excluded unless includeExpired=true. Optionally filter by lifecycle ' +
       'status.',
   })
@@ -361,8 +368,24 @@ export class EventsController {
   }
 
   @Get(':id/players')
-  players(@Param('id') id: string) {
-    return this.eventsService.listPlayers(id);
+  @ApiOperation({
+    summary: 'List the players of an event',
+    description:
+      'Normal events: the roster — joined players and approved guests. ' +
+      'Challenge events: EVERY invited player on both sides, each with a ' +
+      '`flag` — `approved` (accepted), `reject` (declined or invitation ' +
+      'withdrawn; see `inviteRejectReason`) or `not_submit` (not answered ' +
+      'yet). Filter with `?flag=` and/or `?groupId=` (one side).',
+  })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Invalid id, `flag`/`groupId` on a non-challenge event, or `groupId` ' +
+      'not one of the two challenge groups',
+  })
+  @ApiResponse({ status: 404, description: 'Event not found' })
+  players(@Param('id') id: string, @Query() query: ListPlayersQueryDto) {
+    return this.eventsService.listPlayers(id, query);
   }
 
   /**
@@ -755,6 +778,40 @@ export class EventsController {
     return this.eventsService.assignPlayers(id, user._id.toString(), dto);
   }
 
+  @Post(':id/side/ready')
+  @ApiOperation({
+    summary: 'Mark your side of a challenge event ready (side admins)',
+    description:
+      'Challenge events only, while the event is in join and the proposal ' +
+      'is accepted. The caller marks THEIR OWN side (pass `groupId` only if ' +
+      'you are owner/admin of both groups). Needs at least one accepted ' +
+      'player on your side. Invitations on your side still unanswered are ' +
+      'withdrawn (cancelled, players notified) and returned as `withdrawn`. ' +
+      'When BOTH sides ' +
+      'are ready the event moves join -> ready_to_play automatically and the ' +
+      'two side teams are built from the roster — no manual team creation. ' +
+      '`ready: false` takes it back. Inviting, accepting or unassigning a ' +
+      "player on a side clears that side's ready flag. Readiness is exposed " +
+      'on the event as `hostReadyAt` (groupId side) and `opponentReadyAt`.',
+  })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Not a challenge event, proposal not accepted, event not in join, no ' +
+      'accepted players',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Caller is not an admin of either side',
+  })
+  setSideReady(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() dto: SideReadyDto,
+  ) {
+    return this.eventsService.setSideReady(id, user._id.toString(), dto);
+  }
+
   @Delete(':id/players/:userId/assign')
   @ApiOperation({
     summary: 'Unassign a player from a challenge event (organizers)',
@@ -835,7 +892,10 @@ export class EventsController {
       'existing captaincy; the default is stored as absence, so it is not ' +
       'echoed back on team reads. A group `captain` may call this, unlike ' +
       'most team routes, since naming a captain is squad management. Roles ' +
-      'are dropped automatically if the player is later removed from the team.',
+      'are dropped automatically if the player is later removed from the team. ' +
+      'A team has at most ONE captain: naming a new captain automatically ' +
+      'demotes the current one to `player` in the same call; their id is ' +
+      'returned as `replacedCaptainId` (null when nobody was replaced).',
   })
   @ApiResponse({
     status: 400,
@@ -857,6 +917,36 @@ export class EventsController {
       userId,
       user._id.toString(),
       dto,
+    );
+  }
+
+  @Delete(':id/teams/:teamId/members/:userId/role')
+  @ApiOperation({
+    summary: "Remove a player's team role (owner/admin/captain)",
+    description:
+      'Clears any special role (e.g. `captain`) so the player is back to the ' +
+      'default `player`. Same permissions and checks as the PATCH. Idempotent: ' +
+      'removing from a player with no role succeeds. Leaves the team with no ' +
+      'captain; to swap captains, just PATCH the new one instead.',
+  })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Malformed ids, the player is not in this team, or the event is done',
+  })
+  @ApiResponse({ status: 403, description: 'Caller may not manage team roles' })
+  @ApiResponse({ status: 404, description: 'Team not found for this event' })
+  removeTeamMemberRole(
+    @Param('id') id: string,
+    @Param('teamId') teamId: string,
+    @Param('userId') userId: string,
+    @CurrentUser() user: any,
+  ) {
+    return this.eventsService.removeTeamMemberRole(
+      id,
+      teamId,
+      userId,
+      user._id.toString(),
     );
   }
 

@@ -10,6 +10,7 @@ import { EventPlayer } from '../events/schemas/event-player.schema';
 import { User } from '../users/schemas/user.schema';
 import { EventPayment } from '../events/schemas/event-payment.schema';
 import { FinanceService } from '../finance/finance.service';
+import { EventsService } from '../events/events.service';
 
 const q = (result: any) => ({
   select: jest.fn().mockReturnThis(),
@@ -26,6 +27,7 @@ describe('AdminService', () => {
   const userModel: any = {};
   const paymentModel: any = {};
   const financeService: any = {};
+  const eventsService: any = {};
 
   const GROUP_ID = new Types.ObjectId().toString();
   const EVENT_ID = new Types.ObjectId().toString();
@@ -63,6 +65,11 @@ describe('AdminService', () => {
       runInTransaction: jest.fn((fn: any) => fn(null)),
     });
 
+    Object.assign(eventsService, {
+      respondInvitation: jest.fn().mockResolvedValue({ message: 'ok' }),
+    });
+    playerModel.find = jest.fn();
+
     const m = await Test.createTestingModule({
       providers: [
         AdminService,
@@ -73,6 +80,7 @@ describe('AdminService', () => {
         { provide: getModelToken(User.name), useValue: userModel },
         { provide: getModelToken(EventPayment.name), useValue: paymentModel },
         { provide: FinanceService, useValue: financeService },
+        { provide: EventsService, useValue: eventsService },
       ],
     }).compile();
 
@@ -292,6 +300,87 @@ describe('AdminService', () => {
         paidAfterCents: 10000,
         reviewerId: U2,
       });
+    });
+  });
+
+  describe('approveInvitations (players_approved)', () => {
+    const HOST = new Types.ObjectId();
+    const OPP = new Types.ObjectId();
+    const challenge = {
+      _id: new Types.ObjectId(EVENT_ID),
+      title: 'Derby',
+      status: 'join',
+      type: 'challenge',
+      groupId: HOST,
+      opponentGroupId: OPP,
+    };
+    const findQ = (rows: any[]) => ({
+      populate: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue(rows),
+    });
+
+    it('rejects a non-challenge event', async () => {
+      eventModel.findById.mockReturnValue(q({ ...challenge, type: 'group' }));
+      await expect(service.approveInvitations(EVENT_ID)).rejects.toThrow(
+        'Only challenge events carry invitations',
+      );
+    });
+
+    it('rejects a groupId that is not one of the two sides', async () => {
+      eventModel.findById.mockReturnValue(q(challenge));
+      await expect(
+        service.approveInvitations(
+          EVENT_ID,
+          undefined,
+          new Types.ObjectId().toString(),
+        ),
+      ).rejects.toThrow('groupId must be one of the two groups');
+    });
+
+    it('limits to one side when groupId is given', async () => {
+      eventModel.findById.mockReturnValue(q(challenge));
+      playerModel.find.mockReturnValue(findQ([]));
+
+      await service.approveInvitations(EVENT_ID, undefined, OPP.toString());
+
+      const filter = playerModel.find.mock.calls[0][0];
+      expect(filter.status).toBe('invited');
+      expect(filter.groupId.toString()).toBe(OPP.toString());
+    });
+
+    it('accepts every pending invitation via respondInvitation when userIds omitted', async () => {
+      eventModel.findById.mockReturnValue(q(challenge));
+      playerModel.find.mockReturnValue(
+        findQ([
+          { userId: new Types.ObjectId(U1) },
+          { userId: new Types.ObjectId(U2) },
+        ]),
+      );
+
+      const res = await service.approveInvitations(EVENT_ID);
+
+      expect(res.added).toEqual([U1, U2]);
+      expect(eventsService.respondInvitation).toHaveBeenCalledWith(
+        EVENT_ID,
+        U1,
+        { action: 'accept' },
+      );
+    });
+
+    it('skips ids with no pending invitation', async () => {
+      eventModel.findById.mockReturnValue(q(challenge));
+      playerModel.find.mockReturnValue(
+        findQ([{ userId: new Types.ObjectId(U1) }]),
+      );
+
+      const res = await service.approveInvitations(EVENT_ID, [U1, U3]);
+
+      expect(res.added).toEqual([U1]);
+      expect(res.skipped).toEqual([
+        { userId: U3, reason: 'no_pending_invitation' },
+      ]);
+      expect(eventsService.respondInvitation).toHaveBeenCalledTimes(1);
     });
   });
 });

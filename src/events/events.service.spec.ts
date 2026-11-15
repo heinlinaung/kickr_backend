@@ -543,6 +543,7 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
         lean: jest.fn().mockResolvedValue([]),
       };
       playerModel.find = jest.fn().mockReturnValue(chain);
+      eventModel.findById.mockReturnValue(q({ _id: EVENT_ID, type: 'normal' }));
 
       await service.listPlayers(EVENT_ID);
 
@@ -551,6 +552,82 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
       ) as [string, string];
       expect(userCall[1].split(' ')).toContain('footballPosition');
       expect(userCall[1].split(' ')).not.toContain('email');
+    });
+  });
+
+  describe('listPlayers → challenge invitation flags', () => {
+    const OPPONENT_ID = '507f1f77bcf86cd799439098';
+    const rows = [
+      { _id: 'r1', status: 'joined' },
+      { _id: 'r2', status: 'cancelled', inviteRejectReason: 'away' },
+      { _id: 'r3', status: 'invited' },
+    ];
+    let chain: any;
+
+    beforeEach(() => {
+      eventModel.findById.mockReturnValue(
+        q({
+          _id: EVENT_ID,
+          type: 'challenge',
+          groupId: GROUP_ID,
+          opponentGroupId: OPPONENT_ID,
+        }),
+      );
+      chain = {
+        populate: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(rows),
+      };
+      playerModel.find = jest.fn().mockReturnValue(chain);
+    });
+
+    it('lists every invited player with approved / reject / not_submit', async () => {
+      const res: any[] = await service.listPlayers(EVENT_ID);
+
+      expect(playerModel.find.mock.calls[0][0].status).toEqual({
+        $in: ['joined', 'cancelled', 'invited'],
+      });
+      expect(res.map((r) => r.flag)).toEqual([
+        'approved',
+        'reject',
+        'not_submit',
+      ]);
+      expect(res[1].inviteRejectReason).toBe('away');
+    });
+
+    it.each([
+      ['approved', 'joined'],
+      ['reject', 'cancelled'],
+      ['not_submit', 'invited'],
+    ] as const)('flag=%s filters on status %s', async (flag, status) => {
+      await service.listPlayers(EVENT_ID, { flag });
+      expect(playerModel.find.mock.calls[0][0].status).toBe(status);
+    });
+
+    it('groupId narrows to one side', async () => {
+      await service.listPlayers(EVENT_ID, { groupId: OPPONENT_ID });
+      expect(String(playerModel.find.mock.calls[0][0].groupId)).toBe(
+        OPPONENT_ID,
+      );
+    });
+
+    it('rejects a groupId outside the challenge', async () => {
+      await expect(
+        service.listPlayers(EVENT_ID, { groupId: OWNED_LOCATION }),
+      ).rejects.toThrow(/one of the two groups/);
+    });
+
+    it('rejects flag on a normal event', async () => {
+      eventModel.findById.mockReturnValue(q({ _id: EVENT_ID, type: 'normal' }));
+      await expect(
+        service.listPlayers(EVENT_ID, { flag: 'approved' }),
+      ).rejects.toThrow(/only to challenge events/);
+    });
+
+    it('404s an unknown event', async () => {
+      eventModel.findById.mockReturnValue(q(null));
+      await expect(service.listPlayers(EVENT_ID)).rejects.toThrow(
+        /Event not found/,
+      );
     });
   });
 

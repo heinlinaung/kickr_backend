@@ -254,6 +254,14 @@ export class TournamentPhasesService {
       await this.clearDrawAndBracket(t._id);
     }
     await this.transition(t._id, t.status, dto.status);
+    if (dto.status === 'REGISTRATION_OPEN') {
+      // The organizer reopened on purpose: a deadline already behind us
+      // would block every registration, so drop it.
+      await this.tournamentModel.updateOne(
+        { _id: t._id, registrationCloseAt: { $lte: new Date() } },
+        { $set: { registrationCloseAt: null } },
+      );
+    }
     return { status: dto.status, drawReset };
   }
 

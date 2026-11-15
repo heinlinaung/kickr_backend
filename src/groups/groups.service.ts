@@ -42,6 +42,7 @@ import {
   Tournament,
   TournamentDocument,
 } from '../tournaments/schemas/tournament.schema';
+import { activeTournamentFilter } from '../tournaments/tournament.constants';
 import {
   Location,
   LocationDocument,
@@ -233,11 +234,11 @@ export class GroupsService {
       ? await this.financeService.buildGroupFund(groupId)
       : null;
 
-    // Active = not yet COMPLETED or CANCELLED; the list itself is
-    // GET /tournaments/group/:groupId.
+    // Active = not COMPLETED / CANCELLED and not past its endDate; the list
+    // itself is GET /tournaments/group/:groupId.
     const tournamentCount = await this.tournamentModel.countDocuments({
       groupId: new Types.ObjectId(groupId),
-      status: { $nin: ['COMPLETED', 'CANCELLED'] },
+      ...activeTournamentFilter(),
     });
 
     return {

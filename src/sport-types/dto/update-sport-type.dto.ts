@@ -11,19 +11,21 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   normaliseSlugs,
   SPORT_SLUG,
   SPORT_SLUG_MESSAGE,
+  SubTypeDto,
   trimString,
 } from './create-sport-type.dto';
 
 // `value` is absent: it is the sport's ID, stored on groups, events and users,
 // and never changes. A rename changes the display `name` only.
-// `subTypes` is absent: they are managed one at a time through the
-// /sport-types/:value/sub-types endpoints (add, rename, reorder, remove).
+// `subTypes` is replaced as a whole list. Events store a subType's `value`,
+// so dropping one still in use is refused; renaming changes `name` only.
 // `playerRoles` IS here, replaced wholesale: nothing else stores a role yet,
 // so there are no holders to migrate or protect.
 export class UpdateSportTypeDto {
@@ -77,4 +79,24 @@ export class UpdateSportTypeDto {
     message: `each playerRole ${SPORT_SLUG_MESSAGE}`,
   })
   playerRoles?: string[];
+
+  @ApiProperty({
+    type: [SubTypeDto],
+    required: false,
+    example: [
+      { value: 'futsal', name: 'Futsal', sortOrder: 1 },
+      { value: 'stadium', name: 'Stadium', sortOrder: 2 },
+    ],
+    description:
+      'Replaces the whole list of formats. Keep a `value` to keep (or rename, via ' +
+      '`name`) that format; leave it out to remove it. 409 if a removed one is ' +
+      'still used by an event or event template; 400 on a repeated `value`. Send ' +
+      '[] to clear.',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => SubTypeDto)
+  subTypes?: SubTypeDto[];
 }

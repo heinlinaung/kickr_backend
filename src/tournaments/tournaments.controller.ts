@@ -41,7 +41,12 @@ export class TournamentsController {
       '- All phase settings start at their defaults (single round robin, 3/1/0 points, random group draw, ' +
       'top 2 per group qualify, single-leg knockout decided by penalties). Change them with ' +
       '`PUT /tournaments/{id}/format`.\n' +
-      '- The new tournament starts in status `REGISTRATION_OPEN` with `currentTeams: 0`.\n\n' +
+      '- The new tournament starts in status `REGISTRATION_OPEN` with `currentTeams: 0`.\n' +
+      '- **totalDays** (optional, 1–365): how long it runs, from `startDate` (or now). Sets `endDate`; ' +
+      'once past, it leaves the group listing and shows in `GET /tournaments/group/{groupId}/history`.\n' +
+      '- **registerCloseDuration** (optional, 1–365): how many days registration stays open, from now. ' +
+      'Sets `registrationCloseAt`; after it every registration path returns an error. Must not be after ' +
+      '`startDate` or `endDate` (`400 INVALID_REQUEST`).\n\n' +
       'Returns the created tournament document.',
   })
   create(@CurrentUser() user: any, @Body() dto: CreateTournamentDto) {
@@ -70,9 +75,11 @@ export class TournamentsController {
    */
   @Get('group/:groupId')
   @ApiOperation({
-    summary: "All of one group's tournaments, newest first",
+    summary: "One group's running tournaments, newest first",
     description:
       'Lists the tournaments tied to a group (created with `groupId`), for the group detail screen.\n\n' +
+      '- Only running tournaments: `COMPLETED` / `CANCELLED` ones and those past their `endDate` ' +
+      '(`startDate` + `totalDays`) are left out. See `GET /tournaments/group/{groupId}/history`.\n' +
       '- Public group: any authenticated caller.\n' +
       '- Private group: approved members only, otherwise `403` (a pending join request is not enough).\n' +
       '- **status** (optional) filters by tournament status.\n\n' +
@@ -93,6 +100,33 @@ export class TournamentsController {
     @Query('status') status?: string,
   ) {
     return this.tournamentsService.listByGroup(
+      groupId,
+      user._id.toString(),
+      status,
+    );
+  }
+
+  @Get('group/:groupId/history')
+  @ApiOperation({
+    summary: "One group's past tournaments",
+    description:
+      'The tournaments the active list no longer shows: `COMPLETED`, `CANCELLED`, or past their ' +
+      '`endDate` (`startDate` + `totalDays`) whatever their status. Most recently ended first.\n\n' +
+      'Same access rules, `status` filter and errors as `GET /tournaments/group/{groupId}`. ' +
+      'Open one with `GET /tournaments/{id}` for its teams, matches and final `placements`.',
+  })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    example: 'COMPLETED',
+    description: 'Optional filter, same values as the active list.',
+  })
+  listGroupHistory(
+    @Param('groupId') groupId: string,
+    @CurrentUser() user: any,
+    @Query('status') status?: string,
+  ) {
+    return this.tournamentsService.listGroupHistory(
       groupId,
       user._id.toString(),
       status,

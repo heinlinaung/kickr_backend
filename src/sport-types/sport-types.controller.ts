@@ -7,7 +7,6 @@ import {
   Param,
   Patch,
   Post,
-  Put,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -23,9 +22,6 @@ import { SuperadminGuard } from '../common/guards/superadmin.guard';
 import { SportTypesService } from './sport-types.service';
 import { CreateSportTypeDto } from './dto/create-sport-type.dto';
 import { UpdateSportTypeDto } from './dto/update-sport-type.dto';
-import { AddSubTypeDto } from './dto/add-sub-type.dto';
-import { RenameSubTypeDto } from './dto/rename-sub-type.dto';
-import { ReorderSubTypesDto } from './dto/reorder-sub-types.dto';
 import { RemoveSportTypeQueryDto } from './dto/remove-sport-type.dto';
 
 /** The `:value` path param, shared by every per-sport route. */
@@ -37,7 +33,7 @@ const ValueParam = ApiParam({
 });
 
 const ROW =
-  '`{ value, name, subTypes, playerRoles, sortOrder, matchProvided }`';
+  '`{ value, name, subTypes: [{ value, name, sortOrder }], playerRoles, sortOrder, matchProvided }`';
 
 /**
  * Every route — reads included — requires the caller's `role` to be
@@ -62,7 +58,8 @@ export class SportTypesController {
     summary: 'List sport types (superadmin)',
     description:
       'The values `sportType` accepts on group and event create/update, in ' +
-      'display order, each with its `subTypes`. The apps read the same list ' +
+      'display order, each with its `subTypes` (also in display order). The ' +
+      'apps read the same list ' +
       'from GET /configuration.',
   })
   findAll() {
@@ -84,7 +81,9 @@ export class SportTypesController {
   @ApiResponse({ status: 201, description: `The created sport as ${ROW}` })
   @ApiResponse({
     status: 400,
-    description: 'value or a playerRole is not a lowercase slug',
+    description:
+      'value, a playerRole or a subType value is not a lowercase slug, or a ' +
+      'subType value is repeated',
   })
   @ApiResponse({
     status: 409,
@@ -95,7 +94,9 @@ export class SportTypesController {
     description:
       '`value` is the ID: lowercased, unique (409 otherwise) and never ' +
       'changes. `name` is the display label, defaulting to `value`. Omit ' +
-      '`sortOrder` to append to the end of the list.',
+      '`sortOrder` to append to the end of the list. `subTypes` are the ' +
+      'formats events of this sport may use, e.g. ' +
+      '`[{ value: "futsal", name: "Futsal", sortOrder: 1 }]`.',
   })
   create(@Body() dto: CreateSportTypeDto) {
     return this.service.create(dto);
@@ -106,21 +107,24 @@ export class SportTypesController {
   @ApiResponse({ status: 200, description: `The updated sport as ${ROW}` })
   @ApiResponse({
     status: 400,
-    description: '`value` or `subTypes` was sent',
+    description: '`value` was sent, or a subType value is invalid or repeated',
   })
   @ApiResponse({ status: 404, description: 'Sport type not found' })
   @ApiResponse({
     status: 409,
-    description: 'Another sport already has this `name`',
+    description:
+      'Another sport already has this `name`, or a removed subType is still ' +
+      'used by an event or event template',
   })
   @ApiOperation({
     summary: 'Update a sport type (superadmin)',
     description:
-      'Changes `name`, `sortOrder`, `matchProvided` and/or `playerRoles` ' +
-      '(replaced as a whole list). `value` is the ' +
+      'Changes `name`, `sortOrder`, `matchProvided`, `playerRoles` and/or ' +
+      '`subTypes` (both replaced as a whole list). `value` is the ' +
       'ID stored on groups, events and users and never changes — renaming ' +
-      'only changes the display `name`. `subTypes` are managed through the ' +
-      '`/sub-types` endpoints.',
+      'only changes the display `name`. The same goes for a subType: keep its ' +
+      '`value` and change its `name`. A subType left out of the list is ' +
+      'removed, refused with 409 while an event or event template uses it.',
   })
   update(@Param('value') value: string, @Body() dto: UpdateSportTypeDto) {
     return this.service.update(value, dto);
@@ -157,117 +161,5 @@ export class SportTypesController {
     @Query() query: RemoveSportTypeQueryDto,
   ) {
     return this.service.remove(value, query.replaceWith);
-  }
-
-  @Post(':value/sub-types')
-  @ValueParam
-  @ApiResponse({
-    status: 201,
-    description: `The sport, with the new subType, as ${ROW}`,
-  })
-  @ApiResponse({ status: 400, description: 'subType is not a lowercase slug' })
-  @ApiResponse({ status: 404, description: 'Sport type not found' })
-  @ApiResponse({
-    status: 409,
-    description: 'The sport already lists this subType',
-  })
-  @ApiOperation({
-    summary: 'Add a subType to a sport type (superadmin)',
-    description:
-      'E.g. add `beach` to football. 409 if the sport already lists it.',
-  })
-  addSubType(@Param('value') value: string, @Body() dto: AddSubTypeDto) {
-    return this.service.addSubType(value, dto.subType);
-  }
-
-  @Put(':value/sub-types/order')
-  @ValueParam
-  @ApiResponse({
-    status: 200,
-    description: `The sport, with subTypes in the new order, as ${ROW}`,
-  })
-  @ApiResponse({
-    status: 400,
-    description: "subTypes is not exactly the sport's current subTypes",
-  })
-  @ApiResponse({ status: 404, description: 'Sport type not found' })
-  @ApiOperation({
-    summary: 'Reorder the subTypes of a sport type (superadmin)',
-    description:
-      'Send every current subType exactly once, in the new display order. ' +
-      'Use the add, rename and remove routes to change which subTypes exist.',
-  })
-  reorderSubTypes(
-    @Param('value') value: string,
-    @Body() dto: ReorderSubTypesDto,
-  ) {
-    return this.service.reorderSubTypes(value, dto.subTypes);
-  }
-
-  @Patch(':value/sub-types/:subType')
-  @ValueParam
-  @ApiParam({
-    name: 'subType',
-    description: 'The format to rename, e.g. `stadium` (case-insensitive)',
-    example: 'stadium',
-  })
-  @ApiResponse({
-    status: 200,
-    description: `The sport, with the subType renamed, as ${ROW}`,
-  })
-  @ApiResponse({ status: 400, description: 'subType is not a lowercase slug' })
-  @ApiResponse({
-    status: 404,
-    description: 'Sport type, or that subType on it, not found',
-  })
-  @ApiResponse({
-    status: 409,
-    description: 'The sport already lists the new name',
-  })
-  @ApiOperation({
-    summary: 'Rename a subType of a sport type (superadmin)',
-    description:
-      'Renames in place, keeping its position in `subTypes`. Events and ' +
-      'event templates of this sport storing the old name are moved to the ' +
-      'new one. 409 if the sport already lists the new name.',
-  })
-  renameSubType(
-    @Param('value') value: string,
-    @Param('subType') subType: string,
-    @Body() dto: RenameSubTypeDto,
-  ) {
-    return this.service.renameSubType(value, subType, dto.subType);
-  }
-
-  @Delete(':value/sub-types/:subType')
-  @ValueParam
-  @ApiParam({
-    name: 'subType',
-    description: 'The format to remove, e.g. `stadium` (case-insensitive)',
-    example: 'stadium',
-  })
-  @ApiResponse({
-    status: 200,
-    description: `The sport, without the subType, as ${ROW}`,
-  })
-  @ApiResponse({
-    status: 404,
-    description: 'Sport type, or that subType on it, not found',
-  })
-  @ApiResponse({
-    status: 409,
-    description: 'Still used by an event or event template of this sport',
-  })
-  @ApiOperation({
-    summary: 'Remove a subType from a sport type (superadmin)',
-    description:
-      'Refused with 409 while any event or event template of this sport ' +
-      'still uses the subType.',
-  })
-  removeSubType(
-    @Param('value') value: string,
-    @Param('subType') subType: string,
-  ) {
-    return this.service.removeSubType(value, subType);
   }
 }

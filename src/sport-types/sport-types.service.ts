@@ -7,7 +7,11 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { SportType, SportTypeDocument } from './schemas/sport-type.schema';
+import {
+  SportType,
+  SportTypeDocument,
+  SubType,
+} from './schemas/sport-type.schema';
 import { Group, GroupDocument } from '../groups/schemas/group.schema';
 import { Event, EventDocument } from '../events/schemas/event.schema';
 import {
@@ -15,7 +19,7 @@ import {
   EventTemplateDocument,
 } from '../events/schemas/event-template.schema';
 import { User, UserDocument } from '../users/schemas/user.schema';
-import { CreateSportTypeDto } from './dto/create-sport-type.dto';
+import { CreateSportTypeDto, SubTypeDto } from './dto/create-sport-type.dto';
 import { UpdateSportTypeDto } from './dto/update-sport-type.dto';
 
 const PUBLIC_FIELDS = 'value name subTypes playerRoles sortOrder matchProvided';
@@ -53,11 +57,8 @@ export class SportTypesService {
 
   /** One sport by its stored value, or null. Lean — callers only read it. */
   async findByValue(value: string) {
-    return this.sportTypeModel
-      .find({ value })
-      .limit(1)
-      .lean()
-      .then((rows) => rows[0] ?? null);
+    const rows = await this.sportTypeModel.find({ value }).limit(1).lean();
+    return rows[0] ? withDefaults(rows[0]) : null;
   }
 
   /**
@@ -84,17 +85,18 @@ export class SportTypesService {
     }
 
     if (!subType) return;
-    if (!sport.subTypes.includes(subType)) {
+    const subTypes = subTypeValues(sport);
+    if (!subTypes.includes(subType)) {
       // Two different mistakes, two different messages: sending a subType to
       // a sport that has none, versus misspelling one where formats do exist.
-      if (sport.subTypes.length === 0) {
+      if (subTypes.length === 0) {
         throw new BadRequestException(
           `subType is not valid for sportType '${sportType}'`,
         );
       }
       throw new BadRequestException(
         `Unknown subType '${subType}' for sportType '${sportType}'. ` +
-          `Valid values: ${sport.subTypes.join(', ')}`,
+          `Valid values: ${subTypes.join(', ')}`,
       );
     }
   }
@@ -137,7 +139,7 @@ export class SportTypesService {
     const created = await this.sportTypeModel.create({
       value: dto.value,
       name,
-      subTypes: unique(dto.subTypes ?? []),
+      subTypes: toSubTypes(dto.subTypes ?? []),
       playerRoles: unique(dto.playerRoles ?? []),
       sortOrder,
       matchProvided: dto.matchProvided ?? true,
@@ -146,9 +148,10 @@ export class SportTypesService {
   }
 
   /**
-   * Updates `name`, `sortOrder`, `matchProvided` and/or `playerRoles`. `value` is the ID
-   * other documents store and never changes, so a rename is a single write.
-   * SubTypes are changed through the dedicated sub-type methods below.
+   * Updates `name`, `sortOrder`, `matchProvided`, `playerRoles` and/or
+   * `subTypes`. `value` is the ID other documents store and never changes,
+   * so a rename is a single write. `subTypes` replaces the whole list; a
+   * subType left out is removed, refused while an event or template uses it.
    */
   async update(value: string, dto: UpdateSportTypeDto) {
     const sport = await this.findOne(value);
@@ -160,6 +163,16 @@ export class SportTypesService {
     }
     if (dto.playerRoles !== undefined) {
       $set.playerRoles = unique(dto.playerRoles);
+    }
+    if (dto.subTypes !== undefined) {
+      const next = toSubTypes(dto.subTypes);
+      const kept = new Set(next.map((st) => st.value));
+      for (const removed of subTypeValues(sport)) {
+        if (!kept.has(removed)) {
+          await this.assertSubTypeUnused(sport.value, removed);
+        }
+      }
+      $set.subTypes = next;
     }
     if (dto.name !== undefined && dto.name !== sport.name) {
       await this.assertNameFree(dto.name, sport.value);
@@ -215,8 +228,9 @@ export class SportTypesService {
    */
   private async reassignSport(
     from: string,
-    to: { value: string; subTypes: string[] },
+    target: { value: string; subTypes?: unknown },
   ) {
+    const to = { value: target.value, subTypes: subTypeValues(target) };
     const scoped = { sportType: from };
     const eventsAndTemplates = [this.eventModel, this.templateModel] as Model<
       EventDocument | EventTemplateDocument
@@ -278,103 +292,6 @@ export class SportTypesService {
     }
   }
 
-  /** Adds one format to a sport, e.g. 'beach' to football. A duplicate is a 409. */
-  async addSubType(value: string, subType: string) {
-    const sport = await this.findOne(value);
-    if (sport.subTypes.includes(subType)) {
-      throw new ConflictException(
-        `subType '${subType}' already exists on sport type '${sport.value}'`,
-      );
-    }
-    // $addToSet as well as the check above, so two concurrent adds of the
-    // same subType cannot produce a duplicate entry.
-    await this.sportTypeModel.updateOne(
-      { value: sport.value },
-      { $addToSet: { subTypes: subType } },
-    );
-    return this.findOne(sport.value);
-  }
-
-  /**
-   * Renames one format in place, e.g. football's 'stadium' → 'eleven-a-side',
-   * keeping its position in the list. Unlike a sport `value`, a subType can be
-   * renamed: only events and templates of this one sport store it, so they are
-   * moved to the new name rather than stranded.
-   *
-   * Events and templates move first, the sport row last: if a step fails, the
-   * old name is still listed, so the same request can simply be retried.
-   */
-  async renameSubType(value: string, subType: string, next: string) {
-    const sport = await this.findOne(value);
-    const current = subType.trim().toLowerCase();
-    if (!sport.subTypes.includes(current)) {
-      throw new NotFoundException(
-        `subType '${subType}' not found on sport type '${sport.value}'`,
-      );
-    }
-    if (next === current) return sport;
-    if (sport.subTypes.includes(next)) {
-      throw new ConflictException(
-        `subType '${next}' already exists on sport type '${sport.value}'`,
-      );
-    }
-
-    const filter = { sportType: sport.value, subType: current };
-    await Promise.all([
-      this.eventModel.updateMany(filter, { $set: { subType: next } }),
-      this.templateModel.updateMany(filter, { $set: { subType: next } }),
-    ]);
-    await this.sportTypeModel.updateOne(
-      { value: sport.value, subTypes: current },
-      { $set: { 'subTypes.$': next } },
-    );
-    return this.findOne(sport.value);
-  }
-
-  /**
-   * Re-sorts a sport's formats, e.g. football's ['futsal', 'stadium'] →
-   * ['stadium', 'futsal']. The list must hold exactly the current subTypes —
-   * adding, dropping and renaming have their own routes with their own
-   * in-use checks, so a reorder never touches events or templates.
-   */
-  async reorderSubTypes(value: string, order: string[]) {
-    const sport = await this.findOne(value);
-    const missing = sport.subTypes.filter((st) => !order.includes(st));
-    const unknown = order.filter((st) => !sport.subTypes.includes(st));
-    if (
-      missing.length ||
-      unknown.length ||
-      order.length !== sport.subTypes.length
-    ) {
-      throw new BadRequestException(
-        `subTypes must list each of '${sport.value}'s current subTypes ` +
-          `exactly once: ${sport.subTypes.join(', ')}`,
-      );
-    }
-    await this.sportTypeModel.updateOne(
-      { value: sport.value },
-      { $set: { subTypes: order } },
-    );
-    return this.findOne(sport.value);
-  }
-
-  /** Removes one format from a sport — refused while an event or template uses it. */
-  async removeSubType(value: string, subType: string) {
-    const sport = await this.findOne(value);
-    const normalised = subType.trim().toLowerCase();
-    if (!sport.subTypes.includes(normalised)) {
-      throw new NotFoundException(
-        `subType '${subType}' not found on sport type '${sport.value}'`,
-      );
-    }
-    await this.assertSubTypeUnused(sport.value, normalised);
-    await this.sportTypeModel.updateOne(
-      { value: sport.value },
-      { $pull: { subTypes: normalised } },
-    );
-    return this.findOne(sport.value);
-  }
-
   /**
    * Deleting a sport still stored somewhere would make those documents fail
    * validation on their next sportType write (see the seed script's note on
@@ -416,7 +333,8 @@ export class SportTypesService {
  * `.lean()` skips schema defaults, so a row stored before `matchProvided`,
  * `name` or `playerRoles` existed would read them as undefined. Every such
  * row is a match sport, is labelled by its value until a name is set, and
- * has no player roles.
+ * has no player roles. SubTypes come back as objects in display order,
+ * including rows still storing them as plain strings.
  */
 function withDefaults<
   T extends {
@@ -424,14 +342,70 @@ function withDefaults<
     name?: string;
     matchProvided?: boolean;
     playerRoles?: string[];
+    subTypes?: unknown;
   },
->(row: T): T & { name: string; matchProvided: boolean; playerRoles: string[] } {
+>(
+  row: T,
+): Omit<T, 'subTypes'> & {
+  name: string;
+  matchProvided: boolean;
+  playerRoles: string[];
+  subTypes: SubType[];
+} {
   return {
     ...row,
     name: row.name ?? row.value,
     matchProvided: row.matchProvided ?? true,
     playerRoles: row.playerRoles ?? [],
+    subTypes: readSubTypes(row.subTypes),
   };
+}
+
+/**
+ * Stored subTypes as objects, sorted by `sortOrder`. Accepts the old string
+ * form (`'futsal'` → `{ value: 'futsal', name: 'futsal', sortOrder: i + 1 }`).
+ */
+export function readSubTypes(stored: unknown): SubType[] {
+  if (!Array.isArray(stored)) return [];
+  return (stored as unknown[])
+    .map((entry, i): SubType => {
+      if (typeof entry === 'string') {
+        return { value: entry, name: entry, sortOrder: i + 1 };
+      }
+      const st = entry as Partial<SubType>;
+      return {
+        value: String(st.value),
+        name: st.name ?? String(st.value),
+        sortOrder: st.sortOrder ?? i + 1,
+      };
+    })
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
+/** A sport's subType values (what events store), in display order. */
+export function subTypeValues(sport: { subTypes?: unknown }): string[] {
+  return readSubTypes(sport.subTypes).map((st) => st.value);
+}
+
+/**
+ * Request subTypes → stored ones: name defaults to value, sortOrder to the
+ * 1-based array position. A repeated value is a 400.
+ */
+function toSubTypes(input: SubTypeDto[]): SubType[] {
+  const seen = new Set<string>();
+  for (const st of input) {
+    if (seen.has(st.value)) {
+      throw new BadRequestException(`subType '${st.value}' is listed twice`);
+    }
+    seen.add(st.value);
+  }
+  return input
+    .map((st, i) => ({
+      value: st.value,
+      name: st.name ?? st.value,
+      sortOrder: st.sortOrder ?? i + 1,
+    }))
+    .sort((a, b) => a.sortOrder - b.sortOrder);
 }
 
 function escapeRegex(s: string): string {

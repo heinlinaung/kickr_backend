@@ -108,9 +108,67 @@ describe('EventsService — team member roles', () => {
     });
     teamModel.findOne.mockResolvedValue(team);
 
-    await setRole('captain');
+    await setRole('player');
 
-    expect(team.playerRoles).toHaveLength(2);
+    expect(team.playerRoles).toHaveLength(1);
+    expect(team.playerRoles[0].userId.toString()).toBe(OUTSIDER);
+  });
+
+  it('replaces the old captain when a new one is named', async () => {
+    // One captain per team — the previous one is demoted in the same save.
+    const other = new Types.ObjectId(OUTSIDER);
+    const team = teamDoc({
+      players: [new Types.ObjectId(PLAYER), other],
+      playerRoles: [{ userId: other, role: 'captain' }],
+    });
+    teamModel.findOne.mockResolvedValue(team);
+
+    const res = await setRole('captain');
+
+    expect(team.playerRoles).toHaveLength(1);
+    expect(team.playerRoles[0].userId.toString()).toBe(PLAYER);
+    expect(team.playerRoles[0].role).toBe('captain');
+    expect(team.save).toHaveBeenCalledTimes(1);
+    expect(res.replacedCaptainId).toBe(OUTSIDER);
+  });
+
+  it('reports no replacement when re-setting the same captain', async () => {
+    const team = teamDoc({
+      playerRoles: [{ userId: new Types.ObjectId(PLAYER), role: 'captain' }],
+    });
+    teamModel.findOne.mockResolvedValue(team);
+
+    const res = await setRole('captain');
+
+    expect(team.playerRoles).toHaveLength(1);
+    expect(res.replacedCaptainId).toBeNull();
+  });
+
+  it('removes a role via removeTeamMemberRole', async () => {
+    const team = teamDoc({
+      playerRoles: [{ userId: new Types.ObjectId(PLAYER), role: 'captain' }],
+    });
+    teamModel.findOne.mockResolvedValue(team);
+
+    const res = await service.removeTeamMemberRole(
+      EVENT_ID,
+      TEAM_ID,
+      PLAYER,
+      CREATOR,
+    );
+
+    expect(team.playerRoles).toHaveLength(0);
+    expect(res.role).toBe('player');
+  });
+
+  it('removing a role from a plain player is a no-op success', async () => {
+    const team = teamDoc();
+    teamModel.findOne.mockResolvedValue(team);
+
+    await expect(
+      service.removeTeamMemberRole(EVENT_ID, TEAM_ID, PLAYER, CREATOR),
+    ).resolves.toBeDefined();
+    expect(team.playerRoles).toHaveLength(0);
   });
 
   it('refuses a player who is not in the squad', async () => {

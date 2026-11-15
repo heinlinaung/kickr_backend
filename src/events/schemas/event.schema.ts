@@ -257,6 +257,20 @@ export class Event {
   proposalRejectReason: string | null;
 
   /**
+   * Challenge readiness (2026-11-13): when each side's owner/admin declared
+   * their squad final via POST /events/:id/side/ready. `host` is `groupId`'s
+   * side, `opponent` is `opponentGroupId`'s. Once BOTH are set the server
+   * moves the event `join -> ready_to_play` and builds the two side teams.
+   * A roster change on a side clears that side's flag; a revert to `join`
+   * clears both. Null on normal events.
+   */
+  @Prop({ type: Date, default: null })
+  hostReadyAt: Date | null;
+
+  @Prop({ type: Date, default: null })
+  opponentReadyAt: Date | null;
+
+  /**
    * Each side's kit for this match, agreed in the proposal (the "color
    * conflict" a reviewer may reject over). Doubles as the two team names at
    * generation time.
