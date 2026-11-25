@@ -228,13 +228,11 @@ describe('EventsService — member payments (submit/review)', () => {
 
     it('still refuses an approved member who owes nothing', async () => {
       mockEvent({ price: 120 });
-      paymentModel.findOne = jest
-        .fn()
-        .mockResolvedValue({
-          status: 'approved',
-          amount: 120,
-          paidAmount: 120,
-        });
+      paymentModel.findOne = jest.fn().mockResolvedValue({
+        status: 'approved',
+        amount: 120,
+        paidAmount: 120,
+      });
       await expect(submit()).rejects.toThrow(BadRequestException);
     });
 
@@ -508,5 +506,4 @@ describe('EventsService — member payments (submit/review)', () => {
       ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
-
 });

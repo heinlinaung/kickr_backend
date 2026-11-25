@@ -62,9 +62,7 @@ describe('EventsService — team formation', () => {
       eventId: new Types.ObjectId(EVENT_ID),
       players: [CAPTAIN, P1, P2, P3].map((id) => new Types.ObjectId(id)),
       guests: [new Types.ObjectId(GUEST_ROW)],
-      playerRoles: [
-        { userId: new Types.ObjectId(CAPTAIN), role: 'captain' },
-      ],
+      playerRoles: [{ userId: new Types.ObjectId(CAPTAIN), role: 'captain' }],
       formation: null,
       save: jest.fn().mockResolvedValue(undefined),
     };
@@ -143,7 +141,7 @@ describe('EventsService — team formation', () => {
     });
   });
 
-  describe('permission — organizer OR this team\'s captain', () => {
+  describe("permission — organizer OR this team's captain", () => {
     it("lets the team's captain set the line-up without any group role", async () => {
       await expect(set(CAPTAIN)).resolves.toBeDefined();
       // The organizer check never ran — captaincy alone authorized.
@@ -224,9 +222,9 @@ describe('EventsService — team formation', () => {
     });
 
     it('404s the read until a formation is set', async () => {
-      await expect(
-        service.getTeamFormation(EVENT_ID, TEAM_ID),
-      ).rejects.toThrow('No formation has been set for this team');
+      await expect(service.getTeamFormation(EVENT_ID, TEAM_ID)).rejects.toThrow(
+        'No formation has been set for this team',
+      );
     });
 
     it('a since-removed member resolves to a null name, not a shifted line-up', async () => {

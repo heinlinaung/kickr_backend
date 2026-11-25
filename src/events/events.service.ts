@@ -50,10 +50,7 @@ import { GiveMvpAwardDto } from '../awards/dto/give-mvp-award.dto';
 import { AwardsService } from '../awards/awards.service';
 import { awardError } from '../awards/awards.errors';
 import { CancelEventDto } from './dto/cancel-event.dto';
-import {
-  ListPlayersQueryDto,
-  PlayerFlag,
-} from './dto/list-players-query.dto';
+import { ListPlayersQueryDto, PlayerFlag } from './dto/list-players-query.dto';
 import { CreateEventTemplateDto } from './dto/create-event-template.dto';
 import { LocationsService } from '../locations/locations.service';
 import {
@@ -304,11 +301,17 @@ export class EventsService {
     // A disjunction rather than a bare `isPublic: true`, and it sits in $or at
     // the top level so the region/date/status/geo narrowings below stay ANDed
     // against it: a joined event must not bypass an explicit filter.
-    const [joinedIds, memberGroupIds, adminGroupIds] = await Promise.all([
-      this.joinedEventIds(userId),
+    const [roster, memberGroupIds, adminGroupIds] = await Promise.all([
+      this.myRoster(userId),
       this.approvedGroupIds(userId),
       this.adminGroupIds(userId),
     ]);
+    // The roster arm covers PENDING invitations too (2026-11-24): an event
+    // the caller was invited to belongs on their Home feed, not only behind
+    // GET /events/group/:id. Rows are tagged below so the client can render
+    // an accept/decline card instead of a joined one.
+    const joinedIds = roster.joinedIds;
+    const rosterIds = [...roster.joinedIds, ...roster.invitedIds];
     // Three routes to visibility: an event is public, the caller JOINED it,
     // or it belongs to a group the caller is an approved MEMBER of. The third
     // arm is what lets a member discover their own group's private events
@@ -322,7 +325,7 @@ export class EventsService {
     // covers them). Hence the member arm excludes challenge events and two
     // admin-only arms carry them, one per side.
     const visibility: Record<string, unknown>[] = [{ isPublic: true }];
-    if (joinedIds.length) visibility.push({ _id: { $in: joinedIds } });
+    if (rosterIds.length) visibility.push({ _id: { $in: rosterIds } });
     if (memberGroupIds.length) {
       visibility.push({
         groupId: { $in: memberGroupIds },
@@ -458,9 +461,11 @@ export class EventsService {
     // open from a public one it has not joined. Matches GET /events/:id and
     // GET /events/joined, which both carry this flag.
     const joined = new Set(joinedIds.map(String));
+    const invited = new Set(roster.invitedIds.map(String));
     return events.map((event) => ({
       ...withIsFull(event),
       joinedByMe: joined.has(String(event._id)),
+      invitedByMe: invited.has(String(event._id)),
     }));
   }
 
@@ -723,21 +728,17 @@ export class EventsService {
    * to your own list.
    */
   async listJoined(userId: string, status?: string, includeExpired = false) {
-    const rows = await this.playerModel
-      .find({
-        userId: new Types.ObjectId(userId),
-        // A cancelled row survives for reactivation, so filter on the status
-        // rather than mere presence — otherwise an event you left comes back.
-        status: 'joined',
-      })
-      .select('eventId')
-      .lean();
+    // Joined AND pending-invitation rows (2026-11-24): an event the caller was
+    // invited to shows on their Home list straight away, rather than only
+    // under the group's detail page. Each row is tagged so the client can
+    // tell "you're in" from "you're invited — accept or decline".
+    const { joinedIds, invitedIds } = await this.myRoster(userId);
 
     // No $in against an empty array.
-    if (!rows.length) return [];
+    if (!joinedIds.length && !invitedIds.length) return [];
 
     const filter: Record<string, unknown> = {
-      _id: { $in: rows.map((row) => row.eventId) },
+      _id: { $in: [...joinedIds, ...invitedIds] },
     };
 
     if (status !== undefined) {
@@ -761,13 +762,26 @@ export class EventsService {
     }
 
     const events = await this.eventModel.find(filter).sort({ date: 1 }).lean();
-    // joinedByMe is true by construction — every row here came from the
-    // caller's own roster entries — but stated explicitly so a card rendered
-    // from this list looks the same as one rendered from event detail.
-    return events.map((event) => ({ ...withIsFull(event), joinedByMe: true }));
+    // Every row came from the caller's own roster: it is either joined or a
+    // pending invitation, never both (one EventPlayer row per user/event).
+    const invited = new Set(invitedIds.map(String));
+    return events.map((event) => {
+      const isInvited = invited.has(String(event._id));
+      return {
+        ...withIsFull(event),
+        joinedByMe: !isInvited,
+        invitedByMe: isInvited,
+      };
+    });
   }
 
-  async create(userId: string, dto: CreateEventDto): Promise<EventDocument> {
+  async create(
+    userId: string,
+    dto: CreateEventDto,
+    // Group challenge matches are exempt from the weekly plan cap
+    // (2026-11-24) — only createChallengeEvent passes this.
+    opts: { skipPlanLimit?: boolean } = {},
+  ): Promise<EventDocument> {
     if (dto.groupId) {
       const member = await this.memberModel.findOne({
         groupId: new Types.ObjectId(dto.groupId),
@@ -887,20 +901,27 @@ export class EventsService {
     // how full a week gets — see PlanLimits.maxEventsPerWeek. Deleting an
     // event frees its slot; a done event still occupies one, since it was
     // played that week.
-    const limits = await this.plansService.limitsFor(userId);
-    const { start: weekStart, end: weekEnd } = weekOf(new Date(dto.date));
-    const scheduled = await this.eventModel.countDocuments({
-      createdBy: new Types.ObjectId(userId),
-      date: { $gte: weekStart, $lt: weekEnd },
-      // A cancelled event frees its slot, same as a deleted one: the week was
-      // not used. A `done` event still counts — it was played that week.
-      status: { $ne: 'cancelled' },
-    });
-    if (scheduled >= limits.maxEventsPerWeek) {
-      throw new BadRequestException(
-        `Your plan allows at most ${limits.maxEventsPerWeek} events per ` +
-          "week — pick a different week or delete one of that week's events",
-      );
+    //
+    // Group CHALLENGE events are unlimited (2026-11-24): they skip this gate
+    // and are not counted against it either, so scheduling matches never
+    // eats into a creator's normal-event allowance.
+    if (!opts.skipPlanLimit) {
+      const limits = await this.plansService.limitsFor(userId);
+      const { start: weekStart, end: weekEnd } = weekOf(new Date(dto.date));
+      const scheduled = await this.eventModel.countDocuments({
+        createdBy: new Types.ObjectId(userId),
+        date: { $gte: weekStart, $lt: weekEnd },
+        // A cancelled event frees its slot, same as a deleted one: the week
+        // was not used. A `done` event still counts — it was played that week.
+        status: { $ne: 'cancelled' },
+        type: { $ne: 'challenge' },
+      });
+      if (scheduled >= limits.maxEventsPerWeek) {
+        throw new BadRequestException(
+          `Your plan allows at most ${limits.maxEventsPerWeek} events per ` +
+            "week — pick a different week or delete one of that week's events",
+        );
+      }
     }
 
     if (locationId) {
@@ -1519,7 +1540,8 @@ export class EventsService {
     const from = event.status;
     event.status = to;
     // Back to join: the squads are open again, so neither side is ready any
-    // more and the auto-built side teams no longer describe the roster.
+    // more. The side teams STAY — they live for the whole match — and are
+    // re-synced to the roster below.
     const revertedChallenge =
       event.type === 'challenge' && from === 'ready_to_play' && to === 'join';
     if (revertedChallenge) {
@@ -1527,13 +1549,7 @@ export class EventsService {
       event.opponentReadyAt = null;
     }
     await event.save();
-    if (revertedChallenge) {
-      await this.teamModel.deleteMany({ eventId: event._id });
-      await this.playerModel.updateMany(
-        { eventId: event._id },
-        { $set: { team: null } },
-      );
-    }
+    if (revertedChallenge) await this.ensureChallengeTeamsSafely(event);
 
     // Every lifecycle move is announced to the people actually playing. The
     // message depends on direction as well as target: a revert out of
@@ -1644,20 +1660,24 @@ export class EventsService {
       throw new BadRequestException('Only a cancelled event can be restored');
     }
 
-    const limits = await this.plansService.limitsFor(
-      event.createdBy.toString(),
-    );
-    const { start: weekStart, end: weekEnd } = weekOf(event.date);
-    const scheduled = await this.eventModel.countDocuments({
-      createdBy: event.createdBy,
-      date: { $gte: weekStart, $lt: weekEnd },
-      status: { $ne: 'cancelled' },
-    });
-    if (scheduled >= limits.maxEventsPerWeek) {
-      throw new BadRequestException(
-        `Restoring would exceed the plan's ${limits.maxEventsPerWeek} events ` +
-          'for that week — another event has taken the freed slot',
+    // Challenge events are exempt from the weekly cap, same as on create.
+    if (event.type !== 'challenge') {
+      const limits = await this.plansService.limitsFor(
+        event.createdBy.toString(),
       );
+      const { start: weekStart, end: weekEnd } = weekOf(event.date);
+      const scheduled = await this.eventModel.countDocuments({
+        createdBy: event.createdBy,
+        date: { $gte: weekStart, $lt: weekEnd },
+        status: { $ne: 'cancelled' },
+        type: { $ne: 'challenge' },
+      });
+      if (scheduled >= limits.maxEventsPerWeek) {
+        throw new BadRequestException(
+          `Restoring would exceed the plan's ${limits.maxEventsPerWeek} events ` +
+            'for that week — another event has taken the freed slot',
+        );
+      }
     }
 
     const backTo = event.statusBeforeCancel;
@@ -3249,6 +3269,40 @@ export class EventsService {
       }
     }
 
+    // Bulk add (2026-11-20): `count` creates several NUMBERED guests in one
+    // call — "mg mg 1", "mg mg 2", ... Only for an owner/admin, who has no
+    // allowance; a member's +2 is added one at a time as before.
+    if (dto.count !== undefined) {
+      if (dto.count > 1 && !isGroupManager) {
+        throw new ForbiddenException(
+          'Only a group owner or admin can add several guests at once',
+        );
+      }
+      const names = await this.numberedGuestNames(
+        eventId,
+        sponsorId,
+        sponsor,
+        dto.guestName?.trim() || null,
+        dto.count,
+      );
+      const joinedAt = new Date();
+      const guests = await this.playerModel.insertMany(
+        names.map((guestName) => ({
+          eventId: new Types.ObjectId(eventId),
+          type: 'guest',
+          guestName,
+          addedByUserId: new Types.ObjectId(sponsorId),
+          approval: 'pending',
+          status: 'joined',
+          joinedAt,
+        })),
+      );
+      return {
+        message: `${guests.length} guest(s) added`,
+        guests: guests.map((g) => g.toJSON()),
+      };
+    }
+
     const guest = await this.playerModel.create({
       eventId: new Types.ObjectId(eventId),
       type: 'guest',
@@ -3296,6 +3350,52 @@ export class EventsService {
       : // No readable name to borrow — still numbered, so two guests from the
         // same member never share a label.
         `Guest ${everBrought + 1}`;
+  }
+
+  /**
+   * `count` guest names for a bulk add.
+   *
+   * With a base name, "<base> <n>" numbered after the highest "<base> <n>"
+   * already on the event (any sponsor, any state — a rejected "mg mg 3" still
+   * holds its number), so a second batch never repeats a name. Without one,
+   * the default "<sponsor name> guest <n>" sequence.
+   */
+  private async numberedGuestNames(
+    eventId: string,
+    sponsorId: string,
+    sponsor: EventPlayerDocument,
+    base: string | null,
+    count: number,
+  ): Promise<string[]> {
+    if (!base) {
+      // defaultGuestName gives the NEXT one; its prefix is reused for the rest.
+      const first = await this.defaultGuestName(eventId, sponsorId, sponsor);
+      const match = /^(.*) (\d+)$/.exec(first)!;
+      const start = Number(match[2]);
+      return Array.from(
+        { length: count },
+        (_, i) => `${match[1]} ${start + i}`,
+      );
+    }
+
+    const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = new RegExp(`^${escaped} (\\d+)$`, 'i');
+    const existing = await this.playerModel
+      .find({
+        eventId: new Types.ObjectId(eventId),
+        type: 'guest',
+        guestName: { $regex: pattern },
+      })
+      .select('guestName')
+      .lean();
+    const highest = existing.reduce((max, row) => {
+      const n = Number(pattern.exec(row.guestName ?? '')?.[1] ?? 0);
+      return n > max ? n : max;
+    }, 0);
+    return Array.from(
+      { length: count },
+      (_, i) => `${base} ${highest + i + 1}`,
+    );
   }
 
   /**
@@ -3974,7 +4074,12 @@ export class EventsService {
     }
   }
 
-  /** Best-effort notification to every owner/admin of one group. */
+  /**
+   * Best-effort app notification to every owner/admin of one group: persisted
+   * in-app row, live socket emit and FCM push (via `notifyUsers`). `create`
+   * alone only stores the row, so the other side's phone never buzzes on a
+   * proposal verdict or resubmission.
+   */
   private async notifySideAdmins(
     groupId: Types.ObjectId,
     title: string,
@@ -3990,16 +4095,9 @@ export class EventsService {
         })
         .select('userId')
         .lean();
-      await Promise.all(
-        admins.map((admin) =>
-          this.notificationsService.create({
-            userId: admin.userId.toString(),
-            title,
-            body,
-            type: 'event',
-            refId: eventId,
-          }),
-        ),
+      await this.notificationsService.notifyUsers(
+        admins.map((admin) => admin.userId.toString()),
+        { title, body, type: 'event', refId: eventId },
       );
     } catch (err) {
       this.logger.warn(`Challenge event notification failed: ${err}`);
@@ -4015,8 +4113,8 @@ export class EventsService {
    * proposer's group (`groupId`) with the other side on `opponentGroupId`,
    * is forced private, and starts with `proposedStatus: 'proposed'` — inert
    * until the other side accepts. Reuses the normal create(), so sportType
-   * inheritance, validation and the weekly PLAN limit all apply (a challenge
-   * event counts like any other).
+   * inheritance and validation apply — but NOT the weekly plan limit: a
+   * challenge match is unlimited and does not use up a normal-event slot.
    */
   async createChallengeEvent(
     challengeId: string,
@@ -4060,13 +4158,17 @@ export class EventsService {
       : challenge.challengerGroupId;
 
     const { challengerColor, challengedColor, ...eventDto } = dto;
-    const event = await this.create(userId, {
-      ...eventDto,
-      groupId: proposerGroupId.toString(),
-      // Forced regardless of what was sent — a challenge match is the two
-      // groups' business.
-      isPublic: false,
-    } as CreateEventDto);
+    const event = await this.create(
+      userId,
+      {
+        ...eventDto,
+        groupId: proposerGroupId.toString(),
+        // Forced regardless of what was sent — a challenge match is the two
+        // groups' business.
+        isPublic: false,
+      } as CreateEventDto,
+      { skipPlanLimit: true },
+    );
 
     event.type = 'challenge';
     event.challengeId = challenge._id;
@@ -4129,6 +4231,10 @@ export class EventsService {
     event.proposalRejectReason =
       dto.action === 'reject' ? (dto.reason ?? null) : null;
     await event.save();
+
+    // The match is on: both side teams exist from this moment, so each
+    // group's admins invite players straight into their own team.
+    if (dto.action === 'accept') await this.ensureChallengeTeamsSafely(event);
 
     await this.notifySideAdmins(
       event.groupId as Types.ObjectId,
@@ -4259,29 +4365,39 @@ export class EventsService {
         });
       }
       invited.push(targetId);
+    }
 
-      try {
-        await this.notificationsService.create({
-          userId: targetId,
-          title: 'Challenge match invitation',
-          body:
-            `You have been invited to the challenge match '${event.title}' — ` +
-            'accept or decline',
-          type: 'event',
-          refId: event._id.toString(),
-        });
-      } catch (err) {
-        this.logger.warn(`Invitation notification failed: ${err}`);
-      }
+    // App notification to every newly invited player — in-app row, live
+    // socket emit and FCM push in one fan-out (`create` alone only stores the
+    // row, so the phone never buzzes). Skipped players were already invited
+    // or joined and are not re-notified. `notifyUsers` never throws.
+    if (invited.length) {
+      await this.notificationsService.notifyUsers(invited, {
+        title: 'Challenge match invitation',
+        body:
+          `You have been invited to the challenge match '${event.title}' — ` +
+          'accept or decline',
+        type: 'event',
+        refId: event._id.toString(),
+      });
     }
 
     // New invitations reopen the squad: the side is no longer ready.
     if (invited.length) await this.clearSideReady(event, sideGroupId);
 
+    // Events accepted before side teams were pre-built get theirs here.
+    await this.ensureChallengeTeamsSafely(event);
+    const team = await this.teamModel
+      .findOne({ eventId: event._id, groupId: sideGroupId })
+      .select('_id name')
+      .lean();
+
     return {
       message: `${invited.length} player(s) invited`,
       invited,
       skipped,
+      teamId: team?._id ?? null,
+      teamName: team?.name ?? null,
     };
   }
 
@@ -4355,10 +4471,7 @@ export class EventsService {
 
     // Marking ready finalises the squad: invitations nobody answered are
     // withdrawn so they cannot be accepted later (which would clear the flag).
-    const withdrawn = await this.withdrawPendingInvitations(
-      event,
-      sideGroupId,
-    );
+    const withdrawn = await this.withdrawPendingInvitations(event, sideGroupId);
 
     // Atomic: two admins marking ready at once must not both miss each other.
     const updated = await this.eventModel.findOneAndUpdate(
@@ -4413,13 +4526,21 @@ export class EventsService {
       event._id.toString(),
     );
 
-    // Build the two side teams from the roster. Best-effort: the status move
-    // stands even if this fails, and an organizer can still generate/shuffle
-    // by hand in ready_to_play.
+    // The two side teams already exist (built on proposal accept and kept in
+    // step with each side's accepted roster) — finalise them in place and add
+    // the fixtures, so team ids, captaincies and formations survive. Falls
+    // back to a full rebuild if that fails. Best-effort: the status move
+    // stands either way, and an organizer can still generate/shuffle by hand
+    // in ready_to_play.
     try {
-      await this.shuffleTeams(eventId, userId);
+      await this.finalizeChallengeTeams(moved);
     } catch (err) {
-      this.logger.warn(`Auto team build failed for ${eventId}: ${err}`);
+      this.logger.warn(`Challenge team finalise failed for ${eventId}: ${err}`);
+      try {
+        await this.shuffleTeams(eventId, userId);
+      } catch (err2) {
+        this.logger.warn(`Auto team build failed for ${eventId}: ${err2}`);
+      }
     }
 
     return {
@@ -4526,6 +4647,178 @@ export class EventsService {
   }
 
   /**
+   * [challenger, challenged] group ids — the order the side teams and their
+   * fixtures use. From the CHALLENGE, since the proposer (`groupId`) may be
+   * either side; falls back to the event's two groups.
+   */
+  private async challengeSidesOf(
+    event: EventDocument,
+  ): Promise<[Types.ObjectId, Types.ObjectId]> {
+    const challenge = event.challengeId
+      ? await this.challengeModel
+          .findById(event.challengeId)
+          .select('challengerGroupId challengedGroupId')
+          .lean()
+      : null;
+    if (challenge) {
+      return [challenge.challengerGroupId, challenge.challengedGroupId];
+    }
+    return [event.groupId as Types.ObjectId, event.opponentGroupId!];
+  }
+
+  /**
+   * Group challenge teams (2026-11-20): the two side teams exist from the
+   * moment the proposal is accepted — not only once both sides mark ready —
+   * so each group's admins invite their members straight into their own team
+   * and the app can show "your side vs opponent" from the start.
+   *
+   * Idempotent. A side that already has its team keeps it (id, captaincies,
+   * formation survive); only a missing one is created, named by the agreed
+   * jersey color. Each team's players are then synced from that side's
+   * ACCEPTED roster — invited players are not on the team until they accept.
+   */
+  private async ensureChallengeTeams(event: EventDocument): Promise<void> {
+    if (event.type !== 'challenge' || event.proposedStatus !== 'accepted') {
+      return;
+    }
+    const sides = await this.challengeSidesOf(event);
+    const names = [
+      event.challengeColors?.challengerColor ?? String(TEAM_COLOURS[0]),
+      event.challengeColors?.challengedColor ?? String(TEAM_COLOURS[1]),
+    ];
+    for (const [index, side] of sides.entries()) {
+      await this.teamModel.updateOne(
+        { eventId: event._id, groupId: side },
+        {
+          $setOnInsert: {
+            name: names[index],
+            players: [],
+            guests: [],
+            playerRoles: [],
+            numberOfPlayers: 1,
+            status: 'pending',
+          },
+        },
+        { upsert: true },
+      );
+      await this.syncChallengeTeam(event, side);
+    }
+  }
+
+  /** `ensureChallengeTeams` for side paths whose own work must not fail on it. */
+  private async ensureChallengeTeamsSafely(event: EventDocument) {
+    try {
+      await this.ensureChallengeTeams(event);
+    } catch (err) {
+      this.logger.warn(`Challenge team sync failed for ${event._id}: ${err}`);
+    }
+  }
+
+  /**
+   * Makes one side's team match that side's accepted roster: `players`,
+   * the squad size (a challenge squad has no cap, so the target IS the
+   * squad), status, roles of players who left, `EventPlayer.team`, and the
+   * team chat room.
+   */
+  private async syncChallengeTeam(
+    event: EventDocument,
+    side: Types.ObjectId,
+  ): Promise<void> {
+    const team = await this.teamModel.findOne({
+      eventId: event._id,
+      groupId: side,
+    });
+    if (!team) return;
+
+    const rows = await this.playerModel
+      .find({
+        eventId: event._id,
+        groupId: side,
+        status: 'joined',
+        userId: { $ne: null },
+      })
+      .select('userId')
+      .sort({ joinedAt: 1 })
+      .lean();
+    const ids = rows.map((r) => r.userId as Types.ObjectId);
+    const keep = new Set(ids.map(String));
+
+    team.players = ids;
+    team.numberOfPlayers = Math.max(1, ids.length);
+    team.status = ids.length ? 'ready' : 'pending';
+    team.playerRoles = (team.playerRoles ?? []).filter((entry) =>
+      keep.has(entry.userId.toString()),
+    );
+    await team.save();
+
+    await this.playerModel.updateMany(
+      { eventId: event._id, team: team.name, userId: { $nin: ids } },
+      { $set: { team: null } },
+    );
+    if (ids.length) {
+      await this.playerModel.updateMany(
+        { eventId: event._id, userId: { $in: ids } },
+        { $set: { team: team.name } },
+      );
+    }
+    await this.teamChatModel.updateOne(
+      { eventId: event._id, team: team.name },
+      {
+        $setOnInsert: {
+          eventId: event._id,
+          team: team.name,
+          archived: false,
+        },
+      },
+      { upsert: true },
+    );
+  }
+
+  /**
+   * Both sides are ready: the side teams are final. Re-syncs them and adds the
+   * fixtures (challenger first) if there are none yet. Throws when the two
+   * side teams cannot be found, so the caller can fall back to a rebuild.
+   */
+  private async finalizeChallengeTeams(event: EventDocument): Promise<void> {
+    await this.ensureChallengeTeams(event);
+    const sides = (await this.challengeSidesOf(event)).map(String);
+    const teams = await this.teamModel
+      .find({ eventId: event._id })
+      .select('name groupId')
+      .lean();
+    const ordered = sides.map((side) =>
+      teams.find((t) => String(t.groupId) === side),
+    );
+    if (teams.length !== 2 || ordered.some((t) => !t)) {
+      throw new Error(`expected 2 side teams, found ${teams.length}`);
+    }
+
+    if (await this.matchModel.exists({ eventId: event._id })) return;
+    const eventId = event._id.toString();
+    const duration =
+      (await this.scheduledMatchDuration(eventId)) ??
+      Math.max(
+        1,
+        Math.floor(
+          (event.duration - MATCH_BUFFER_MINUTES) / DEFAULT_SHUFFLE_MATCHES,
+        ),
+      );
+    const matchCount = matchCountFor(event.duration, duration);
+    if (matchCount < 1) return;
+    const fixtures = generateFixturesFilling(
+      ordered.map((t) => t!.name),
+      matchCount,
+    );
+    await this.matchModel.insertMany(
+      fixtures.map((fixture) => ({
+        ...fixture,
+        eventId: event._id,
+        duration,
+      })),
+    );
+  }
+
+  /**
    * The invited player's answer — `POST /events/:id/invitation/respond`.
    *
    * Accept puts them on the roster (status `joined`, joinedCount bumped) and
@@ -4564,7 +4857,11 @@ export class EventsService {
         { _id: event._id },
         { $inc: { joinedCount: 1 } },
       );
-      if (row.groupId) await this.clearSideReady(event, row.groupId);
+      if (row.groupId) {
+        await this.clearSideReady(event, row.groupId);
+        // Accepting puts the player straight onto their side's team.
+        await this.ensureChallengeTeamsSafely(event);
+      }
       return { message: 'Invitation accepted — you are on the squad' };
     }
 
@@ -4617,8 +4914,12 @@ export class EventsService {
 
     const wasJoined = row.status === 'joined';
     row.status = 'cancelled';
+    row.team = null;
     await row.save();
-    if (row.groupId) await this.clearSideReady(event, row.groupId);
+    if (row.groupId) {
+      await this.clearSideReady(event, row.groupId);
+      if (wasJoined) await this.ensureChallengeTeamsSafely(event);
+    }
     // Only an ACCEPTED player ever counted.
     if (wasJoined) {
       await this.eventModel.updateOne(
@@ -5097,6 +5398,34 @@ export class EventsService {
       .select('eventId')
       .lean();
     return rows.map((row) => row.eventId);
+  }
+
+  /**
+   * The caller's live roster rows, split by state: events they JOINED and
+   * events they hold a pending INVITATION to (challenge assignments start
+   * `invited`). Cancelled rows — left events, declined/withdrawn invitations
+   * — are in neither. Backs the Home lists GET /events and GET /events/joined.
+   */
+  private async myRoster(
+    userId: string,
+  ): Promise<{ joinedIds: unknown[]; invitedIds: unknown[] }> {
+    if (!Types.ObjectId.isValid(userId))
+      return { joinedIds: [], invitedIds: [] };
+
+    const rows = await this.playerModel
+      .find({
+        userId: new Types.ObjectId(userId),
+        status: { $in: ['joined', 'invited'] },
+      })
+      .select('eventId status')
+      .lean();
+
+    const joinedIds: unknown[] = [];
+    const invitedIds: unknown[] = [];
+    for (const row of rows as { eventId: unknown; status?: string }[]) {
+      (row.status === 'invited' ? invitedIds : joinedIds).push(row.eventId);
+    }
+    return { joinedIds, invitedIds };
   }
 
   /** Event ids the caller is currently on the roster of (a left event is not one). */

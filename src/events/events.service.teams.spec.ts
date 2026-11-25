@@ -84,11 +84,11 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
     // Two roster queries now: registered players, then approved guests. The
     // double branches on the query so the guest lookup does not receive player
     // documents; individual tests override it to supply guests.
-    playerModel.find = jest.fn().mockImplementation((q: any = {}) =>
-      isGuestQuery(q)
-        ? guestRows([])
-        : joinedPlayers([P1, P2, P3, P4]),
-    );
+    playerModel.find = jest
+      .fn()
+      .mockImplementation((q: any = {}) =>
+        isGuestQuery(q) ? guestRows([]) : joinedPlayers([P1, P2, P3, P4]),
+      );
     playerModel.findOne = jest.fn().mockResolvedValue(null);
     playerModel.bulkWrite = jest.fn().mockResolvedValue({});
     memberModel.findOne = jest.fn().mockResolvedValue(null);
@@ -185,9 +185,7 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
     it('refuses a match duration that does not fit the event', async () => {
       // 60-minute event, 10 reserved as buffer -> a 90-minute match cannot fit.
       eventModel.findById.mockResolvedValue(eventDoc({ duration: 60 }));
-      await expect(generate({ duration: 90 })).rejects.toThrow(
-        /does not fit/,
-      );
+      await expect(generate({ duration: 90 })).rejects.toThrow(/does not fit/);
     });
 
     it('refuses a stranger', async () => {
@@ -253,7 +251,9 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
         const doc = eventDoc({ teamCount: 4, duration: 60 });
         eventModel.findById.mockResolvedValue(doc);
 
-        await expect(generate({ duration: 90 })).rejects.toThrow(/does not fit/);
+        await expect(generate({ duration: 90 })).rejects.toThrow(
+          /does not fit/,
+        );
 
         expect(doc.teamCount).toBe(4);
         expect(doc.save).not.toHaveBeenCalled();
@@ -287,7 +287,9 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       eventModel.findById.mockResolvedValue(eventDoc());
       await generate();
 
-      const names = teamModel.insertMany.mock.calls[0][0].map((t: any) => t.name);
+      const names = teamModel.insertMany.mock.calls[0][0].map(
+        (t: any) => t.name,
+      );
       expect(names).toEqual(['Red', 'Yellow', 'Blue']);
     });
 
@@ -456,10 +458,9 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       // Stale teams would otherwise keep players on teams with no fixtures.
       expect(teamModel.deleteMany).toHaveBeenCalled();
       expect(matchModel.deleteMany).toHaveBeenCalled();
-      expect(playerModel.updateMany).toHaveBeenCalledWith(
-        expect.anything(),
-        { $set: { team: null } },
-      );
+      expect(playerModel.updateMany).toHaveBeenCalledWith(expect.anything(), {
+        $set: { team: null },
+      });
     });
 
     it('upserts one chat room per team', async () => {
@@ -545,7 +546,10 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
     });
 
     it('an empty roster clears the team back to pending', async () => {
-      const doc = teamDoc({ players: [new Types.ObjectId(P1)], status: 'ready' });
+      const doc = teamDoc({
+        players: [new Types.ObjectId(P1)],
+        status: 'ready',
+      });
       teamModel.findOne.mockResolvedValue(doc);
       eventModel.findById.mockResolvedValue(eventDoc());
 
@@ -594,9 +598,11 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
     it('rejects a player already in another team, naming that team', async () => {
       eventModel.findById.mockResolvedValue(eventDoc());
       teamModel.find.mockReturnValue({
-        lean: jest.fn().mockResolvedValue([
-          { _id: 'other', name: 'Blue', players: [new Types.ObjectId(P1)] },
-        ]),
+        lean: jest
+          .fn()
+          .mockResolvedValue([
+            { _id: 'other', name: 'Blue', players: [new Types.ObjectId(P1)] },
+          ]),
       });
 
       // Two teams claiming one player would corrupt standings and stats.
@@ -677,12 +683,10 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
         const team = teamDoc();
         teamModel.findOne.mockResolvedValue(team);
 
-        await service.assignTeamPlayers(
-          EVENT_ID,
-          String(team._id),
-          CREATOR,
-          { playerIds: [P1], guestIds: [GUEST] },
-        );
+        await service.assignTeamPlayers(EVENT_ID, String(team._id), CREATOR, {
+          playerIds: [P1],
+          guestIds: [GUEST],
+        });
 
         expect(team.guests.map(String)).toEqual([GUEST]);
       });
@@ -696,12 +700,10 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
         const team = teamDoc({ name: 'Blue' });
         teamModel.findOne.mockResolvedValue(team);
 
-        await service.assignTeamPlayers(
-          EVENT_ID,
-          String(team._id),
-          CREATOR,
-          { playerIds: [], guestIds: [GUEST] },
-        );
+        await service.assignTeamPlayers(EVENT_ID, String(team._id), CREATOR, {
+          playerIds: [],
+          guestIds: [GUEST],
+        });
 
         const byId = playerModel.updateMany.mock.calls.find(
           ([filter]: any[]) => filter._id?.$in,
@@ -717,10 +719,15 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
         teamModel.findOne.mockResolvedValue(teamDoc());
 
         await expect(
-          service.assignTeamPlayers(EVENT_ID, String(new Types.ObjectId()), CREATOR, {
-            playerIds: [],
-            guestIds: [GUEST],
-          }),
+          service.assignTeamPlayers(
+            EVENT_ID,
+            String(new Types.ObjectId()),
+            CREATOR,
+            {
+              playerIds: [],
+              guestIds: [GUEST],
+            },
+          ),
         ).rejects.toBeInstanceOf(BadRequestException);
       });
 
@@ -732,10 +739,15 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
         teamModel.findOne.mockResolvedValue(teamDoc({ numberOfPlayers: 5 }));
 
         await expect(
-          service.assignTeamPlayers(EVENT_ID, String(new Types.ObjectId()), CREATOR, {
-            playerIds: [P1, P2, P3, P4],
-            guestIds: [GUEST, GUEST2],
-          }),
+          service.assignTeamPlayers(
+            EVENT_ID,
+            String(new Types.ObjectId()),
+            CREATOR,
+            {
+              playerIds: [P1, P2, P3, P4],
+              guestIds: [GUEST, GUEST2],
+            },
+          ),
         ).rejects.toThrow(/holds at most 5/);
       });
 
@@ -744,16 +756,27 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
         withGuests([P1], [GUEST]);
         teamModel.findOne.mockResolvedValue(teamDoc());
         teamModel.find.mockReturnValue({
-          lean: jest.fn().mockResolvedValue([
-            { name: 'Yellow', players: [], guests: [new Types.ObjectId(GUEST)] },
-          ]),
+          lean: jest
+            .fn()
+            .mockResolvedValue([
+              {
+                name: 'Yellow',
+                players: [],
+                guests: [new Types.ObjectId(GUEST)],
+              },
+            ]),
         });
 
         await expect(
-          service.assignTeamPlayers(EVENT_ID, String(new Types.ObjectId()), CREATOR, {
-            playerIds: [],
-            guestIds: [GUEST],
-          }),
+          service.assignTeamPlayers(
+            EVENT_ID,
+            String(new Types.ObjectId()),
+            CREATOR,
+            {
+              playerIds: [],
+              guestIds: [GUEST],
+            },
+          ),
         ).rejects.toThrow(/already in Yellow/);
       });
 
@@ -765,12 +788,9 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
         const team = teamDoc({ guests: [new Types.ObjectId(GUEST)] });
         teamModel.findOne.mockResolvedValue(team);
 
-        await service.assignTeamPlayers(
-          EVENT_ID,
-          String(team._id),
-          CREATOR,
-          { playerIds: [P1] },
-        );
+        await service.assignTeamPlayers(EVENT_ID, String(team._id), CREATOR, {
+          playerIds: [P1],
+        });
 
         expect(team.guests).toEqual([]);
       });
@@ -781,12 +801,10 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
         const team = teamDoc();
         teamModel.findOne.mockResolvedValue(team);
 
-        await service.assignTeamPlayers(
-          EVENT_ID,
-          String(team._id),
-          CREATOR,
-          { playerIds: [], guestIds: [GUEST] },
-        );
+        await service.assignTeamPlayers(EVENT_ID, String(team._id), CREATOR, {
+          playerIds: [],
+          guestIds: [GUEST],
+        });
 
         expect(team.status).toBe('ready');
       });
@@ -847,13 +865,17 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       // one being added later and silently dropping it.
       eventModel.findById.mockReturnValue({
         select: jest.fn().mockReturnThis(),
-        lean: jest.fn().mockResolvedValue({ _id: new Types.ObjectId(EVENT_ID) }),
+        lean: jest
+          .fn()
+          .mockResolvedValue({ _id: new Types.ObjectId(EVENT_ID) }),
       });
       matchModel.find.mockReturnValue({
         sort: jest.fn().mockReturnThis(),
-        lean: jest.fn().mockResolvedValue([
-          { matchNumber: 1, teamA: 'Red', teamB: 'Yellow', duration: 15 },
-        ]),
+        lean: jest
+          .fn()
+          .mockResolvedValue([
+            { matchNumber: 1, teamA: 'Red', teamB: 'Yellow', duration: 15 },
+          ]),
       });
 
       const rows: any = await service.listMatches(EVENT_ID);
@@ -895,9 +917,7 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       teamModel.find = jest.fn().mockReturnValue({
         select: jest.fn().mockReturnThis(),
         sort: jest.fn().mockReturnThis(),
-        lean: jest
-          .fn()
-          .mockResolvedValue(names.map((name) => ({ name }))),
+        lean: jest.fn().mockResolvedValue(names.map((name) => ({ name }))),
       });
     };
     const insertedNames = () =>
@@ -920,7 +940,11 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       );
       playerModel.find = jest.fn().mockImplementation((q: any) =>
         isGuestQuery(q)
-          ? { select: jest.fn().mockReturnThis(), sort: jest.fn().mockReturnThis(), lean: jest.fn().mockResolvedValue([]) }
+          ? {
+              select: jest.fn().mockReturnThis(),
+              sort: jest.fn().mockReturnThis(),
+              lean: jest.fn().mockResolvedValue([]),
+            }
           : {
               select: jest.fn().mockReturnThis(),
               sort: jest.fn().mockReturnThis(),
@@ -1098,17 +1122,25 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
     const highest = (matchNumber: number | null) => ({
       sort: jest.fn().mockReturnThis(),
       select: jest.fn().mockReturnThis(),
-      lean: jest.fn().mockResolvedValue(matchNumber === null ? null : { matchNumber }),
+      lean: jest
+        .fn()
+        .mockResolvedValue(matchNumber === null ? null : { matchNumber }),
     });
 
     beforeEach(() => {
       eventModel.findById.mockResolvedValue(eventDoc());
-      teamModel.find = jest.fn().mockReturnValue(teamRows(['Red', 'Yellow', 'Blue']));
+      teamModel.find = jest
+        .fn()
+        .mockReturnValue(teamRows(['Red', 'Yellow', 'Blue']));
       matchModel.findOne = jest.fn().mockReturnValue(highest(2));
       matchModel.create = jest
         .fn()
         .mockImplementation((row: any) =>
-          Promise.resolve({ ...row, _id: 'new', toJSON: () => ({ ...row, _id: 'new' }) }),
+          Promise.resolve({
+            ...row,
+            _id: 'new',
+            toJSON: () => ({ ...row, _id: 'new' }),
+          }),
         );
     });
 
@@ -1184,7 +1216,9 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
     });
 
     it('rejects a team name that is not on the event', async () => {
-      await expect(add('Green', 'Red')).rejects.toThrow(/not a team on this event/);
+      await expect(add('Green', 'Red')).rejects.toThrow(
+        /not a team on this event/,
+      );
     });
 
     it('rejects a team playing itself', async () => {
@@ -1217,15 +1251,12 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       'playing',
       'after_match',
       'done',
-    ])(
-      'is allowed in %s — no lifecycle gate by decision',
-      async (status) => {
-        // Deliberately ungated: this is an escape hatch for a schedule the
-        // generator could not express, and an organizer may need it late.
-        eventModel.findById.mockResolvedValue(eventDoc({ status }));
-        await expect(add('Blue', 'Red')).resolves.toBeDefined();
-      },
-    );
+    ])('is allowed in %s — no lifecycle gate by decision', async (status) => {
+      // Deliberately ungated: this is an escape hatch for a schedule the
+      // generator could not express, and an organizer may need it late.
+      eventModel.findById.mockResolvedValue(eventDoc({ status }));
+      await expect(add('Blue', 'Red')).resolves.toBeDefined();
+    });
   });
 
   describe('setMatchScore', () => {
@@ -1355,12 +1386,17 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       // passing, referee has been added to ORGANIZER_ROLES by mistake.
       asRole('referee');
       eventModel.findById.mockResolvedValue(
-        eventDoc({ status: 'preparation', groupId: new Types.ObjectId(GROUP_ID) }),
+        eventDoc({
+          status: 'preparation',
+          groupId: new Types.ObjectId(GROUP_ID),
+        }),
       );
 
       await expect(
         service.generateTeams(EVENT_ID, REFEREE, {
-          teamsCount: 2, duration: 30, numberOfPlayers: 3,
+          teamsCount: 2,
+          duration: 30,
+          numberOfPlayers: 3,
         } as any),
       ).rejects.toBeInstanceOf(ForbiddenException);
 
@@ -1377,7 +1413,10 @@ describe('EventsService — teams, fixtures, scores (spec §4.3)', () => {
       // Being allowed to score does not mean scoring any time.
       asRole('referee');
       eventModel.findById.mockResolvedValue(
-        eventDoc({ status: 'preparation', groupId: new Types.ObjectId(GROUP_ID) }),
+        eventDoc({
+          status: 'preparation',
+          groupId: new Types.ObjectId(GROUP_ID),
+        }),
       );
       await expect(score(REFEREE)).rejects.toBeInstanceOf(BadRequestException);
     });

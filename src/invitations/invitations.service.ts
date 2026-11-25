@@ -3,6 +3,7 @@ import {
   NotFoundException,
   ConflictException,
   BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
@@ -13,14 +14,18 @@ import {
 } from '../groups/schemas/group-member.schema';
 import { RespondInvitationDto } from './dto/respond-invitation.dto';
 import { GroupsService } from '../groups/groups.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 @Injectable()
 export class InvitationsService {
+  private readonly logger = new Logger(InvitationsService.name);
+
   constructor(
     @InjectModel(Group.name) private groupModel: Model<GroupDocument>,
     @InjectModel(GroupMember.name)
     private memberModel: Model<GroupMemberDocument>,
     private groupsService: GroupsService,
+    private notificationsService: NotificationsService,
   ) {}
 
   async requestToJoin(groupId: string, userId: string) {
@@ -69,7 +74,10 @@ export class InvitationsService {
 
     if (dto.action === 'approved') {
       // Check group capacity before approving
-      const group = await this.groupModel.findById(groupId).lean();
+      const group = await this.groupModel
+        .findById(groupId)
+        .select('name maxPlayers')
+        .lean();
       if (group) {
         const approvedCount = await this.memberModel.countDocuments({
           groupId: new Types.ObjectId(groupId),
@@ -83,6 +91,23 @@ export class InvitationsService {
       invitation.status = 'approved';
       invitation.joinedAt = new Date();
       await invitation.save();
+
+      // Tell the requester they're in. A side effect only: the approval is
+      // already saved, so a delivery failure must not fail the request.
+      try {
+        await this.notificationsService.notifyUsers(
+          [String(invitation.userId)],
+          {
+            title: 'Join request approved',
+            body: `You're now a member of ${group?.name ?? 'the group'}`,
+            type: 'group',
+            refId: groupId,
+          },
+        );
+      } catch (err) {
+        this.logger.warn(`Group approval notification failed: ${err}`);
+      }
+
       return { message: 'Member approved' };
     } else {
       await invitation.deleteOne();

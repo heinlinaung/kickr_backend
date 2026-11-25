@@ -62,9 +62,10 @@ export class EventsController {
   @ApiOperation({
     summary: 'Discover events',
     description:
-      'Every PUBLIC event, plus every event the caller has joined — private ' +
-      'ones included, because being on the roster is the permission. Each row ' +
-      'carries `joinedByMe`, so a mixed list can be told apart; do not assume ' +
+      'Every PUBLIC event, plus every event the caller has joined or holds a ' +
+      'pending invitation to — private ones included, because being on the ' +
+      'roster (or invited to it) is the permission. Each row carries ' +
+      '`joinedByMe` and `invitedByMe`, so a mixed list can be told apart; do not assume ' +
       'a row from here is public. Roster membership is the test, not group ' +
       'membership: a private event you have not joined stays hidden even from ' +
       'a member of the owning group — use GET /events/group/:groupId for a ' +
@@ -218,12 +219,14 @@ export class EventsController {
    */
   @Get('joined')
   @ApiOperation({
-    summary: 'Events the caller has joined, soonest first',
+    summary: 'Events the caller has joined or been invited to, soonest first',
     description:
-      'Every event where the caller is on the roster — including private ' +
-      'group events, which GET /events cannot show. Expired and `done` ' +
-      'events are hidden unless includeExpired=true. An event you have left ' +
-      'is excluded.',
+      'Every event where the caller is on the roster OR holds a pending ' +
+      'invitation (e.g. a challenge match) — including private group events. ' +
+      'Each row carries `joinedByMe` / `invitedByMe`; an invited row should ' +
+      'be answered via POST /events/:id/invitation/respond. Expired and `done` ' +
+      'events are hidden unless includeExpired=true. An event you have left, ' +
+      'or an invitation you declined, is excluded.',
   })
   @ApiQuery({
     name: 'status',
@@ -480,10 +483,18 @@ export class EventsController {
       'on the roster and does not count toward capacity until an organizer ' +
       'approves them. At most 2 guests per member, counting pending and ' +
       'approved but not rejected, so a rejection does not burn an allowance. ' +
-      'A guest has no account: `guestName` is all the system knows.',
+      'A guest has no account: `guestName` is all the system knows. ' +
+      'A group OWNER/ADMIN (no allowance) may send `count` to add several ' +
+      'numbered guests at once: `{ guestName: "mg mg", count: 3 }` creates ' +
+      '"mg mg 1", "mg mg 2", "mg mg 3", and the next batch continues at ' +
+      '"mg mg 4". With `count` the response is `{ message, guests: [...] }`.',
   })
   @ApiResponse({ status: 400, description: 'Not in `join`, or allowance used' })
-  @ApiResponse({ status: 403, description: 'Caller has not joined the event' })
+  @ApiResponse({
+    status: 403,
+    description:
+      'Caller has not joined the event, or sent `count` > 1 without being a group owner/admin',
+  })
   addGuest(
     @Param('id') id: string,
     @CurrentUser() user: any,

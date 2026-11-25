@@ -4,7 +4,12 @@ import { HydratedDocument, Types } from 'mongoose';
 
 export type ChallengeDocument = HydratedDocument<Challenge>;
 
-export const CHALLENGE_STATUSES = ['proposed', 'accepted', 'rejected'] as const;
+export const CHALLENGE_STATUSES = [
+  'proposed',
+  'accepted',
+  'rejected',
+  'cancelled',
+] as const;
 export type ChallengeStatus = (typeof CHALLENGE_STATUSES)[number];
 
 /**
@@ -43,6 +48,17 @@ export class Challenge {
 
   @Prop({ type: Date, default: null })
   respondedAt: Date | null;
+
+  /** Why the challenge was called off (POST /challenges/:id/cancel); null otherwise. */
+  @Prop({ type: String, default: null })
+  cancelReason: string | null;
+
+  /** The owner/admin who cancelled it; null unless cancelled. */
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null })
+  cancelledBy: Types.ObjectId | null;
+
+  @Prop({ type: Date, default: null })
+  cancelledAt: Date | null;
 
   /** The one proposal event; null until it is created. One challenge, one event. */
   @Prop({ type: Types.ObjectId, ref: 'Event', default: null })
