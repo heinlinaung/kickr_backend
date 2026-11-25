@@ -1,6 +1,11 @@
 // src/groups/public-groups.controller.ts
 import { Controller, Get, Param, UseGuards } from '@nestjs/common';
-import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { OptionalJwtAuthGuard } from '../common/guards/optional-jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { GroupsService } from './groups.service';
@@ -16,6 +21,7 @@ import { GroupsService } from './groups.service';
  * matching before this `:id`.
  */
 @ApiTags('Groups')
+@ApiBearerAuth()
 @Controller('groups')
 @UseGuards(OptionalJwtAuthGuard)
 export class PublicGroupsController {

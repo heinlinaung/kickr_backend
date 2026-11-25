@@ -77,7 +77,9 @@ describe('generateFixtures — double round-robin (spec §4.3.4)', () => {
   it('plays leg 1 in full before leg 2 begins', () => {
     const fixtures = generateFixtures(['Red', 'Yellow', 'Blue']);
     // Leg 1 is the first half; the same pairing must not repeat inside it.
-    const leg1 = fixtures.slice(0, 3).map((f) => [f.teamA, f.teamB].sort().join('v'));
+    const leg1 = fixtures
+      .slice(0, 3)
+      .map((f) => [f.teamA, f.teamB].sort().join('v'));
     expect(new Set(leg1).size).toBe(3);
   });
 
@@ -202,8 +204,9 @@ describe('matchCountFor — duration-driven scheduling', () => {
 describe('generateFixturesLimited', () => {
   it('caps the fixture list at the limit', () => {
     // 4 teams would be 12 fixtures unlimited.
-    expect(generateFixturesLimited(['Red', 'Yellow', 'Blue', 'Black'], 2))
-      .toHaveLength(2);
+    expect(
+      generateFixturesLimited(['Red', 'Yellow', 'Blue', 'Black'], 2),
+    ).toHaveLength(2);
   });
 
   it('takes a prefix of leg 1, so no team plays a rematch early', () => {
@@ -287,8 +290,20 @@ describe('computeStandings (spec §4.3, decision #5)', () => {
     const red = table.find((r) => r.team === 'Red')!;
     const blue = table.find((r) => r.team === 'Blue')!;
 
-    expect(red).toMatchObject({ played: 2, won: 1, drawn: 1, lost: 0, points: 4 });
-    expect(blue).toMatchObject({ played: 2, won: 0, drawn: 1, lost: 1, points: 1 });
+    expect(red).toMatchObject({
+      played: 2,
+      won: 1,
+      drawn: 1,
+      lost: 0,
+      points: 4,
+    });
+    expect(blue).toMatchObject({
+      played: 2,
+      won: 0,
+      drawn: 1,
+      lost: 1,
+      points: 1,
+    });
   });
 
   it('skips fixtures with a null score on either side', () => {

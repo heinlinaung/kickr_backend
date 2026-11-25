@@ -374,9 +374,9 @@ describe('EventsService — lifecycle', () => {
     it('is organizer-gated', async () => {
       eventModel.findById.mockResolvedValue(cancelledDoc());
 
-      await expect(
-        service.restore(EVENT_ID, STRANGER),
-      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.restore(EVENT_ID, STRANGER)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
     });
 
     it('refuses when another event has taken the freed weekly slot', async () => {
@@ -390,6 +390,18 @@ describe('EventsService — lifecycle', () => {
         /freed slot/,
       );
       expect(doc.save).not.toHaveBeenCalled();
+    });
+
+    it('restores a challenge event even when the weekly cap is full', async () => {
+      const doc = cancelledDoc();
+      doc.type = 'challenge';
+      eventModel.findById.mockResolvedValue(doc);
+      eventModel.countDocuments.mockResolvedValue(10);
+
+      await service.restore(EVENT_ID, CREATOR);
+
+      expect(eventModel.countDocuments).not.toHaveBeenCalled();
+      expect(doc.save).toHaveBeenCalled();
     });
 
     it('counts the week against the CREATOR, excluding cancelled rows', async () => {
@@ -784,7 +796,7 @@ describe('EventsService — lifecycle', () => {
       expect(filter).not.toHaveProperty('isPublic');
     });
 
-    it("includes challenge events where the group is the opponent, only once accepted", async () => {
+    it('includes challenge events where the group is the opponent, only once accepted', async () => {
       memberModel.findOne.mockResolvedValue({ role: 'member' });
 
       await service.listByGroup(GROUP_ID, STRANGER);
@@ -803,7 +815,7 @@ describe('EventsService — lifecycle', () => {
       expect(eventModel.find.mock.calls[0][0].isPublic).toBe(true);
     });
 
-    it("also shows a non-member the events they are invited to or joined", async () => {
+    it('also shows a non-member the events they are invited to or joined', async () => {
       memberModel.findOne.mockResolvedValue(null);
       const EVENT = new Types.ObjectId();
       playerModel.find = jest.fn().mockReturnValue({

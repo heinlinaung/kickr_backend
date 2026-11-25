@@ -26,23 +26,47 @@ describe('EventsController — search', () => {
 
   it('GET /events/search delegates the query', async () => {
     await controller.searchEvents(CALLER, 'friday night');
-    expect(svc.search).toHaveBeenCalledWith('friday night', false, undefined, undefined, 'u1');
+    expect(svc.search).toHaveBeenCalledWith(
+      'friday night',
+      false,
+      undefined,
+      undefined,
+      'u1',
+    );
   });
 
   it('coerces a missing query to an empty string', async () => {
     await controller.searchEvents(CALLER, undefined);
-    expect(svc.search).toHaveBeenCalledWith('', false, undefined, undefined, 'u1');
+    expect(svc.search).toHaveBeenCalledWith(
+      '',
+      false,
+      undefined,
+      undefined,
+      'u1',
+    );
   });
 
   describe('includeExpired', () => {
     it("is true only for the exact string 'true'", async () => {
       await controller.searchEvents(CALLER, 'friday', 'true');
-      expect(svc.search).toHaveBeenCalledWith('friday', true, undefined, undefined, 'u1');
+      expect(svc.search).toHaveBeenCalledWith(
+        'friday',
+        true,
+        undefined,
+        undefined,
+        'u1',
+      );
     });
 
     it('defaults to false when absent', async () => {
       await controller.searchEvents(CALLER, 'friday', undefined);
-      expect(svc.search).toHaveBeenCalledWith('friday', false, undefined, undefined, 'u1');
+      expect(svc.search).toHaveBeenCalledWith(
+        'friday',
+        false,
+        undefined,
+        undefined,
+        'u1',
+      );
     });
 
     it('is false for any other value, so a typo never widens visibility', async () => {
@@ -50,7 +74,13 @@ describe('EventsController — search', () => {
       for (const v of ['1', 'yes', 'TRUE', '']) {
         jest.clearAllMocks();
         await controller.searchEvents(CALLER, 'friday', v);
-        expect(svc.search).toHaveBeenCalledWith('friday', false, undefined, undefined, 'u1');
+        expect(svc.search).toHaveBeenCalledWith(
+          'friday',
+          false,
+          undefined,
+          undefined,
+          'u1',
+        );
       }
     });
   });
@@ -58,17 +88,30 @@ describe('EventsController — search', () => {
   describe('limit', () => {
     it('passes a numeric limit through as a number', async () => {
       await controller.searchEvents(CALLER, 'friday', undefined, '35');
-      expect(svc.search).toHaveBeenCalledWith('friday', false, 35, undefined, 'u1');
+      expect(svc.search).toHaveBeenCalledWith(
+        'friday',
+        false,
+        35,
+        undefined,
+        'u1',
+      );
     });
 
     it('stays undefined when absent, so the service default wins', async () => {
       await controller.searchEvents(CALLER, 'friday', undefined, undefined);
-      expect(svc.search).toHaveBeenCalledWith('friday', false, undefined, undefined, 'u1');
+      expect(svc.search).toHaveBeenCalledWith(
+        'friday',
+        false,
+        undefined,
+        undefined,
+        'u1',
+      );
     });
 
     it('forwards the cursor verbatim', async () => {
       // Opaque to the controller — it must not parse or validate it.
-      await controller.searchEvents(CALLER, 
+      await controller.searchEvents(
+        CALLER,
         'friday',
         undefined,
         undefined,

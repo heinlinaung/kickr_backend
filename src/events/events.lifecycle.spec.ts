@@ -379,9 +379,7 @@ describe('challenge lifecycle — match table minus preparation (2026-10-14)', (
 
   it('statusesFor: eventType outranks the sport', () => {
     // A challenge match provides matches yet runs the shorter table.
-    expect(statusesFor(true, 'challenge')).toEqual(
-      CHALLENGE_EVENT_STATUSES,
-    );
+    expect(statusesFor(true, 'challenge')).toEqual(CHALLENGE_EVENT_STATUSES);
     // Without the eventType, a match-provided sport keeps its six states.
     expect(statusesFor(true)).toEqual(EVENT_STATUSES);
   });
@@ -398,9 +396,7 @@ describe('challenge lifecycle — match table minus preparation (2026-10-14)', (
       }
     }
     // The defining cut: a challenge event can never ENTER preparation.
-    expect(canTransition('join', 'preparation', true, 'challenge')).toBe(
-      false,
-    );
+    expect(canTransition('join', 'preparation', true, 'challenge')).toBe(false);
   });
 
   it('teams are built in ready_to_play, not preparation', () => {

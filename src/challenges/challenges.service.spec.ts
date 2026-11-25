@@ -24,7 +24,9 @@ describe('ChallengesService', () => {
   const challengeModel: any = {};
   const groupModel: any = {};
   const memberModel: any = {};
-  const notifications = { create: jest.fn().mockResolvedValue(undefined) };
+  const notifications = {
+    notifyUsers: jest.fn().mockResolvedValue({ notified: 1, pushed: 1 }),
+  };
 
   const chain = (result: any) => ({
     select: jest.fn().mockReturnThis(),
@@ -122,11 +124,12 @@ describe('ChallengesService', () => {
       expect(doc.createdBy.toString()).toBe(ADMIN_A);
       expect(doc.unreadByChallenged).toBe(true);
 
-      expect(notifications.create).toHaveBeenCalledWith(
+      expect(notifications.notifyUsers).toHaveBeenCalledWith(
+        [ADMIN_B],
         expect.objectContaining({
-          userId: ADMIN_B,
           title: 'New challenge',
           type: 'group',
+          refId: GROUP_B,
         }),
       );
     });
@@ -166,7 +169,8 @@ describe('ChallengesService', () => {
       expect(doc.rejectReason).toBeNull();
       expect(String(doc.respondedBy)).toBe(ADMIN_B);
       expect(doc.save).toHaveBeenCalled();
-      expect(notifications.create).toHaveBeenCalledWith(
+      expect(notifications.notifyUsers).toHaveBeenCalledWith(
+        expect.any(Array),
         expect.objectContaining({ title: 'Challenge accepted' }),
       );
     });
@@ -179,11 +183,100 @@ describe('ChallengesService', () => {
 
       expect(doc.status).toBe('rejected');
       expect(doc.rejectReason).toBe('Squad is away');
-      expect(notifications.create).toHaveBeenCalledWith(
+      expect(notifications.notifyUsers).toHaveBeenCalledWith(
+        expect.any(Array),
         expect.objectContaining({
           body: expect.stringContaining('Squad is away'),
         }),
       );
+    });
+  });
+
+  describe('cancel', () => {
+    const cancel = (dto: any = {}, userId = ADMIN_A) =>
+      service.cancel(CHALLENGE_ID, userId, dto);
+
+    it('404s an unknown challenge', async () => {
+      challengeModel.findById.mockResolvedValue(null);
+      await expect(cancel()).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it.each(['rejected', 'cancelled'])(
+      'refuses a %s challenge — it is already over',
+      async (status) => {
+        challengeModel.findById.mockResolvedValue(challengeDoc({ status }));
+        await expect(cancel()).rejects.toBeInstanceOf(BadRequestException);
+      },
+    );
+
+    it('lets only the CHALLENGER side withdraw a proposed challenge', async () => {
+      memberModel.findOne.mockResolvedValue(null);
+      await expect(cancel({}, ADMIN_B)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      const [filter] = memberModel.findOne.mock.calls[0];
+      expect(filter.groupId.toString()).toBe(GROUP_A);
+    });
+
+    it('withdraws a proposed challenge and tells the challenged side', async () => {
+      const doc: any = challengeDoc({ unreadByChallenged: true });
+      challengeModel.findById.mockResolvedValue(doc);
+
+      await cancel({ reason: 'Squad injured' });
+
+      expect(doc.status).toBe('cancelled');
+      expect(doc.cancelReason).toBe('Squad injured');
+      expect(String(doc.cancelledBy)).toBe(ADMIN_A);
+      expect(doc.cancelledAt).toBeInstanceOf(Date);
+      expect(doc.unreadByChallenged).toBe(false);
+      expect(doc.save).toHaveBeenCalled();
+      // Notification goes to the OTHER group's admins.
+      const [adminFilter] = memberModel.find.mock.calls[0];
+      expect(adminFilter.groupId.toString()).toBe(GROUP_B);
+      expect(notifications.notifyUsers).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.objectContaining({
+          title: 'Challenge cancelled',
+          body: expect.stringContaining('Squad injured'),
+        }),
+      );
+    });
+
+    it('lets either side cancel an accepted challenge with no event yet', async () => {
+      const doc: any = challengeDoc({ status: 'accepted' });
+      challengeModel.findById.mockResolvedValue(doc);
+      memberModel.findOne.mockResolvedValue({
+        role: 'owner',
+        groupId: new Types.ObjectId(GROUP_B),
+      });
+
+      await cancel({}, ADMIN_B);
+
+      expect(doc.status).toBe('cancelled');
+      expect(doc.cancelReason).toBeNull();
+      const [filter] = memberModel.findOne.mock.calls[0];
+      expect(filter.groupId.$in.map(String)).toEqual([GROUP_A, GROUP_B]);
+      // Challenged side cancelled → the challenger side hears about it.
+      const [adminFilter] = memberModel.find.mock.calls[0];
+      expect(adminFilter.groupId.toString()).toBe(GROUP_A);
+    });
+
+    it('403s an accepted-challenge cancel from an admin of neither group', async () => {
+      challengeModel.findById.mockResolvedValue(
+        challengeDoc({ status: 'accepted' }),
+      );
+      memberModel.findOne.mockResolvedValue(null);
+      await expect(cancel()).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('refuses once the match event exists — cancel the event instead', async () => {
+      const doc: any = challengeDoc({
+        status: 'accepted',
+        eventId: new Types.ObjectId(),
+      });
+      challengeModel.findById.mockResolvedValue(doc);
+      await expect(cancel()).rejects.toThrow(/events\/:id\/cancel/);
+      expect(doc.save).not.toHaveBeenCalled();
     });
   });
 

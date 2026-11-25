@@ -16,6 +16,7 @@ import {
 import { NotificationsService } from '../notifications/notifications.service';
 import { CreateChallengeDto } from './dto/create-challenge.dto';
 import { RespondChallengeDto } from './dto/respond-challenge.dto';
+import { CancelChallengeDto } from './dto/cancel-challenge.dto';
 import { Challenge, ChallengeDocument } from './schemas/challenge.schema';
 
 @Injectable()
@@ -135,6 +136,77 @@ export class ChallengesService {
   }
 
   /**
+   * Call a challenge off — `POST /challenges/:id/cancel`.
+   *
+   * A soft cancel (status `cancelled`), not a delete: both groups keep the
+   * row in their history with who cancelled it and why, and the pending
+   * guard in `create` (status `proposed` only) frees the pair to challenge
+   * again at once.
+   *
+   * - `proposed`: only the CHALLENGER side may withdraw it. The challenged
+   *   side already has its verb for "no": reject.
+   * - `accepted`: either side's owner/admin, as long as no match event has
+   *   been proposed yet. Once the event exists the match lives there — cancel
+   *   it with POST /events/:id/cancel instead, so its roster is told.
+   * - `rejected` / `cancelled`: already over, nothing to cancel.
+   */
+  async cancel(challengeId: string, userId: string, dto: CancelChallengeDto) {
+    const challenge = await this.findOrThrow(challengeId);
+    if (challenge.status !== 'proposed' && challenge.status !== 'accepted') {
+      throw new BadRequestException(
+        `This challenge has already been ${challenge.status}`,
+      );
+    }
+
+    const challengerId = challenge.challengerGroupId.toString();
+    const challengedId = challenge.challengedGroupId.toString();
+
+    let cancellingSide: string;
+    if (challenge.status === 'proposed') {
+      await this.assertGroupAdmin(
+        challengerId,
+        userId,
+        'Only an owner/admin of the challenger group can withdraw a pending challenge — the challenged group rejects it instead',
+      );
+      cancellingSide = challengerId;
+    } else {
+      if (challenge.eventId) {
+        throw new BadRequestException(
+          'This challenge already has its match event — cancel the event via POST /events/:id/cancel instead',
+        );
+      }
+      cancellingSide = await this.adminSideOf(
+        [challengerId, challengedId],
+        userId,
+        'Only an owner/admin of either group can cancel this challenge',
+      );
+    }
+
+    challenge.status = 'cancelled';
+    challenge.cancelReason = dto.reason ?? null;
+    challenge.cancelledBy = new Types.ObjectId(userId);
+    challenge.cancelledAt = new Date();
+    // Nothing left for the challenged side to read.
+    challenge.unreadByChallenged = false;
+    await challenge.save();
+
+    const otherSide =
+      cancellingSide === challengerId ? challengedId : challengerId;
+    const canceller = await this.groupModel
+      .findById(cancellingSide)
+      .select('name')
+      .lean();
+    await this.notifyGroupAdmins(
+      otherSide,
+      'Challenge cancelled',
+      `'${canceller?.name}' cancelled the challenge` +
+        (dto.reason ? `: ${dto.reason}` : ''),
+    );
+
+    return challenge;
+  }
+
+  /**
    * A group's challenges, both directions, newest first. Approved members
    * only — the handshake is group business, not public.
    */
@@ -230,7 +302,31 @@ export class ChallengesService {
     if (!member) throw new ForbiddenException(message);
   }
 
-  /** Best-effort notification to every owner/admin of a group. */
+  /**
+   * The first of `groupIds` where the caller is an approved owner/admin;
+   * 403s with `message` when they are an admin of none.
+   */
+  private async adminSideOf(
+    groupIds: string[],
+    userId: string,
+    message: string,
+  ): Promise<string> {
+    const member = await this.memberModel.findOne({
+      groupId: { $in: groupIds.map((id) => new Types.ObjectId(id)) },
+      userId: new Types.ObjectId(userId),
+      status: 'approved',
+      role: { $in: ['owner', 'admin'] },
+    });
+    if (!member) throw new ForbiddenException(message);
+    return member.groupId.toString();
+  }
+
+  /**
+   * Best-effort app notification to every owner/admin of a group: persisted
+   * in-app row, live socket emit and FCM push (via `notifyUsers`). `create`
+   * alone would only store the row, so the other side's phone never buzzes.
+   * `refId` is the recipient's own group, where its challenge list lives.
+   */
   private async notifyGroupAdmins(
     groupId: string,
     title: string,
@@ -245,16 +341,9 @@ export class ChallengesService {
         })
         .select('userId')
         .lean();
-      await Promise.all(
-        admins.map((admin) =>
-          this.notificationsService.create({
-            userId: admin.userId.toString(),
-            title,
-            body,
-            type: 'group',
-            refId: groupId,
-          }),
-        ),
+      await this.notificationsService.notifyUsers(
+        admins.map((admin) => admin.userId.toString()),
+        { title, body, type: 'group', refId: groupId },
       );
     } catch (err) {
       this.logger.warn(`Challenge notification failed: ${err}`);

@@ -99,6 +99,8 @@ describe('GroupsService', () => {
       adoptPersonalLocations: jest.fn().mockResolvedValue(undefined),
       remove: jest.fn(),
     });
+    // findById counts active tournaments for every detail read.
+    tournamentModel.countDocuments = jest.fn().mockResolvedValue(0);
 
     const m = await Test.createTestingModule({
       providers: [

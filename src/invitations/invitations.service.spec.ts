@@ -6,6 +6,7 @@ import { InvitationsService } from './invitations.service';
 import { Group } from '../groups/schemas/group.schema';
 import { GroupMember } from '../groups/schemas/group-member.schema';
 import { GroupsService } from '../groups/groups.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 describe('InvitationsService', () => {
   let service: InvitationsService;
@@ -13,6 +14,7 @@ describe('InvitationsService', () => {
   const groupModel: any = {};
   const memberModel: any = {};
   const groupsService: any = {};
+  const notificationsService: any = {};
 
   const GROUP_ID = new Types.ObjectId();
   const USER_ID = new Types.ObjectId().toString();
@@ -26,6 +28,7 @@ describe('InvitationsService', () => {
       countDocuments: jest.fn(),
     });
     Object.assign(groupsService, { assertOwnerOrAdmin: jest.fn() });
+    Object.assign(notificationsService, { notifyUsers: jest.fn() });
 
     const m = await Test.createTestingModule({
       providers: [
@@ -33,6 +36,7 @@ describe('InvitationsService', () => {
         { provide: getModelToken(Group.name), useValue: groupModel },
         { provide: getModelToken(GroupMember.name), useValue: memberModel },
         { provide: GroupsService, useValue: groupsService },
+        { provide: NotificationsService, useValue: notificationsService },
       ],
     }).compile();
 
@@ -121,6 +125,96 @@ describe('InvitationsService', () => {
 
       expect(byCode.status).toBe(byRequest.status);
       expect(byCode.role).toBe(byRequest.role);
+    });
+  });
+
+  describe('respond — notifies the requester on approval', () => {
+    const OWNER_ID = new Types.ObjectId().toString();
+    const INVITE_ID = new Types.ObjectId().toString();
+
+    const pending = () => ({
+      _id: INVITE_ID,
+      userId: new Types.ObjectId(USER_ID),
+      status: 'pending',
+      save: jest.fn(),
+      deleteOne: jest.fn(),
+    });
+    const groupLookup = (group: unknown) => ({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue(group),
+      }),
+    });
+
+    it('notifies the approved member with the group name', async () => {
+      const invitation = pending();
+      memberModel.findOne.mockResolvedValue(invitation);
+      groupModel.findById.mockReturnValue(
+        groupLookup({ name: 'Sunday FC', maxPlayers: 22 }),
+      );
+      memberModel.countDocuments.mockResolvedValue(3);
+
+      const res = await service.respond(
+        GROUP_ID.toString(),
+        INVITE_ID,
+        OWNER_ID,
+        { action: 'approved' } as any,
+      );
+
+      expect(res.message).toBe('Member approved');
+      expect(invitation.save).toHaveBeenCalled();
+      expect(notificationsService.notifyUsers).toHaveBeenCalledWith(
+        [USER_ID],
+        expect.objectContaining({
+          type: 'group',
+          refId: GROUP_ID.toString(),
+          body: expect.stringContaining('Sunday FC'),
+        }),
+      );
+    });
+
+    it('still approves when the notification fails', async () => {
+      memberModel.findOne.mockResolvedValue(pending());
+      groupModel.findById.mockReturnValue(
+        groupLookup({ name: 'Sunday FC', maxPlayers: 22 }),
+      );
+      memberModel.countDocuments.mockResolvedValue(3);
+      notificationsService.notifyUsers.mockRejectedValue(new Error('down'));
+
+      const res = await service.respond(
+        GROUP_ID.toString(),
+        INVITE_ID,
+        OWNER_ID,
+        { action: 'approved' } as any,
+      );
+
+      expect(res.message).toBe('Member approved');
+    });
+
+    it('does not notify when the group is full', async () => {
+      memberModel.findOne.mockResolvedValue(pending());
+      groupModel.findById.mockReturnValue(
+        groupLookup({ name: 'Sunday FC', maxPlayers: 3 }),
+      );
+      memberModel.countDocuments.mockResolvedValue(3);
+
+      await expect(
+        service.respond(GROUP_ID.toString(), INVITE_ID, OWNER_ID, {
+          action: 'approved',
+        } as any),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(notificationsService.notifyUsers).not.toHaveBeenCalled();
+    });
+
+    it('does not notify on rejection', async () => {
+      const invitation = pending();
+      memberModel.findOne.mockResolvedValue(invitation);
+
+      await service.respond(GROUP_ID.toString(), INVITE_ID, OWNER_ID, {
+        action: 'rejected',
+      } as any);
+
+      expect(invitation.deleteOne).toHaveBeenCalled();
+      expect(notificationsService.notifyUsers).not.toHaveBeenCalled();
     });
   });
 });

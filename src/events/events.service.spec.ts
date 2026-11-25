@@ -199,6 +199,19 @@ describe('EventsService — location handling on create', () => {
       expect(filter.date.$lt.toISOString()).toBe('2026-08-03T00:00:00.000Z');
     });
 
+    it('challenge events neither hit the cap nor count toward it', async () => {
+      eventModel.countDocuments.mockResolvedValue(10);
+
+      await service.create(USER_ID, baseDto, { skipPlanLimit: true });
+      expect(eventModel.create).toHaveBeenCalled();
+      expect(eventModel.countDocuments).not.toHaveBeenCalled();
+
+      eventModel.countDocuments.mockResolvedValue(0);
+      await service.create(USER_ID, baseDto);
+      const filter = eventModel.countDocuments.mock.calls[0][0];
+      expect(filter.type).toEqual({ $ne: 'challenge' });
+    });
+
     it('a cancelled event frees its slot — excluded from the count', async () => {
       // Same as deletion: the week was not used. A done event still counts.
       await service.create(USER_ID, baseDto);
@@ -474,11 +487,13 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
       // The userRole lookup is a select/lean chain; the admin-role proposal
       // check is a plain awaited findOne — the filter's `role` key tells
       // them apart.
-      memberModel.findOne = jest.fn().mockImplementation((filter: any) =>
-        filter.role
-          ? Promise.resolve({ role: 'admin' })
-          : q({ role: 'admin', status: 'approved' }),
-      );
+      memberModel.findOne = jest
+        .fn()
+        .mockImplementation((filter: any) =>
+          filter.role
+            ? Promise.resolve({ role: 'admin' })
+            : q({ role: 'admin', status: 'approved' }),
+        );
 
       const res: any = await service.findById(EVENT_ID, CALLER);
 
@@ -489,11 +504,13 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
     it('strips the proposal fields for a plain member or player', async () => {
       challengeEvent();
       // Member row exists (role 'member') but the admin-role query misses.
-      memberModel.findOne = jest.fn().mockImplementation((filter: any) =>
-        filter.role
-          ? Promise.resolve(null)
-          : q({ role: 'member', status: 'approved' }),
-      );
+      memberModel.findOne = jest
+        .fn()
+        .mockImplementation((filter: any) =>
+          filter.role
+            ? Promise.resolve(null)
+            : q({ role: 'member', status: 'approved' }),
+        );
 
       const res: any = await service.findById(EVENT_ID, CALLER);
 
@@ -503,7 +520,12 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
 
     it('normal events keep their (null) proposal fields untouched', async () => {
       eventModel.findById.mockReturnValue(
-        q({ _id: EVENT_ID, groupId: null, type: 'normal', proposedStatus: null }),
+        q({
+          _id: EVENT_ID,
+          groupId: null,
+          type: 'normal',
+          proposedStatus: null,
+        }),
       );
 
       const res: any = await service.findById(EVENT_ID, CALLER);
@@ -814,7 +836,9 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
 
       const filter = filterOf();
       expect(filter.date.$gte).toBeDefined();
-      expect(filter.status).toEqual({ $nin: ['after_match', 'done', 'cancelled'] });
+      expect(filter.status).toEqual({
+        $nin: ['after_match', 'done', 'cancelled'],
+      });
     });
 
     it('lets an explicit ?from= override the expiry floor', async () => {
@@ -902,7 +926,9 @@ describe('EventsService — group rules on detail & ?region= filter', () => {
 
       await service.list('u1', { region: 'yangon' });
 
-      expect(statusOf()).toEqual({ $nin: ['after_match', 'done', 'cancelled'] });
+      expect(statusOf()).toEqual({
+        $nin: ['after_match', 'done', 'cancelled'],
+      });
       expect(eventModel.find.mock.calls.at(-1)[0]).toHaveProperty('groupId');
     });
   });

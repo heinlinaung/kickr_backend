@@ -32,7 +32,10 @@ describe('EventsService — group challenge', () => {
   const teamModel: any = {};
   const matchModel: any = {};
   const teamChatModel: any = {};
-  const notifications = { create: jest.fn().mockResolvedValue(undefined) };
+  const notifications = {
+    create: jest.fn().mockResolvedValue(undefined),
+    notifyUsers: jest.fn().mockResolvedValue({ notified: 1, pushed: 1 }),
+  };
 
   const chain = (result: any) => ({
     select: jest.fn().mockReturnThis(),
@@ -111,6 +114,9 @@ describe('EventsService — group challenge', () => {
     playerModel.find = jest.fn().mockReturnValue(chain([]));
     groupModel.findById = jest.fn().mockReturnValue(chain({ name: 'B FC' }));
     challengeModel.findById = jest.fn().mockResolvedValue(challengeDoc());
+    // Side-team lookups default to "no team" — the side-team suite overrides.
+    teamModel.findOne = jest.fn().mockReturnValue(chain(null));
+    teamModel.updateOne = jest.fn().mockResolvedValue({});
     sideMembers();
     // notifySideAdmins fans out via find() — one admin per side is plenty.
     memberModel.find = jest
@@ -203,6 +209,17 @@ describe('EventsService — group challenge', () => {
       expect(challenge.save).toHaveBeenCalled();
     });
 
+    it('is exempt from the weekly plan limit', async () => {
+      // Challenge matches are unlimited (2026-11-24).
+      const createSpy = jest
+        .spyOn(service, 'create')
+        .mockResolvedValue(eventDoc() as any);
+
+      await service.createChallengeEvent(CHALLENGE_ID, ADMIN_A, dto);
+
+      expect(createSpy.mock.calls[0][2]).toEqual({ skipPlanLimit: true });
+    });
+
     it('maxPlayers is OPTIONAL: unset stays null, never the default cap', async () => {
       // The roster is admin-assigned with no min/max, so the schema default
       // (12, for self-join events) must not sneak in and read as "full".
@@ -265,8 +282,13 @@ describe('EventsService — group challenge', () => {
       expect(doc.proposedStatus).toBe('accepted');
       expect(doc.proposalRejectReason).toBeNull();
       expect(doc.save).toHaveBeenCalled();
-      expect(notifications.create).toHaveBeenCalledWith(
-        expect.objectContaining({ title: 'Match proposal accepted' }),
+      expect(notifications.notifyUsers).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.objectContaining({
+          title: 'Match proposal accepted',
+          type: 'event',
+          refId: EVENT_ID,
+        }),
       );
     });
 
@@ -278,6 +300,13 @@ describe('EventsService — group challenge', () => {
 
       expect(doc.proposedStatus).toBe('rejected');
       expect(doc.proposalRejectReason).toBe('color conflict');
+      expect(notifications.notifyUsers).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.objectContaining({
+          title: 'Match proposal rejected',
+          body: expect.stringContaining('color conflict'),
+        }),
+      );
     });
   });
 
@@ -309,8 +338,13 @@ describe('EventsService — group challenge', () => {
 
       expect(doc.proposedStatus).toBe('proposed');
       expect(doc.proposalRejectReason).toBeNull();
-      expect(notifications.create).toHaveBeenCalledWith(
-        expect.objectContaining({ title: 'Match proposal updated' }),
+      expect(notifications.notifyUsers).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.objectContaining({
+          title: 'Match proposal updated',
+          type: 'event',
+          refId: EVENT_ID,
+        }),
       );
     });
   });
@@ -363,10 +397,14 @@ describe('EventsService — group challenge', () => {
         expect.anything(),
         expect.objectContaining({ $inc: expect.anything() }),
       );
-      expect(notifications.create).toHaveBeenCalledWith(
+      // Delivered as an app notification (row + socket + push), to the
+      // invited player only.
+      expect(notifications.notifyUsers).toHaveBeenCalledWith(
+        [PLAYER_A],
         expect.objectContaining({
-          userId: PLAYER_A,
           title: 'Challenge match invitation',
+          type: 'event',
+          refId: EVENT_ID,
         }),
       );
       expect(res).toMatchObject({ invited: [PLAYER_A], skipped: [] });
@@ -379,6 +417,11 @@ describe('EventsService — group challenge', () => {
 
       expect(res).toMatchObject({ invited: [], skipped: [PLAYER_A] });
       expect(playerModel.create).not.toHaveBeenCalled();
+      // Nobody new was invited, so nobody is re-notified.
+      expect(notifications.notifyUsers).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ title: 'Challenge match invitation' }),
+      );
       expect(eventModel.updateOne).not.toHaveBeenCalled();
     });
 
@@ -444,7 +487,8 @@ describe('EventsService — group challenge', () => {
       expect(row.status).toBe('cancelled');
       expect(row.inviteRejectReason).toBe('Injured this week');
       expect(eventModel.updateOne).not.toHaveBeenCalled();
-      expect(notifications.create).toHaveBeenCalledWith(
+      expect(notifications.notifyUsers).toHaveBeenCalledWith(
+        expect.any(Array),
         expect.objectContaining({
           title: 'Invitation declined',
           body: expect.stringContaining('Injured this week'),
@@ -847,8 +891,13 @@ describe('EventsService — group challenge', () => {
       );
       expect(res).toMatchObject({ ready: true, status: 'join' });
       expect(shuffle).not.toHaveBeenCalled();
-      expect(notifications.create).toHaveBeenCalledWith(
-        expect.objectContaining({ title: 'Opponent is ready' }),
+      expect(notifications.notifyUsers).toHaveBeenCalledWith(
+        expect.any(Array),
+        expect.objectContaining({
+          title: 'Opponent is ready',
+          type: 'event',
+          refId: EVENT_ID,
+        }),
       );
     });
 
@@ -871,6 +920,43 @@ describe('EventsService — group challenge', () => {
       });
       expect(update).toEqual({ $set: { status: 'ready_to_play' } });
       expect(shuffle).toHaveBeenCalledWith(EVENT_ID, ADMIN_A);
+      expect(res).toMatchObject({ status: 'ready_to_play' });
+    });
+
+    it('second side ready: keeps the pre-built side teams and adds fixtures', async () => {
+      const both = { hostReadyAt: new Date(), opponentReadyAt: new Date() };
+      eventModel.findOneAndUpdate
+        .mockResolvedValueOnce(eventDoc(both))
+        .mockResolvedValueOnce(eventDoc({ ...both, status: 'ready_to_play' }));
+      challengeModel.findById = jest
+        .fn()
+        .mockReturnValue(chain(challengeDoc()));
+      jest
+        .spyOn(service as any, 'ensureChallengeTeams')
+        .mockResolvedValue(undefined);
+      teamModel.find = jest.fn().mockReturnValue(
+        chain([
+          { name: 'white', groupId: new Types.ObjectId(GROUP_B) },
+          { name: 'red', groupId: new Types.ObjectId(GROUP_A) },
+        ]),
+      );
+      matchModel.exists = jest.fn().mockResolvedValue(null);
+      matchModel.findOne = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        sort: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(null),
+      });
+      matchModel.insertMany = jest.fn().mockResolvedValue([]);
+      const shuffle = jest.spyOn(service, 'shuffleTeams');
+
+      const res = await service.setSideReady(EVENT_ID, ADMIN_A, {});
+
+      expect(shuffle).not.toHaveBeenCalled();
+      expect(teamModel.deleteMany).not.toHaveBeenCalled();
+      const fixtures = matchModel.insertMany.mock.calls[0][0];
+      expect(fixtures.length).toBeGreaterThan(0);
+      // Challenger's team first, whatever order the teams were read in.
+      expect(fixtures[0]).toMatchObject({ teamA: 'red', teamB: 'white' });
       expect(res).toMatchObject({ status: 'ready_to_play' });
     });
 
@@ -916,7 +1002,7 @@ describe('EventsService — group challenge', () => {
       ).rejects.toThrow(/BOTH groups/);
     });
 
-    it('reverting ready_to_play -> join clears both flags and the side teams', async () => {
+    it('reverting ready_to_play -> join clears both flags but keeps the side teams', async () => {
       const ev = eventDoc({
         status: 'ready_to_play',
         hostReadyAt: new Date(),
@@ -933,7 +1019,7 @@ describe('EventsService — group challenge', () => {
 
       expect(ev.hostReadyAt).toBeNull();
       expect(ev.opponentReadyAt).toBeNull();
-      expect(teamModel.deleteMany).toHaveBeenCalled();
+      expect(teamModel.deleteMany).not.toHaveBeenCalled();
     });
 
     it("inviting a player clears that side's ready flag", async () => {
@@ -951,6 +1037,134 @@ describe('EventsService — group challenge', () => {
       await expect(
         service.unassignPlayer(EVENT_ID, ADMIN_A, PLAYER_A),
       ).rejects.toThrow(/frozen/);
+    });
+  });
+  describe('side teams exist from proposal accept', () => {
+    const teamDoc = (side: string, over: Record<string, any> = {}) => ({
+      _id: new Types.ObjectId(),
+      name: side === GROUP_A ? 'red' : 'white',
+      groupId: new Types.ObjectId(side),
+      players: [],
+      playerRoles: [],
+      numberOfPlayers: 1,
+      status: 'pending',
+      save: jest.fn().mockResolvedValue(undefined),
+      ...over,
+    });
+    const rowsChain = (rows: any[]) => ({
+      select: jest.fn().mockReturnThis(),
+      sort: jest.fn().mockReturnThis(),
+      lean: jest.fn().mockResolvedValue(rows),
+    });
+    let teams: Record<string, any>;
+
+    beforeEach(() => {
+      challengeModel.findById = jest
+        .fn()
+        .mockReturnValue(chain(challengeDoc()));
+      teams = { [GROUP_A]: teamDoc(GROUP_A), [GROUP_B]: teamDoc(GROUP_B) };
+      teamModel.updateOne = jest.fn().mockResolvedValue({});
+      teamModel.findOne = jest.fn().mockImplementation((f: any) => {
+        const t = teams[String(f.groupId)];
+        // findOne(...).select().lean() in assignPlayers; bare await in sync.
+        return Object.assign(Promise.resolve(t), {
+          select: jest.fn().mockReturnThis(),
+          lean: jest.fn().mockResolvedValue(t),
+        });
+      });
+      teamChatModel.updateOne = jest.fn().mockResolvedValue({});
+      playerModel.updateMany = jest.fn().mockResolvedValue({});
+      playerModel.find = jest
+        .fn()
+        .mockImplementation((f: any) =>
+          rowsChain(
+            String(f.groupId) === GROUP_A && f.status === 'joined'
+              ? [{ userId: new Types.ObjectId(PLAYER_A) }]
+              : [],
+          ),
+        );
+    });
+
+    it('accepting the proposal creates one team per side, named by color', async () => {
+      eventModel.findById.mockResolvedValue(
+        eventDoc({ proposedStatus: 'proposed' }),
+      );
+      await service.reviewProposal(EVENT_ID, ADMIN_B, {
+        action: 'accept',
+      } as any);
+
+      expect(teamModel.updateOne).toHaveBeenCalledTimes(2);
+      const [[fA, uA, oA], [fB, uB]] = teamModel.updateOne.mock.calls;
+      expect(fA).toMatchObject({ groupId: new Types.ObjectId(GROUP_A) });
+      expect(uA.$setOnInsert).toMatchObject({ name: 'red' });
+      expect(oA).toEqual({ upsert: true });
+      expect(fB).toMatchObject({ groupId: new Types.ObjectId(GROUP_B) });
+      expect(uB.$setOnInsert).toMatchObject({ name: 'white' });
+      // Accepted players are synced onto their side's team.
+      expect(teams[GROUP_A].players.map(String)).toEqual([PLAYER_A]);
+      expect(teams[GROUP_A].status).toBe('ready');
+      expect(teams[GROUP_B].players).toEqual([]);
+    });
+
+    it('rejecting the proposal creates no teams', async () => {
+      eventModel.findById.mockResolvedValue(
+        eventDoc({ proposedStatus: 'proposed' }),
+      );
+      await service.reviewProposal(EVENT_ID, ADMIN_B, {
+        action: 'reject',
+      } as any);
+      expect(teamModel.updateOne).not.toHaveBeenCalled();
+    });
+
+    it("inviting returns the caller side's team", async () => {
+      const res: any = await service.assignPlayers(EVENT_ID, ADMIN_B, {
+        userIds: [PLAYER_B],
+      });
+      expect(res.teamName).toBe('white');
+      expect(String(res.teamId)).toBe(String(teams[GROUP_B]._id));
+    });
+
+    it('an accepted invitation lands the player on their side team', async () => {
+      playerModel.findOne.mockResolvedValue({
+        status: 'invited',
+        groupId: new Types.ObjectId(GROUP_A),
+        save: jest.fn().mockResolvedValue(undefined),
+      });
+      await service.respondInvitation(EVENT_ID, PLAYER_A, {
+        action: 'accept',
+      } as any);
+      expect(teams[GROUP_A].players.map(String)).toEqual([PLAYER_A]);
+      expect(playerModel.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({ userId: { $in: expect.any(Array) } }),
+        { $set: { team: 'red' } },
+      );
+    });
+
+    it('unassigning a joined player takes them off the team and drops their role', async () => {
+      teams[GROUP_A] = teamDoc(GROUP_A, {
+        players: [new Types.ObjectId(PLAYER_A)],
+        playerRoles: [
+          { userId: new Types.ObjectId(PLAYER_A), role: 'captain' },
+        ],
+      });
+      playerModel.find = jest.fn().mockReturnValue(rowsChain([]));
+      const row = {
+        status: 'joined',
+        team: 'red',
+        groupId: new Types.ObjectId(GROUP_A),
+        save: jest.fn().mockResolvedValue(undefined),
+      };
+      playerModel.findOne.mockResolvedValue(row);
+      jest
+        .spyOn(service as any, 'assertOrganizer')
+        .mockResolvedValue(eventDoc());
+
+      await service.unassignPlayer(EVENT_ID, ADMIN_A, PLAYER_A);
+
+      expect(row.team).toBeNull();
+      expect(teams[GROUP_A].players).toEqual([]);
+      expect(teams[GROUP_A].playerRoles).toEqual([]);
+      expect(teams[GROUP_A].status).toBe('pending');
     });
   });
 });

@@ -40,13 +40,31 @@ describe('EventsController — GET /events query parsing', () => {
     });
 
     it('is false for ?includeExpired=false', async () => {
-      await controller.list(caller, undefined, undefined, undefined, undefined, undefined, undefined, 'false');
+      await controller.list(
+        caller,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'false',
+      );
 
       expect(optionsFrom().includeExpired).toBe(false);
     });
 
     it('is true for ?includeExpired=true', async () => {
-      await controller.list(caller, undefined, undefined, undefined, undefined, undefined, undefined, 'true');
+      await controller.list(
+        caller,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'true',
+      );
 
       expect(optionsFrom().includeExpired).toBe(true);
     });
@@ -55,7 +73,16 @@ describe('EventsController — GET /events query parsing', () => {
       // Only the explicit string 'false' opts out. A typo must not silently
       // hide rows — the safer direction for a discovery list is to show more,
       // not less.
-      await controller.list(caller, undefined, undefined, undefined, undefined, undefined, undefined, 'nope');
+      await controller.list(
+        caller,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        'nope',
+      );
 
       expect(optionsFrom().includeExpired).toBe(true);
     });
@@ -63,7 +90,16 @@ describe('EventsController — GET /events query parsing', () => {
     it('is not inverted by an empty string', async () => {
       // `?includeExpired=` arrives as ''. The `=== 'true'` idiom used by the
       // other routes would read this as false; here it must not.
-      await controller.list(caller, undefined, undefined, undefined, undefined, undefined, undefined, '');
+      await controller.list(
+        caller,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        '',
+      );
 
       expect(optionsFrom().includeExpired).toBe(true);
     });
@@ -71,7 +107,15 @@ describe('EventsController — GET /events query parsing', () => {
 
   describe('the other params still pass through', () => {
     it('forwards region, from, to and status untouched', async () => {
-      await controller.list(caller, 'yangon', undefined, undefined, '2026-01-01', '2026-12-31', 'join');
+      await controller.list(
+        caller,
+        'yangon',
+        undefined,
+        undefined,
+        '2026-01-01',
+        '2026-12-31',
+        'join',
+      );
 
       const options = optionsFrom();
       expect(options.region).toBe('yangon');

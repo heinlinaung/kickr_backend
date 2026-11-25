@@ -197,7 +197,9 @@ describe('EventsService — guests (+1 / +2)', () => {
       };
 
       const asManager = (is: boolean) => {
-        memberModel.exists = jest.fn().mockResolvedValue(is ? { _id: 'm' } : null);
+        memberModel.exists = jest
+          .fn()
+          .mockResolvedValue(is ? { _id: 'm' } : null);
       };
 
       const add = () => service.addGuest(EVENT_ID, SPONSOR, {} as any);
@@ -212,7 +214,7 @@ describe('EventsService — guests (+1 / +2)', () => {
         expect(playerModel.create).toHaveBeenCalled();
       });
 
-      it('does not even count a manager\'s existing guests', async () => {
+      it("does not even count a manager's existing guests", async () => {
         // The allowance query is skipped, not merely ignored — one fewer round
         // trip on the path that will add the most guests.
         groupEvent();
@@ -258,6 +260,78 @@ describe('EventsService — guests (+1 / +2)', () => {
         playerModel.countDocuments.mockResolvedValue(2);
 
         await expect(add()).rejects.toThrow(/at most 2 guests/);
+      });
+    });
+
+    describe('bulk add with count (owner/admin)', () => {
+      const GROUP = '6a6b2366f78b66d63a911a9e';
+      const bulk = (dto: any) => service.addGuest(EVENT_ID, SPONSOR, dto);
+
+      beforeEach(() => {
+        eventModel.findById = jest.fn().mockResolvedValue({
+          _id: EVENT_ID,
+          status: 'join',
+          isAllowExtraPlayer: true,
+          groupId: new Types.ObjectId(GROUP),
+        });
+        memberModel.exists = jest.fn().mockResolvedValue({ _id: 'm' });
+        playerModel.insertMany = jest
+          .fn()
+          .mockImplementation((docs: any[]) =>
+            Promise.resolve(docs.map((d) => ({ ...d, toJSON: () => d }))),
+          );
+        playerModel.find = jest.fn().mockReturnValue({
+          select: jest.fn().mockReturnThis(),
+          lean: jest.fn().mockResolvedValue([]),
+        });
+      });
+
+      const names = () =>
+        playerModel.insertMany.mock.calls[0][0].map((d: any) => d.guestName);
+
+      it('numbers the guests after the given name', async () => {
+        const res: any = await bulk({ guestName: 'mg mg', count: 3 });
+        expect(names()).toEqual(['mg mg 1', 'mg mg 2', 'mg mg 3']);
+        expect(res.guests).toHaveLength(3);
+        const first = playerModel.insertMany.mock.calls[0][0][0];
+        expect(first).toMatchObject({ type: 'guest', approval: 'pending' });
+        expect(playerModel.create).not.toHaveBeenCalled();
+      });
+
+      it('continues after the highest number already used', async () => {
+        playerModel.find.mockReturnValue({
+          select: jest.fn().mockReturnThis(),
+          lean: jest
+            .fn()
+            .mockResolvedValue([
+              { guestName: 'mg mg 1' },
+              { guestName: 'MG MG 3' },
+            ]),
+        });
+        await bulk({ guestName: 'mg mg', count: 2 });
+        expect(names()).toEqual(['mg mg 4', 'mg mg 5']);
+      });
+
+      it('treats regex characters in the name literally', async () => {
+        await bulk({ guestName: 'a.b (x)', count: 1 });
+        const re: RegExp = playerModel.find.mock.calls[0][0].guestName.$regex;
+        expect(re.test('a.b (x) 7')).toBe(true);
+        expect(re.test('aXb (x) 7')).toBe(false);
+      });
+
+      it('without a name, uses the sponsor sequence', async () => {
+        playerModel.countDocuments.mockResolvedValue(2);
+        await bulk({ count: 2 });
+        expect(names()).toEqual(['Thant guest 3', 'Thant guest 4']);
+      });
+
+      it('refuses count > 1 for an ordinary member', async () => {
+        memberModel.exists = jest.fn().mockResolvedValue(null);
+        playerModel.countDocuments.mockResolvedValue(0);
+        await expect(bulk({ guestName: 'mg mg', count: 3 })).rejects.toThrow(
+          /owner or admin/,
+        );
+        expect(playerModel.insertMany).not.toHaveBeenCalled();
       });
     });
 
@@ -396,7 +470,9 @@ describe('EventsService — guests (+1 / +2)', () => {
       'refuses once the event is %s',
       async (status) => {
         const d = eventDoc({ status });
-      eventModel.findById.mockReturnValue(Object.assign(Promise.resolve(d), d));
+        eventModel.findById.mockReturnValue(
+          Object.assign(Promise.resolve(d), d),
+        );
         await expect(add()).rejects.toBeInstanceOf(BadRequestException);
       },
     );
@@ -503,7 +579,7 @@ describe('EventsService — guests (+1 / +2)', () => {
       expect(update).toEqual({ $set: { status: 'cancelled' } });
     });
 
-    it('lets an organizer withdraw someone else\'s guest', async () => {
+    it("lets an organizer withdraw someone else's guest", async () => {
       playerModel.findOne.mockResolvedValue(guestDoc());
       await expect(
         service.removeGuest(EVENT_ID, CREATOR, GUEST_ROW),
@@ -534,7 +610,7 @@ describe('EventsService — guests (+1 / +2)', () => {
     });
   });
 
-  describe("cascade — a guest leaves with their sponsor", () => {
+  describe('cascade — a guest leaves with their sponsor', () => {
     const sponsorRow = () => ({
       status: 'joined',
       save: jest.fn().mockResolvedValue({}),

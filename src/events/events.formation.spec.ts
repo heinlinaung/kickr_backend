@@ -79,9 +79,9 @@ describe('validateFormationLayout', () => {
   });
 
   it('rejects an all-empty outfield', () => {
-    expect(
-      validateFormationLayout('4-4-2', groups(0, 0, 0), 11),
-    ).toMatch(/no outfield players/);
+    expect(validateFormationLayout('4-4-2', groups(0, 0, 0), 11)).toMatch(
+      /no outfield players/,
+    );
   });
 
   it('rejects the same player in two positions', () => {
@@ -103,12 +103,6 @@ describe('validateFormationLayout', () => {
 
 describe('placedIds', () => {
   it('lists goalkeeper first, then groups in order, preserving slot order', () => {
-    expect(placedIds(groups(2, 1, 1))).toEqual([
-      'gk',
-      'd1',
-      'd2',
-      'm1',
-      'f1',
-    ]);
+    expect(placedIds(groups(2, 1, 1))).toEqual(['gk', 'd1', 'd2', 'm1', 'f1']);
   });
 });

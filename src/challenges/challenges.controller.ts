@@ -23,6 +23,7 @@ import { CreateChallengeEventDto } from '../events/dto/create-challenge-event.dt
 import { ChallengesService } from './challenges.service';
 import { CreateChallengeDto } from './dto/create-challenge.dto';
 import { RespondChallengeDto } from './dto/respond-challenge.dto';
+import { CancelChallengeDto } from './dto/cancel-challenge.dto';
 
 @ApiTags('Challenges')
 @ApiBearerAuth()
@@ -101,6 +102,40 @@ export class ChallengesController {
     @Body() dto: RespondChallengeDto,
   ) {
     return this.challenges.respond(id, user._id.toString(), dto);
+  }
+
+  @Post(':id/cancel')
+  @ApiOperation({
+    summary: 'Cancel a challenge (owner/admin)',
+    description:
+      'Soft cancel: status becomes `cancelled` and the row keeps ' +
+      '`cancelReason`/`cancelledBy`/`cancelledAt`, so both groups still see ' +
+      'it in their history. `reason` is OPTIONAL and is sent to the other ' +
+      "group's owner/admins. A `proposed` challenge can be withdrawn only by " +
+      'the CHALLENGER side (the challenged side rejects instead). An ' +
+      '`accepted` challenge can be cancelled by either side until its match ' +
+      'event is proposed — after that, cancel the event via ' +
+      'POST /events/:id/cancel. Cancelling frees the pair to issue a new ' +
+      'challenge straight away.',
+  })
+  @ApiResponse({ status: 201, description: 'The cancelled challenge' })
+  @ApiResponse({
+    status: 400,
+    description:
+      'Already rejected/cancelled, or the accepted challenge already has its match event',
+  })
+  @ApiResponse({
+    status: 403,
+    description:
+      'Caller is not an owner/admin of a group allowed to cancel it',
+  })
+  @ApiResponse({ status: 404, description: 'Challenge not found' })
+  cancel(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() dto: CancelChallengeDto,
+  ) {
+    return this.challenges.cancel(id, user._id.toString(), dto);
   }
 
   @Post(':id/event')

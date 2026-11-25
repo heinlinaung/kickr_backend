@@ -1,6 +1,11 @@
 // src/events/public-events.controller.ts
 import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
-import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { OptionalJwtAuthGuard } from '../common/guards/optional-jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { EventsService } from './events.service';
@@ -17,6 +22,7 @@ import { JoinAnonymousDto } from './dto/join-anonymous.dto';
  * other static routes keep matching before this `:id`.
  */
 @ApiTags('Events')
+@ApiBearerAuth()
 @Controller('events')
 @UseGuards(OptionalJwtAuthGuard)
 export class PublicEventsController {

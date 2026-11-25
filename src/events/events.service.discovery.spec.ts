@@ -142,9 +142,9 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
       await expect(service.list(USER, { near: '91,0' })).rejects.toBeInstanceOf(
         BadRequestException,
       );
-      await expect(service.list(USER, { near: '0,181' })).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
+      await expect(
+        service.list(USER, { near: '0,181' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
     });
 
     it('ignores an empty near value rather than erroring', async () => {
@@ -389,14 +389,37 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
       service = m.get(EventsService);
     });
 
-    it("only counts rows with status 'joined'", async () => {
+    it('counts joined and invited rows, never cancelled ones', async () => {
       // A cancelled row survives for reactivation; counting it would resurrect
-      // an event the user left.
+      // an event the user left (or an invitation they declined).
       await service.listJoined(USER);
 
       expect(playerModel.find).toHaveBeenCalledWith(
-        expect.objectContaining({ status: 'joined' }),
+        expect.objectContaining({ status: { $in: ['joined', 'invited'] } }),
       );
+    });
+
+    it('includes events the caller is invited to, tagged invitedByMe', async () => {
+      // The ask (2026-11-24): invited events belong on the Home page, not
+      // only behind the group detail screen.
+      playerModel.find.mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([
+          { eventId: 'e1', status: 'joined' },
+          { eventId: 'e2', status: 'invited' },
+        ]),
+      });
+      eventModel.find.mockReturnValue(
+        findChain([{ _id: 'e1' }, { _id: 'e2' }]),
+      );
+
+      const res: any = await service.listJoined(USER);
+
+      expect(eventModel.find.mock.calls[0][0]._id).toEqual({
+        $in: ['e1', 'e2'],
+      });
+      expect(res[0]).toMatchObject({ joinedByMe: true, invitedByMe: false });
+      expect(res[1]).toMatchObject({ joinedByMe: false, invitedByMe: true });
     });
 
     it('queries only the events on the roster', async () => {
@@ -487,7 +510,7 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
     });
   });
 
-  describe('list — visibility includes the caller\'s own events', () => {
+  describe("list — visibility includes the caller's own events", () => {
     const JOINED_A = '507f1f77bcf86cd7994390a1';
     const JOINED_B = '507f1f77bcf86cd7994390a2';
 
@@ -531,8 +554,30 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
       await service.list(USER);
 
       expect(playerModel.find.mock.calls[0][0]).toEqual(
-        expect.objectContaining({ status: 'joined' }),
+        expect.objectContaining({ status: { $in: ['joined', 'invited'] } }),
       );
+    });
+
+    it('shows private events the caller is INVITED to, tagged invitedByMe', async () => {
+      playerModel.find = jest.fn().mockReturnValue({
+        select: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([
+          { eventId: JOINED_A, status: 'joined' },
+          { eventId: JOINED_B, status: 'invited' },
+        ]),
+      });
+      eventModel.find.mockReturnValue(
+        findChain([{ _id: JOINED_A }, { _id: JOINED_B }, { _id: 'pub' }]),
+      );
+
+      const res: any = await service.list(USER);
+
+      expect(filter().$or).toContainEqual({
+        _id: { $in: [JOINED_A, JOINED_B] },
+      });
+      expect(res[0]).toMatchObject({ joinedByMe: true, invitedByMe: false });
+      expect(res[1]).toMatchObject({ joinedByMe: false, invitedByMe: true });
+      expect(res[2]).toMatchObject({ joinedByMe: false, invitedByMe: false });
     });
 
     // The bug this pins (2026-09-21): a group's private event appeared in
@@ -663,10 +708,9 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
   describe('likes', () => {
     it('increments the counter on a first like', async () => {
       await service.like(EVENT_ID, USER);
-      expect(eventModel.updateOne).toHaveBeenCalledWith(
-        expect.anything(),
-        { $inc: { likeCount: 1 } },
-      );
+      expect(eventModel.updateOne).toHaveBeenCalledWith(expect.anything(), {
+        $inc: { likeCount: 1 },
+      });
     });
 
     it('is idempotent — a repeat like does not double count', async () => {
@@ -707,9 +751,9 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
       expect(templateModel.create).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'Tuesday 5s' }),
       );
-      expect(
-        templateModel.create.mock.calls[0][0].ownerId.toString(),
-      ).toBe(USER);
+      expect(templateModel.create.mock.calls[0][0].ownerId.toString()).toBe(
+        USER,
+      );
     });
 
     it('checks location permission when the template names one', async () => {
@@ -779,9 +823,9 @@ describe('EventsService — discovery, likes, templates (spec §4.5)', () => {
 
     it('404s on a missing template', async () => {
       templateModel.findById.mockResolvedValue(null);
-      await expect(service.removeTemplate(TEMPLATE_ID, USER)).rejects.toBeInstanceOf(
-        NotFoundException,
-      );
+      await expect(
+        service.removeTemplate(TEMPLATE_ID, USER),
+      ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
 });
@@ -814,7 +858,12 @@ describe('EventsService — list ?sports= filter', () => {
     const m = await Test.createTestingModule({
       providers: [
         EventsService,
-        ...eventsProviders({ eventModel, playerModel, memberModel, groupModel }),
+        ...eventsProviders({
+          eventModel,
+          playerModel,
+          memberModel,
+          groupModel,
+        }),
       ],
     }).compile();
     service = m.get(EventsService);
