@@ -16,11 +16,17 @@ async function bootstrap() {
     .split(',')
     .map((o) => o.trim())
     .filter(Boolean);
+  const allowedOrigins = new Set([
+    'https://kickrsport.com',
+    'https://www.kickrsport.com',
+    'http://localhost:5173', // vite dev
+    'http://localhost:4173', // vite preview
+    'http://localhost:3000',
+    process.env.APP_BASE_URL ?? 'http://localhost:3000',
+    ...extraOrigins,
+  ]);
   app.enableCors({
-    origin: [
-      process.env.APP_BASE_URL ?? 'http://localhost:3000',
-      ...extraOrigins,
-    ],
+    origin: [...allowedOrigins],
     credentials: true,
   });
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true, forbidNonWhitelisted: true }));
