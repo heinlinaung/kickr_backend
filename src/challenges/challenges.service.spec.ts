@@ -296,19 +296,34 @@ describe('ChallengesService', () => {
       await service.listForGroup(GROUP_A, ADMIN_A);
 
       const [filter] = challengeModel.find.mock.calls[0];
-      expect(filter.$or).toHaveLength(2);
-      expect(filter.$or[0].challengerGroupId.toString()).toBe(GROUP_A);
-      expect(filter.$or[1].challengedGroupId.toString()).toBe(GROUP_A);
+      const [bothSides] = filter.$and;
+      expect(bothSides.$or).toHaveLength(2);
+      expect(bothSides.$or[0].challengerGroupId.toString()).toBe(GROUP_A);
+      expect(bothSides.$or[1].challengedGroupId.toString()).toBe(GROUP_A);
     });
 
-    it('returns every challenge without the history flag', async () => {
+    it('without the history flag, hides only rejections older than 3 days', async () => {
+      const before = Date.now();
       await service.listForGroup(GROUP_A, ADMIN_A);
       expect(eventModel.distinct).not.toHaveBeenCalled();
       const [filter] = challengeModel.find.mock.calls[0];
-      expect(filter.$and).toBeUndefined();
+      expect(filter.$and[0].$or).toHaveLength(2);
+      const [stale] = filter.$and[1].$nor;
+      expect(stale.status).toBe('rejected');
+      const cutoff: Date = stale.$or[0].respondedAt.$lt;
+      const threeDays = 3 * 24 * 60 * 60 * 1000;
+      expect(before - cutoff.getTime()).toBeGreaterThanOrEqual(
+        threeDays - 1000,
+      );
+      expect(before - cutoff.getTime()).toBeLessThanOrEqual(threeDays + 1000);
+      // Legacy rows with no respondedAt fall back to updatedAt.
+      expect(stale.$or[1]).toEqual({
+        respondedAt: null,
+        updatedAt: { $lt: cutoff },
+      });
     });
 
-    it('history: only rejected, cancelled, or accepted with a finished event', async () => {
+    it('history: only cancelled, stale rejected, or accepted with a finished event', async () => {
       const doneId = new Types.ObjectId();
       eventModel.distinct.mockResolvedValue([doneId]);
 
@@ -324,10 +339,14 @@ describe('ChallengesService', () => {
 
       const [filter] = challengeModel.find.mock.calls[0];
       expect(filter.$and[0].$or).toHaveLength(2);
-      expect(filter.$and[1].$or).toEqual([
-        { status: { $in: ['rejected', 'cancelled'] } },
-        { status: 'accepted', eventId: { $in: [doneId] } },
-      ]);
+      const [cancelled, staleRejected, finishedMatch] = filter.$and[1].$or;
+      expect(cancelled).toEqual({ status: 'cancelled' });
+      expect(staleRejected.status).toBe('rejected');
+      expect(staleRejected.$or[0].respondedAt.$lt).toBeInstanceOf(Date);
+      expect(finishedMatch).toEqual({
+        status: 'accepted',
+        eventId: { $in: [doneId] },
+      });
     });
 
     it('400s a malformed group id before touching the db', async () => {

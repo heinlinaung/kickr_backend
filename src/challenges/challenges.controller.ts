@@ -59,17 +59,19 @@ export class ChallengesController {
   @ApiOperation({
     summary: "A group's challenges, both directions (members)",
     description:
-      'Pass `history=true` to get only closed challenges: rejected, ' +
-      'cancelled, or finished (accepted and its match event is `done` or ' +
-      'its time has passed — `endTime`, else `date` + `duration`). ' +
-      'Without it, every challenge is returned.',
+      'Pass `history=true` to get only closed challenges: cancelled, ' +
+      'rejected more than 3 days ago, or finished (accepted and its match ' +
+      'event is `done` or its time has passed — `endTime`, else `date` + ' +
+      '`duration`). Without it, every challenge is returned except ' +
+      'rejections older than 3 days, which live only in history.',
   })
   @ApiQuery({ name: 'groupId', type: String })
   @ApiQuery({
     name: 'history',
     type: Boolean,
     required: false,
-    description: 'true → only finished, rejected and cancelled challenges',
+    description:
+      'true → only finished, cancelled, and rejected (3+ days ago) challenges',
   })
   list(
     @CurrentUser() user: any,

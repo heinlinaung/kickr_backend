@@ -20,6 +20,9 @@ import { RespondChallengeDto } from './dto/respond-challenge.dto';
 import { CancelChallengeDto } from './dto/cancel-challenge.dto';
 import { Challenge, ChallengeDocument } from './schemas/challenge.schema';
 
+/** How long a rejected challenge stays in the live list before it moves to history. */
+const REJECTED_VISIBLE_MS = 3 * 24 * 60 * 60 * 1000;
+
 @Injectable()
 export class ChallengesService {
   private readonly logger = new Logger(ChallengesService.name);
@@ -230,7 +233,20 @@ export class ChallengesService {
     const bothSides = {
       $or: [{ challengerGroupId: gid }, { challengedGroupId: gid }],
     };
-    let filter: Record<string, any> = bothSides;
+    // A rejection stays in the live list for REJECTED_VISIBLE_MS after the
+    // verdict, then moves to history. Legacy rows without respondedAt fall
+    // back to updatedAt.
+    const rejectCutoff = new Date(Date.now() - REJECTED_VISIBLE_MS);
+    const staleRejected = {
+      status: 'rejected',
+      $or: [
+        { respondedAt: { $lt: rejectCutoff } },
+        { respondedAt: null, updatedAt: { $lt: rejectCutoff } },
+      ],
+    };
+    let filter: Record<string, any> = {
+      $and: [bothSides, { $nor: [staleRejected] }],
+    };
 
     if (history) {
       // Finished = marked `done`, OR its time is up: past `endTime` when set,
@@ -275,7 +291,8 @@ export class ChallengesService {
           bothSides,
           {
             $or: [
-              { status: { $in: ['rejected', 'cancelled'] } },
+              { status: 'cancelled' },
+              staleRejected,
               { status: 'accepted', eventId: { $in: doneEventIds } },
             ],
           },
