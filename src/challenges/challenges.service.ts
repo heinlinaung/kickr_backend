@@ -13,6 +13,7 @@ import {
   GroupMember,
   GroupMemberDocument,
 } from '../groups/schemas/group-member.schema';
+import { Event, EventDocument } from '../events/schemas/event.schema';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CreateChallengeDto } from './dto/create-challenge.dto';
 import { RespondChallengeDto } from './dto/respond-challenge.dto';
@@ -29,6 +30,7 @@ export class ChallengesService {
     @InjectModel(Group.name) private groupModel: Model<GroupDocument>,
     @InjectModel(GroupMember.name)
     private memberModel: Model<GroupMemberDocument>,
+    @InjectModel(Event.name) private eventModel: Model<EventDocument>,
     private readonly notificationsService: NotificationsService,
   ) {}
 
@@ -209,8 +211,11 @@ export class ChallengesService {
   /**
    * A group's challenges, both directions, newest first. Approved members
    * only — the handshake is group business, not public.
+   *
+   * `history` narrows it to closed challenges: rejected, cancelled, or
+   * finished — accepted with its match event `done` or past its end time.
    */
-  async listForGroup(groupId: string, userId: string) {
+  async listForGroup(groupId: string, userId: string, history = false) {
     const gid = this.parseGroupId(groupId);
 
     const member = await this.memberModel.findOne({
@@ -222,8 +227,64 @@ export class ChallengesService {
       throw new ForbiddenException('Not a member of this group');
     }
 
+    const bothSides = {
+      $or: [{ challengerGroupId: gid }, { challengedGroupId: gid }],
+    };
+    let filter: Record<string, any> = bothSides;
+
+    if (history) {
+      // Finished = marked `done`, OR its time is up: past `endTime` when set,
+      // else past `date + duration` (minutes). Cancelled events never count.
+      const doneEventIds = await this.eventModel.distinct('_id', {
+        type: 'challenge',
+        $and: [
+          { $or: [{ groupId: gid }, { opponentGroupId: gid }] },
+          {
+            $or: [
+              { status: 'done' },
+              {
+                status: { $ne: 'cancelled' },
+                $expr: {
+                  $lt: [
+                    {
+                      $ifNull: [
+                        '$endTime',
+                        {
+                          $add: [
+                            '$date',
+                            {
+                              $multiply: [
+                                { $ifNull: ['$duration', 90] },
+                                60000,
+                              ],
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                    new Date(),
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      });
+      filter = {
+        $and: [
+          bothSides,
+          {
+            $or: [
+              { status: { $in: ['rejected', 'cancelled'] } },
+              { status: 'accepted', eventId: { $in: doneEventIds } },
+            ],
+          },
+        ],
+      };
+    }
+
     return this.challengeModel
-      .find({ $or: [{ challengerGroupId: gid }, { challengedGroupId: gid }] })
+      .find(filter)
       .populate('challengerGroupId', 'name logo')
       .populate('challengedGroupId', 'name logo')
       .sort({ createdAt: -1 })
