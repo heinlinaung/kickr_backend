@@ -8,6 +8,7 @@ import {
 } from '../groups/schemas/group-member.schema';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { EventsModule } from '../events/events.module';
+import { Event, EventSchema } from '../events/schemas/event.schema';
 import { Challenge, ChallengeSchema } from './schemas/challenge.schema';
 import { ChallengesController } from './challenges.controller';
 import { ChallengesService } from './challenges.service';
@@ -23,6 +24,7 @@ import { ChallengesService } from './challenges.service';
       { name: Challenge.name, schema: ChallengeSchema },
       { name: Group.name, schema: GroupSchema },
       { name: GroupMember.name, schema: GroupMemberSchema },
+      { name: Event.name, schema: EventSchema },
     ]),
     NotificationsModule,
     EventsModule,

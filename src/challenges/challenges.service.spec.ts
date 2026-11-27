@@ -11,6 +11,7 @@ import { ChallengesService } from './challenges.service';
 import { Challenge } from './schemas/challenge.schema';
 import { Group } from '../groups/schemas/group.schema';
 import { GroupMember } from '../groups/schemas/group-member.schema';
+import { Event } from '../events/schemas/event.schema';
 import { NotificationsService } from '../notifications/notifications.service';
 
 const GROUP_A = '507f1f77bcf86cd799439031';
@@ -24,6 +25,7 @@ describe('ChallengesService', () => {
   const challengeModel: any = {};
   const groupModel: any = {};
   const memberModel: any = {};
+  const eventModel: any = {};
   const notifications = {
     notifyUsers: jest.fn().mockResolvedValue({ notified: 1, pushed: 1 }),
   };
@@ -56,13 +58,14 @@ describe('ChallengesService', () => {
       role: 'admin',
       userId: new Types.ObjectId(ADMIN_A),
     });
-    memberModel.find = jest.fn().mockReturnValue(
-      chain([{ userId: new Types.ObjectId(ADMIN_B) }]),
-    );
+    memberModel.find = jest
+      .fn()
+      .mockReturnValue(chain([{ userId: new Types.ObjectId(ADMIN_B) }]));
     challengeModel.exists = jest.fn().mockResolvedValue(null);
     challengeModel.create = jest.fn().mockResolvedValue(challengeDoc());
     challengeModel.findById = jest.fn().mockResolvedValue(challengeDoc());
     challengeModel.find = jest.fn().mockReturnValue(chain([]));
+    eventModel.distinct = jest.fn().mockResolvedValue([]);
     challengeModel.countDocuments = jest.fn().mockResolvedValue(3);
     challengeModel.updateMany = jest
       .fn()
@@ -74,6 +77,7 @@ describe('ChallengesService', () => {
         { provide: getModelToken(Challenge.name), useValue: challengeModel },
         { provide: getModelToken(Group.name), useValue: groupModel },
         { provide: getModelToken(GroupMember.name), useValue: memberModel },
+        { provide: getModelToken(Event.name), useValue: eventModel },
         { provide: NotificationsService, useValue: notifications },
       ],
     }).compile();
@@ -297,6 +301,35 @@ describe('ChallengesService', () => {
       expect(filter.$or[1].challengedGroupId.toString()).toBe(GROUP_A);
     });
 
+    it('returns every challenge without the history flag', async () => {
+      await service.listForGroup(GROUP_A, ADMIN_A);
+      expect(eventModel.distinct).not.toHaveBeenCalled();
+      const [filter] = challengeModel.find.mock.calls[0];
+      expect(filter.$and).toBeUndefined();
+    });
+
+    it('history: only rejected, cancelled, or accepted with a finished event', async () => {
+      const doneId = new Types.ObjectId();
+      eventModel.distinct.mockResolvedValue([doneId]);
+
+      await service.listForGroup(GROUP_A, ADMIN_A, true);
+
+      const [, eventFilter] = eventModel.distinct.mock.calls[0];
+      expect(eventFilter.type).toBe('challenge');
+      const [, finished] = eventFilter.$and[1].$or;
+      expect(eventFilter.$and[1].$or[0]).toEqual({ status: 'done' });
+      // Time's up counts too, unless the event was cancelled.
+      expect(finished.status).toEqual({ $ne: 'cancelled' });
+      expect(finished.$expr.$lt[1]).toBeInstanceOf(Date);
+
+      const [filter] = challengeModel.find.mock.calls[0];
+      expect(filter.$and[0].$or).toHaveLength(2);
+      expect(filter.$and[1].$or).toEqual([
+        { status: { $in: ['rejected', 'cancelled'] } },
+        { status: 'accepted', eventId: { $in: [doneId] } },
+      ]);
+    });
+
     it('400s a malformed group id before touching the db', async () => {
       await expect(
         service.listForGroup('nope', ADMIN_A),
@@ -324,9 +357,9 @@ describe('ChallengesService', () => {
     });
 
     it('400s a malformed group id', async () => {
-      await expect(
-        service.unreadCount('nope', ADMIN_B),
-      ).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.unreadCount('nope', ADMIN_B)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
     });
   });
 
@@ -343,9 +376,9 @@ describe('ChallengesService', () => {
 
     it('403s anyone but an owner/admin of that group', async () => {
       memberModel.findOne.mockResolvedValue(null);
-      await expect(
-        service.markRead(GROUP_B, ADMIN_A),
-      ).rejects.toBeInstanceOf(ForbiddenException);
+      await expect(service.markRead(GROUP_B, ADMIN_A)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
       expect(challengeModel.updateMany).not.toHaveBeenCalled();
       const [filter] = memberModel.findOne.mock.calls[0];
       expect(filter.role).toEqual({ $in: ['owner', 'admin'] });

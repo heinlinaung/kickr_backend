@@ -40,11 +40,17 @@ export class ChallengesController {
     summary: 'Challenge another group (owner/admin of the challenger group)',
     description:
       'Creates a group-vs-group challenge in status `proposed` and notifies ' +
-      'the challenged group\'s owner/admins. One PENDING challenge per group ' +
+      "the challenged group's owner/admins. One PENDING challenge per group " +
       'pair at a time; a rematch after a verdict is a new challenge.',
   })
-  @ApiResponse({ status: 400, description: 'Self-challenge or one already pending' })
-  @ApiResponse({ status: 403, description: 'Caller is not a challenger-group admin' })
+  @ApiResponse({
+    status: 400,
+    description: 'Self-challenge or one already pending',
+  })
+  @ApiResponse({
+    status: 403,
+    description: 'Caller is not a challenger-group admin',
+  })
   create(@CurrentUser() user: any, @Body() dto: CreateChallengeDto) {
     return this.challenges.create(user._id.toString(), dto);
   }
@@ -52,10 +58,29 @@ export class ChallengesController {
   @Get()
   @ApiOperation({
     summary: "A group's challenges, both directions (members)",
+    description:
+      'Pass `history=true` to get only closed challenges: rejected, ' +
+      'cancelled, or finished (accepted and its match event is `done` or ' +
+      'its time has passed — `endTime`, else `date` + `duration`). ' +
+      'Without it, every challenge is returned.',
   })
   @ApiQuery({ name: 'groupId', type: String })
-  list(@CurrentUser() user: any, @Query('groupId') groupId: string) {
-    return this.challenges.listForGroup(groupId, user._id.toString());
+  @ApiQuery({
+    name: 'history',
+    type: Boolean,
+    required: false,
+    description: 'true → only finished, rejected and cancelled challenges',
+  })
+  list(
+    @CurrentUser() user: any,
+    @Query('groupId') groupId: string,
+    @Query('history') history?: string,
+  ) {
+    return this.challenges.listForGroup(
+      groupId,
+      user._id.toString(),
+      history === 'true',
+    );
   }
 
   @Get('unread-count')
@@ -95,7 +120,10 @@ export class ChallengesController {
       'challenge can be answered; the verdict is final for that challenge.',
   })
   @ApiResponse({ status: 400, description: 'Already answered' })
-  @ApiResponse({ status: 403, description: 'Caller is not a challenged-group admin' })
+  @ApiResponse({
+    status: 403,
+    description: 'Caller is not a challenged-group admin',
+  })
   respond(
     @Param('id') id: string,
     @CurrentUser() user: any,
@@ -126,8 +154,7 @@ export class ChallengesController {
   })
   @ApiResponse({
     status: 403,
-    description:
-      'Caller is not an owner/admin of a group allowed to cancel it',
+    description: 'Caller is not an owner/admin of a group allowed to cancel it',
   })
   @ApiResponse({ status: 404, description: 'Challenge not found' })
   cancel(
@@ -142,7 +169,7 @@ export class ChallengesController {
   @ApiOperation({
     summary: 'Propose the match event for an ACCEPTED challenge',
     description:
-      'Either side\'s owner/admin. Normal event body plus both kit colors ' +
+      "Either side's owner/admin. Normal event body plus both kit colors " +
       '(`challengerColor`, `challengedColor`). The event is forced private, ' +
       "typed 'challenge', and starts at proposedStatus 'proposed' — inert " +
       'until the other side accepts via PATCH /events/:id/proposal/review. ' +
@@ -152,7 +179,10 @@ export class ChallengesController {
     status: 400,
     description: 'Challenge not accepted, or it already has its event',
   })
-  @ApiResponse({ status: 403, description: 'Caller is not an admin of either group' })
+  @ApiResponse({
+    status: 403,
+    description: 'Caller is not an admin of either group',
+  })
   createEvent(
     @Param('id') id: string,
     @CurrentUser() user: any,
