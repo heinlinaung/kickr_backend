@@ -257,6 +257,17 @@ export class Event {
   proposalRejectReason: string | null;
 
   /**
+   * The venue / kick-off the reviewing side suggested when rejecting
+   * (optional). Suggestions only — the proposer applies them by editing the
+   * event; both are cleared on accept and on resubmit.
+   */
+  @Prop({ type: Types.ObjectId, ref: 'Location', default: null })
+  proposalRejectLocationId: Types.ObjectId | null;
+
+  @Prop({ type: Date, default: null })
+  proposalRejectDatetime: Date | null;
+
+  /**
    * Challenge readiness (2026-11-13): when each side's owner/admin declared
    * their squad final via POST /events/:id/side/ready. `host` is `groupId`'s
    * side, `opponent` is `opponentGroupId`'s. Once BOTH are set the server

@@ -63,6 +63,8 @@ describe('EventsService — group challenge', () => {
     challengeId: new Types.ObjectId(CHALLENGE_ID),
     proposedStatus: 'accepted',
     proposalRejectReason: null,
+    proposalRejectLocationId: null as Types.ObjectId | null,
+    proposalRejectDatetime: null as Date | null,
     createdBy: new Types.ObjectId(ADMIN_A),
     challengeColors: { challengerColor: 'red', challengedColor: 'white' },
     save: jest.fn().mockResolvedValue(undefined),
@@ -308,6 +310,38 @@ describe('EventsService — group challenge', () => {
         }),
       );
     });
+
+    it('reject stores the suggested location and datetime', async () => {
+      const doc = eventDoc({ proposedStatus: 'proposed' });
+      eventModel.findById.mockResolvedValue(doc);
+      const LOCATION_ID = '507f1f77bcf86cd799439055';
+
+      await review(ADMIN_B, {
+        action: 'reject',
+        reason: 'date change need',
+        locationId: LOCATION_ID,
+        datetime: '2026-10-27T13:00:00.000Z',
+      });
+
+      expect(doc.proposalRejectLocationId?.toString()).toBe(LOCATION_ID);
+      expect(doc.proposalRejectDatetime).toEqual(
+        new Date('2026-10-27T13:00:00.000Z'),
+      );
+    });
+
+    it('accept ignores and clears any suggested location/datetime', async () => {
+      const doc = eventDoc({ proposedStatus: 'proposed' });
+      eventModel.findById.mockResolvedValue(doc);
+
+      await review(ADMIN_B, {
+        action: 'accept',
+        locationId: '507f1f77bcf86cd799439055',
+        datetime: '2026-10-27T13:00:00.000Z',
+      });
+
+      expect(doc.proposalRejectLocationId).toBeNull();
+      expect(doc.proposalRejectDatetime).toBeNull();
+    });
   });
 
   describe('resubmitProposal', () => {
@@ -331,6 +365,8 @@ describe('EventsService — group challenge', () => {
       const doc = eventDoc({
         proposedStatus: 'rejected',
         proposalRejectReason: 'color conflict',
+        proposalRejectLocationId: new Types.ObjectId(),
+        proposalRejectDatetime: new Date(),
       });
       eventModel.findById.mockResolvedValue(doc);
 
@@ -338,6 +374,8 @@ describe('EventsService — group challenge', () => {
 
       expect(doc.proposedStatus).toBe('proposed');
       expect(doc.proposalRejectReason).toBeNull();
+      expect(doc.proposalRejectLocationId).toBeNull();
+      expect(doc.proposalRejectDatetime).toBeNull();
       expect(notifications.notifyUsers).toHaveBeenCalledWith(
         expect.any(Array),
         expect.objectContaining({

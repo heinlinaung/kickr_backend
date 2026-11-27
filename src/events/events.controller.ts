@@ -698,8 +698,10 @@ export class EventsController {
     description:
       'Owner/admin of the group that did NOT create the event — the proposer ' +
       'cannot accept their own terms. `action` accept|reject with an optional ' +
-      'reason ("date change need", "color conflict", …). Accept unlocks the ' +
-      'normal event lifecycle; reject sends the proposer back to edit and ' +
+      'reason ("date change need", "color conflict", …). On reject the ' +
+      'reviewer may also suggest a `locationId` and `datetime`, stored as ' +
+      '`proposalRejectLocationId` / `proposalRejectDatetime`. Accept unlocks ' +
+      'the normal event lifecycle; reject sends the proposer back to edit and ' +
       'POST /events/:id/proposal/resubmit.',
   })
   @ApiResponse({

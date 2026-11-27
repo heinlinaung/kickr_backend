@@ -1202,6 +1202,8 @@ export class EventsService {
     if (!seesProposal) {
       delete payload.proposedStatus;
       delete payload.proposalRejectReason;
+      delete payload.proposalRejectLocationId;
+      delete payload.proposalRejectDatetime;
     }
 
     return {
@@ -4228,8 +4230,12 @@ export class EventsService {
     );
 
     event.proposedStatus = dto.action === 'accept' ? 'accepted' : 'rejected';
-    event.proposalRejectReason =
-      dto.action === 'reject' ? (dto.reason ?? null) : null;
+    const rejecting = dto.action === 'reject';
+    event.proposalRejectReason = rejecting ? (dto.reason ?? null) : null;
+    event.proposalRejectLocationId =
+      rejecting && dto.locationId ? new Types.ObjectId(dto.locationId) : null;
+    event.proposalRejectDatetime =
+      rejecting && dto.datetime ? new Date(dto.datetime) : null;
     await event.save();
 
     // The match is on: both side teams exist from this moment, so each
@@ -4283,6 +4289,8 @@ export class EventsService {
     }
     event.proposedStatus = 'proposed';
     event.proposalRejectReason = null;
+    event.proposalRejectLocationId = null;
+    event.proposalRejectDatetime = null;
     await event.save();
 
     await this.notifySideAdmins(
