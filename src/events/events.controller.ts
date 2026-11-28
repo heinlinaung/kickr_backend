@@ -31,6 +31,7 @@ import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { UpdateEventStatusDto } from './dto/update-event-status.dto';
 import { GenerateTeamsDto } from './dto/generate-teams.dto';
+import { GenerateMatchesDto } from './dto/generate-matches.dto';
 import { AssignTeamPlayersDto } from './dto/assign-team-players.dto';
 import { AddMatchDto } from './dto/add-match.dto';
 import { UpdateMatchScoreDto } from './dto/update-match-score.dto';
@@ -1013,6 +1014,49 @@ export class EventsController {
   @ApiResponse({ status: 404, description: 'Team or formation not found' })
   getTeamFormation(@Param('id') id: string, @Param('teamId') teamId: string) {
     return this.eventsService.getTeamFormation(id, teamId);
+  }
+
+  @Post(':id/matches/generate')
+  @ApiOperation({
+    summary: 'Regenerate the fixtures from a match duration (organizer)',
+    description:
+      'Takes ONLY `duration` (minutes per match) and rebuilds the fixture list ' +
+      'for the teams that already exist — teams and player assignments are ' +
+      'left untouched. The number of matches is ' +
+      'floor((event.duration - 10) / duration) and is a hard cap, so the ' +
+      'schedule always fits the total event duration (e.g. a 120-minute event ' +
+      'with 10-minute matches gets 11). The double round-robin is cycled from ' +
+      'the start if there is room for more, or cut short if there is less. ' +
+      'Replaces any existing fixtures, including hand-added ones. Same stage ' +
+      'rule as /teams/generate.',
+  })
+  @ApiResponse({
+    status: 201,
+    schema: {
+      example: {
+        data: {
+          message: 'Matches generated successfully',
+          matchCount: 11,
+          matchDuration: 10,
+          totalDuration: 110,
+          eventDuration: 120,
+        },
+      },
+    },
+  })
+  @ApiResponse({
+    status: 400,
+    description:
+      'No teams yet, match duration does not fit the event, or wrong state',
+  })
+  @ApiResponse({ status: 403, description: 'Caller is not the organizer' })
+  @ApiResponse({ status: 404, description: 'Event not found' })
+  generateMatches(
+    @Param('id') id: string,
+    @CurrentUser() user: any,
+    @Body() dto: GenerateMatchesDto,
+  ) {
+    return this.eventsService.generateMatches(id, user._id.toString(), dto);
   }
 
   @Post(':id/matches')

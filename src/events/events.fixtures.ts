@@ -138,6 +138,28 @@ export function generateFixturesFilling(
 }
 
 /**
+ * Exactly `count` fixtures: the round-robin cycled (or cut) to fit the slot.
+ *
+ * Unlike `generateFixturesFilling` there is no round-robin floor — the total
+ * duration is a hard cap, so a short event gets a prefix of the rotation
+ * (leg 1 first, so nobody meets the same opponent twice before all pairings
+ * have been played) and a long one repeats it from the start.
+ */
+export function generateFixturesForCount(
+  teamNames: string[],
+  count: number,
+): Fixture[] {
+  const base = generateFixtures(teamNames);
+  const target = Math.floor(count) || 0;
+  if (!base.length || target <= 0) return [];
+
+  return Array.from({ length: target }, (_, index) => ({
+    ...base[index % base.length],
+    matchNumber: index + 1,
+  }));
+}
+
+/**
  * One leg's pairings via the circle method, ordered round by round.
  *
  * This ordering is what enforces MAX_CONSECUTIVE_MATCHES. A round's matches

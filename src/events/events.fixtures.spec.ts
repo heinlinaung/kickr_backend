@@ -9,6 +9,7 @@ import {
   generateFixtures,
   generateFixturesLimited,
   generateFixturesFilling,
+  generateFixturesForCount,
   matchCountFor,
   shuffled,
 } from './events.fixtures';
@@ -232,6 +233,34 @@ describe('generateFixturesLimited', () => {
   it('cannot exceed the full round-robin however high the limit', () => {
     // 2 teams meet twice; asking for 10 matches must not invent fixtures.
     expect(generateFixturesLimited(['Red', 'Yellow'], 10)).toHaveLength(2);
+  });
+});
+
+describe('generateFixturesForCount — exact count from total duration', () => {
+  const three = ['Red', 'Yellow', 'Blue'];
+
+  it('cuts the round-robin short when the slot is small', () => {
+    const fixtures = generateFixturesForCount(three, 4);
+    expect(fixtures).toHaveLength(4);
+    expect(fixtures).toEqual(
+      generateFixtures(three).slice(0, 4).map((f, i) => ({ ...f, matchNumber: i + 1 })),
+    );
+  });
+
+  it('cycles the round-robin and renumbers when the slot is large', () => {
+    // 120-minute event, 10-minute matches -> 11 matches.
+    const fixtures = generateFixturesForCount(three, matchCountFor(120, 10));
+    expect(fixtures).toHaveLength(11);
+    expect(fixtures.map((f) => f.matchNumber)).toEqual(
+      Array.from({ length: 11 }, (_, i) => i + 1),
+    );
+    expect(fixtures[6].teamA).toBe(fixtures[0].teamA);
+    expect(fixtures[6].teamB).toBe(fixtures[0].teamB);
+  });
+
+  it('returns nothing for a zero count or fewer than 2 teams', () => {
+    expect(generateFixturesForCount(three, 0)).toEqual([]);
+    expect(generateFixturesForCount(['Red'], 5)).toEqual([]);
   });
 });
 

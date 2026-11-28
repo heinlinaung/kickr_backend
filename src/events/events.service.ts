@@ -41,6 +41,7 @@ import {
 import { CreateEventDto } from './dto/create-event.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { GenerateTeamsDto } from './dto/generate-teams.dto';
+import { GenerateMatchesDto } from './dto/generate-matches.dto';
 import { AssignTeamPlayersDto } from './dto/assign-team-players.dto';
 import { AddMatchDto } from './dto/add-match.dto';
 import { UpdateMatchScoreDto } from './dto/update-match-score.dto';
@@ -122,6 +123,7 @@ import {
   computeStandings,
   dealIntoTeams,
   generateFixturesFilling,
+  generateFixturesForCount,
   matchCountFor,
   shuffled,
 } from './events.fixtures';
@@ -2574,6 +2576,75 @@ export class EventsService {
     }
 
     return { message: 'Teams shuffled successfully', teams };
+  }
+
+  /**
+   * `POST /events/:id/matches/generate` — rebuild the fixture list for the
+   * EXISTING teams from a per-match duration alone.
+   *
+   * The number of matches is `floor((event.duration - buffer) / duration)`, and
+   * that is a hard cap: the round-robin is cycled or cut to exactly that many,
+   * so the schedule always fits the event's total duration. Teams, players and
+   * team chats are untouched; only the fixtures are replaced.
+   */
+  async generateMatches(
+    eventId: string,
+    userId: string,
+    dto: GenerateMatchesDto,
+  ) {
+    const event = await this.assertOrganizer(eventId, userId);
+    this.assertProposalAccepted(event);
+    const matchProvided = await this.matchProvidedFor(event);
+    if (!canShuffle(event.status, matchProvided, event.type)) {
+      throw new BadRequestException(
+        `Matches can only be generated during ` +
+          `${buildStageFor(matchProvided, event.type)} (event is '${event.status}')`,
+      );
+    }
+
+    const matchCount = matchCountFor(event.duration, dto.duration);
+    if (matchCount < 1) {
+      throw new BadRequestException(
+        `A ${dto.duration}-minute match does not fit in a ${event.duration}-minute ` +
+          `event (${MATCH_BUFFER_MINUTES} minutes are reserved as buffer). ` +
+          'Shorten the match duration or lengthen the event.',
+      );
+    }
+
+    const eventObjectId = event._id;
+    // Creation order, so a challenge keeps challenger first as generated.
+    const teams = await this.teamModel
+      .find({ eventId: eventObjectId })
+      .sort({ _id: 1 })
+      .select('name')
+      .lean();
+    if (teams.length < MIN_TEAMS) {
+      throw new BadRequestException(
+        'This event needs at least 2 teams — generate the teams first ' +
+          '(POST /events/:id/teams/generate)',
+      );
+    }
+
+    const fixtures = generateFixturesForCount(
+      teams.map((t) => t.name),
+      matchCount,
+    );
+    await this.matchModel.deleteMany({ eventId: eventObjectId });
+    const matches = await this.matchModel.insertMany(
+      fixtures.map((fixture) => ({
+        ...fixture,
+        eventId: eventObjectId,
+        duration: dto.duration,
+      })),
+    );
+
+    return {
+      message: 'Matches generated successfully',
+      matchCount: matches.length,
+      matchDuration: dto.duration,
+      totalDuration: matches.length * dto.duration,
+      eventDuration: event.duration,
+    };
   }
 
   /**
